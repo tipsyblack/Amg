@@ -1,0 +1,8 @@
+node_modules
+out
+dist
+.env
+
+# Сгенерированные пайплайном файлы (создаются заново через npm run generate)
+public/audio/*.mp3
+data/video-data.json
