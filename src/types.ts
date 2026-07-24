@@ -4,6 +4,9 @@ export const sceneSchema = z.object({
   caption: z.string(),
   voiceoverText: z.string(),
   audioFileName: z.string(),
+  // Пока в пайплайне нет генерации картинок — не обязательно.
+  // Когда появится, класть файл в public/images/ и указывать имя файла здесь.
+  imageFileName: z.string().optional(),
   durationInFrames: z.number().int().positive(),
 });
 

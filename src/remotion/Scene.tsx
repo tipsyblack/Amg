@@ -1,84 +1,74 @@
 import React from "react";
-import {
-  AbsoluteFill,
-  interpolate,
-  spring,
-  useCurrentFrame,
-  useVideoConfig,
-} from "remotion";
+import { AbsoluteFill, Img, staticFile } from "remotion";
+import { loadFont } from "@remotion/google-fonts/Anton";
+
+const { fontFamily } = loadFont();
 
 interface SceneProps {
   caption: string;
-  sceneIndex: number;
-  totalScenes: number;
+  imageFileName?: string;
 }
 
-// Плейсхолдер-стиль. Как только придёт референс-видео от агентства,
-// эта разметка заменяется на копию их переходов/шрифтов/тайминга.
-export const Scene: React.FC<SceneProps> = ({
-  caption,
-  sceneIndex,
-  totalScenes,
-}) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  const entrance = spring({ frame, fps, config: { damping: 200 } });
-  const opacity = interpolate(entrance, [0, 1], [0, 1]);
-  const translateY = interpolate(entrance, [0, 1], [40, 0]);
-
+// Разобрано по кадрам присланного референса:
+// белый фон, скруглённая карточка в толстой чёрной рамке, под ней —
+// жирная чёрная капслок-подпись. Смена сцен — жёсткий склей, без фейдов.
+export const Scene: React.FC<SceneProps> = ({ caption, imageFileName }) => {
   return (
     <AbsoluteFill
       style={{
-        background: "linear-gradient(160deg, #1c1c26 0%, #0b0b0f 100%)",
+        backgroundColor: "#ffffff",
+        alignItems: "center",
+        paddingTop: "9%",
       }}
     >
-      <AbsoluteFill
+      <div
         style={{
-          justifyContent: "flex-start",
+          width: "82%",
+          aspectRatio: "0.74",
+          border: "10px solid #0d0d0d",
+          borderRadius: 28,
+          overflow: "hidden",
+          backgroundColor: "#ececeb",
+          display: "flex",
           alignItems: "center",
-          padding: "60px 60px 0",
+          justifyContent: "center",
+          flexShrink: 0,
         }}
       >
-        <div style={{ display: "flex", gap: 6 }}>
-          {Array.from({ length: totalScenes }).map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: 36,
-                height: 4,
-                borderRadius: 2,
-                backgroundColor:
-                  i <= sceneIndex ? "#ffffff" : "rgba(255,255,255,0.25)",
-              }}
-            />
-          ))}
-        </div>
-      </AbsoluteFill>
+        {imageFileName ? (
+          <Img
+            src={staticFile(`images/${imageFileName}`)}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <div
+            style={{
+              fontFamily,
+              fontSize: 32,
+              color: "#9a9a97",
+              textAlign: "center",
+              padding: "0 10%",
+            }}
+          >
+            изображение сцены
+          </div>
+        )}
+      </div>
 
-      <AbsoluteFill
+      <div
         style={{
-          justifyContent: "flex-end",
-          alignItems: "center",
-          padding: "0 60px 180px",
+          marginTop: "6%",
+          padding: "0 6%",
+          fontFamily,
+          fontSize: 84,
+          lineHeight: 1.05,
+          color: "#0d0d0d",
+          textTransform: "uppercase",
+          textAlign: "center",
         }}
       >
-        <div
-          style={{
-            opacity,
-            transform: `translateY(${translateY}px)`,
-            fontFamily: "Arial, sans-serif",
-            fontSize: 64,
-            fontWeight: 800,
-            color: "#ffffff",
-            textAlign: "center",
-            lineHeight: 1.15,
-            textShadow: "0 4px 24px rgba(0,0,0,0.5)",
-          }}
-        >
-          {caption}
-        </div>
-      </AbsoluteFill>
+        {caption}
+      </div>
     </AbsoluteFill>
   );
 };

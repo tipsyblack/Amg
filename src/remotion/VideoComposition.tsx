@@ -24,7 +24,7 @@ export const VideoComposition: React.FC<VideoData> = ({ scenes }) => {
   let startFrame = 0;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#0b0b0f" }}>
+    <AbsoluteFill style={{ backgroundColor: "#ffffff" }}>
       {scenes.map((scene, index) => {
         const from = startFrame;
         startFrame += scene.durationInFrames;
@@ -35,11 +35,7 @@ export const VideoComposition: React.FC<VideoData> = ({ scenes }) => {
             from={from}
             durationInFrames={scene.durationInFrames}
           >
-            <Scene
-              caption={scene.caption}
-              sceneIndex={index}
-              totalScenes={scenes.length}
-            />
+            <Scene caption={scene.caption} imageFileName={scene.imageFileName} />
             <Audio src={staticFile(`audio/${scene.audioFileName}`)} />
           </Sequence>
         );
