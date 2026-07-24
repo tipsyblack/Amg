@@ -39,7 +39,7 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     const imagePrompt = `${STYLE_PROMPT}\n\nСцена: ${scriptScene.caption}. Контекст: ${scriptScene.voiceoverText}`;
     const imageBuffer = await generateSceneImage({
       prompt: imagePrompt,
-      referenceImageDataUri: previousImageDataUri,
+      previousSceneDataUri: previousImageDataUri,
     });
     await writeFile(path.join(PUBLIC_IMAGES_DIR, imageFileName), imageBuffer);
     previousImageDataUri = `data:image/png;base64,${imageBuffer.toString("base64")}`;
