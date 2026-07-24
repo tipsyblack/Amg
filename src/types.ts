@@ -4,8 +4,8 @@ export const sceneSchema = z.object({
   caption: z.string(),
   voiceoverText: z.string(),
   audioFileName: z.string(),
-  // Пока в пайплайне нет генерации картинок — не обязательно.
-  // Когда появится, класть файл в public/images/ и указывать имя файла здесь.
+  // Необязательно: без картинки Scene.tsx покажет заглушку.
+  // Пайплайн кладёт сюда сгенерированный файл из public/images/.
   imageFileName: z.string().optional(),
   durationInFrames: z.number().int().positive(),
 });

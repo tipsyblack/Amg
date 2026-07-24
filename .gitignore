@@ -5,4 +5,5 @@ dist
 
 # Сгенерированные пайплайном файлы (создаются заново через npm run generate)
 public/audio/*.mp3
+public/images/*.png
 data/video-data.json

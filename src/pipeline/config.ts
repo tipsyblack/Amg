@@ -13,6 +13,8 @@ function requireEnv(name: string): string {
 export const config = {
   openRouterApiKey: requireEnv("OPENROUTER_API_KEY"),
   openRouterModel: process.env.OPENROUTER_MODEL ?? "google/gemini-2.5-flash",
+  openRouterImageModel:
+    process.env.OPENROUTER_IMAGE_MODEL ?? "google/gemini-2.5-flash-image-preview",
   elevenLabsApiKey: requireEnv("ELEVENLABS_API_KEY"),
   elevenLabsVoiceId: requireEnv("ELEVENLABS_VOICE_ID"),
   elevenLabsModelId: process.env.ELEVENLABS_MODEL_ID ?? "eleven_multilingual_v2",
