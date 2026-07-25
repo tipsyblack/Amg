@@ -84,6 +84,7 @@ assets/
 docs/SERVER.md      # установка и запуск на выделенном сервере
 scripts/
   setup-server.sh   # установка окружения на Ubuntu/Debian
+  auto-deploy.sh    # подтягивание обновлений из GitHub на сервер
 src/
   remotion/        # шаблон видео (Remotion)
     Root.tsx        # регистрация композиции, схема входных данных

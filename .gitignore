@@ -2,6 +2,7 @@ node_modules
 out
 dist
 .env
+deploy.log
 
 # Сгенерированные пайплайном файлы (создаются заново через npm run generate)
 public/audio/*.mp3
