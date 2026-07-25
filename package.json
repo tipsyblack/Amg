@@ -8,7 +8,8 @@
     "generate": "tsx src/pipeline/index.ts",
     "preview": "remotion studio src/remotion/index.ts",
     "render": "remotion render src/remotion/index.ts VideoComposition out/video.mp4 --props=data/video-data.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:kie": "tsx scripts/test-kie-client.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",

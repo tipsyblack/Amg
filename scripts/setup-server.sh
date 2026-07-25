@@ -108,7 +108,7 @@ cat <<'DONE'
 
   1. Впишите ключи в файл .env (он уже создан, права 600):
        nano .env
-     Нужны: OPENROUTER_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
+     Нужны: OPENROUTER_API_KEY и KIE_API_KEY
 
   2. Запустите генерацию:
        npm run generate -- "бриф: что за продукт, для кого, какой посыл"

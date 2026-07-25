@@ -22,12 +22,14 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   const script = await generateScript(brief);
 
   const scenes: Scene[] = [];
-  // Data URI предыдущей картинки передаётся следующей генерации как
-  // референс — так персонаж и стиль держатся из сцены в сцену.
-  let previousImageDataUri: string | undefined;
+  // Ссылка на картинку предыдущей сцены передаётся следующей генерации как
+  // референс — так окружение и палитра держатся из сцены в сцену.
+  let previousSceneUrl: string | undefined;
 
   for (let i = 0; i < script.scenes.length; i++) {
     const scriptScene = script.scenes[i];
+    console.log(`Сцена ${i + 1} из ${script.scenes.length}: ${scriptScene.caption}`);
+
     const audioFileName = `scene-${i}.mp3`;
     const audioPath = path.join(PUBLIC_AUDIO_DIR, audioFileName);
 
@@ -37,12 +39,11 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
 
     const imageFileName = `scene-${i}.png`;
     const imagePrompt = `${STYLE_PROMPT}\n\nСцена: ${scriptScene.caption}. Контекст: ${scriptScene.voiceoverText}`;
-    const imageBuffer = await generateSceneImage({
+    previousSceneUrl = await generateSceneImage({
       prompt: imagePrompt,
-      previousSceneDataUri: previousImageDataUri,
+      outFile: path.join(PUBLIC_IMAGES_DIR, imageFileName),
+      previousSceneUrl,
     });
-    await writeFile(path.join(PUBLIC_IMAGES_DIR, imageFileName), imageBuffer);
-    previousImageDataUri = `data:image/png;base64,${imageBuffer.toString("base64")}`;
 
     scenes.push({
       caption: scriptScene.caption,
