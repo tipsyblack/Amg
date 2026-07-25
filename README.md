@@ -69,11 +69,21 @@ cp .env.example .env
 # заполнить .env: OPENROUTER_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
 ```
 
+Для установки на выделенный сервер (Ubuntu/Debian) есть готовый скрипт и
+пошаговая инструкция: **[docs/SERVER.md](docs/SERVER.md)**.
+
+```bash
+sudo bash scripts/setup-server.sh
+```
+
 ## Структура
 
 ```
 assets/
   characters/shamil.png # эталонное изображение персонажа (Шамиль)
+docs/SERVER.md      # установка и запуск на выделенном сервере
+scripts/
+  setup-server.sh   # установка окружения на Ubuntu/Debian
 src/
   remotion/        # шаблон видео (Remotion)
     Root.tsx        # регистрация композиции, схема входных данных
