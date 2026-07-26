@@ -57,10 +57,22 @@ bot.use(async (ctx, next) => {
 // Генерация тяжёлая и одна на весь процесс: пока идёт — новые не начинаем.
 let generationRunning = false;
 
+interface GenerationOptions {
+  // callback_data кнопки "Повторить" в сообщении об ошибке. Наработанное
+  // (сценарий, картинки, озвучки) при сбое сохраняется — повтор продолжает
+  // с места падения.
+  retryData?: string;
+  // Куда вернуть диалог при сбое (по умолчанию idle).
+  errorStep?: import("./state").Step;
+  // Подсказка в сообщении об ошибке вместо стандартной.
+  errorHint?: string;
+}
+
 async function withGeneration(
   ctx: Context,
   chatId: number,
   task: () => Promise<void>,
+  options: GenerationOptions = {},
 ): Promise<void> {
   if (generationRunning) {
     await ctx.reply("Уже идёт другая генерация — дождитесь её окончания.");
@@ -72,11 +84,23 @@ async function withGeneration(
     await task();
   } catch (error) {
     console.error(error);
+    updateSession(chatId, { step: options.errorStep ?? "idle" });
+    const hint =
+      options.errorHint ??
+      (options.retryData
+        ? "Наработанное сохранено — можно просто повторить кнопкой ниже."
+        : "Начать заново — /new");
     await ctx.reply(
-      `Ошибка: ${error instanceof Error ? error.message : String(error)}\n\n` +
-        "Начать заново — /new",
+      `Ошибка: ${error instanceof Error ? error.message : String(error)}\n\n${hint}`,
+      options.retryData
+        ? {
+            reply_markup: new InlineKeyboard().text(
+              "🔁 Повторить",
+              options.retryData,
+            ),
+          }
+        : undefined,
     );
-    resetSession(chatId);
   } finally {
     generationRunning = false;
   }
@@ -108,48 +132,70 @@ async function runScriptStep(
   chatId: number,
   feedback?: string,
 ): Promise<void> {
-  await withGeneration(ctx, chatId, async () => {
-    const session = getSession(chatId);
-    await ctx.reply(feedback ? "Переписываю сценарий…" : "Пишу сценарий…");
-    const script = await generateScript(
-      session.brief ?? "",
-      feedback && session.script
-        ? { previousScript: session.script, feedback }
-        : undefined,
-    );
-    updateSession(chatId, { step: "idle", script });
-    await ctx.reply(formatScript(script), { reply_markup: scriptKeyboard });
-  });
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      const session = getSession(chatId);
+      await ctx.reply(feedback ? "Переписываю сценарий…" : "Пишу сценарий…");
+      const script = await generateScript(
+        session.brief ?? "",
+        feedback && session.script
+          ? { previousScript: session.script, feedback }
+          : undefined,
+      );
+      // Новый сценарий делает старые картинки и озвучки неактуальными.
+      updateSession(chatId, {
+        step: "idle",
+        script,
+        images: undefined,
+        audio: undefined,
+      });
+      await ctx.reply(formatScript(script), { reply_markup: scriptKeyboard });
+    },
+    { retryData: "retry_script" },
+  );
 }
 
 async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
-  await withGeneration(ctx, chatId, async () => {
-    await ensureDirs();
-    const session = getSession(chatId);
-    const script = session.script;
-    if (!script) throw new Error("Сценарий потерялся — начните заново: /new");
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      await ensureDirs();
+      const session = getSession(chatId);
+      const script = session.script;
+      if (!script) throw new Error("Сценарий потерялся — начните заново: /new");
 
-    const images = [...(session.images ?? [])];
-    let previousSceneUrl: string | undefined;
+      const images = [...(session.images ?? [])];
+      let previousSceneUrl: string | undefined;
 
-    for (let i = 0; i < script.scenes.length; i++) {
-      await ctx.reply(`🎨 Сцена ${i + 1} из ${script.scenes.length}…`);
-      const { imageFileName, resultUrl } = await generateSceneIllustration(
-        i,
-        buildImagePrompt(script.scenes[i], session.styleNotes),
-        previousSceneUrl,
-      );
-      images[i] = { imageFileName, resultUrl };
-      previousSceneUrl = resultUrl;
-      await ctx.replyWithPhoto(
-        new InputFile(path.resolve("public/images", imageFileName)),
-        { caption: `Сцена ${i + 1}: ${script.scenes[i].caption}` },
-      );
-    }
+      for (let i = 0; i < script.scenes.length; i++) {
+        // Уже сгенерированные при прошлой попытке сцены пропускаем.
+        if (images[i]) {
+          previousSceneUrl = images[i].resultUrl;
+          continue;
+        }
+        await ctx.reply(`🎨 Сцена ${i + 1} из ${script.scenes.length}…`);
+        const { imageFileName, resultUrl } = await generateSceneIllustration(
+          i,
+          buildImagePrompt(script.scenes[i], session.styleNotes),
+          previousSceneUrl,
+        );
+        images[i] = { imageFileName, resultUrl };
+        previousSceneUrl = resultUrl;
+        updateSession(chatId, { images });
+        await ctx.replyWithPhoto(
+          new InputFile(path.resolve("public/images", imageFileName)),
+          { caption: `Сцена ${i + 1}: ${script.scenes[i].caption}` },
+        );
+      }
 
-    updateSession(chatId, { step: "idle", images });
-    await ctx.reply("Как картинки?", { reply_markup: imagesKeyboard });
-  });
+      updateSession(chatId, { step: "idle", images });
+      await ctx.reply("Как картинки?", { reply_markup: imagesKeyboard });
+    },
+    { retryData: "retry_images" },
+  );
 }
 
 async function regenerateScene(
@@ -157,33 +203,41 @@ async function regenerateScene(
   chatId: number,
   index: number,
 ): Promise<void> {
-  await withGeneration(ctx, chatId, async () => {
-    const session = getSession(chatId);
-    const script = session.script;
-    const images = [...(session.images ?? [])];
-    if (!script || !images.length) {
-      throw new Error("Нет данных сцены — начните заново: /new");
-    }
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      const session = getSession(chatId);
+      const script = session.script;
+      const images = [...(session.images ?? [])];
+      if (!script || !images.length) {
+        throw new Error("Нет данных сцены — начните заново: /new");
+      }
 
-    await ctx.reply(`🎨 Перегенерирую сцену ${index + 1}…`);
-    const { imageFileName, resultUrl } = await generateSceneIllustration(
-      index,
-      buildImagePrompt(script.scenes[index], session.styleNotes),
-      images[index - 1]?.resultUrl,
-    );
-    images[index] = { imageFileName, resultUrl };
-    updateSession(chatId, { step: "idle", images });
+      await ctx.reply(`🎨 Перегенерирую сцену ${index + 1}…`);
+      const { imageFileName, resultUrl } = await generateSceneIllustration(
+        index,
+        buildImagePrompt(script.scenes[index], session.styleNotes),
+        images[index - 1]?.resultUrl,
+      );
+      images[index] = { imageFileName, resultUrl };
+      updateSession(chatId, { step: "idle", images });
 
-    await ctx.replyWithPhoto(
-      new InputFile(path.resolve("public/images", imageFileName)),
-      { caption: `Сцена ${index + 1}: ${script.scenes[index].caption}` },
-    );
-    await ctx.reply("Как теперь?", { reply_markup: imagesKeyboard });
-  });
+      await ctx.replyWithPhoto(
+        new InputFile(path.resolve("public/images", imageFileName)),
+        { caption: `Сцена ${index + 1}: ${script.scenes[index].caption}` },
+      );
+      await ctx.reply("Как теперь?", { reply_markup: imagesKeyboard });
+    },
+    { retryData: `regen_${index}` },
+  );
 }
 
 async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
-  await withGeneration(ctx, chatId, async () => {
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
     const session = getSession(chatId);
     const script = session.script;
     const images = session.images;
@@ -191,19 +245,21 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       throw new Error("Нет данных для сборки — начните заново: /new");
     }
 
+    const audio = [...(session.audio ?? [])];
     const scenes: Scene[] = [];
     for (let i = 0; i < script.scenes.length; i++) {
-      await ctx.reply(`🎙 Озвучка ${i + 1} из ${script.scenes.length}…`);
-      const { audioFileName, durationInFrames } = await generateSceneAudio(
-        i,
-        script.scenes[i].voiceoverText,
-      );
+      // Озвученные при прошлой попытке сцены не переозвучиваем.
+      if (!audio[i]) {
+        await ctx.reply(`🎙 Озвучка ${i + 1} из ${script.scenes.length}…`);
+        audio[i] = await generateSceneAudio(i, script.scenes[i].voiceoverText);
+        updateSession(chatId, { audio });
+      }
       scenes.push({
         caption: script.scenes[i].caption,
         voiceoverText: script.scenes[i].voiceoverText,
-        audioFileName,
+        audioFileName: audio[i].audioFileName,
         imageFileName: images[i].imageFileName,
-        durationInFrames,
+        durationInFrames: audio[i].durationInFrames,
       });
     }
 
@@ -236,7 +292,9 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       caption: `«${script.title}» готово. Новый ролик — /new`,
     });
     resetSession(chatId);
-  });
+    },
+    { retryData: "retry_assemble" },
+  );
 }
 
 bot.command(["start", "help"], async (ctx) => {
@@ -299,6 +357,7 @@ bot.command("new", async (ctx) => {
     styleNotes: undefined,
     script: undefined,
     images: undefined,
+    audio: undefined,
   });
   await ctx.reply(
     "Опишите ролик: что за продукт, для кого, какой посыл?\n\n" +
@@ -329,6 +388,27 @@ bot.callbackQuery("images_regen", async (ctx) => {
   await ctx.reply("Какую сцену перегенерировать? Пришлите номер.");
 });
 
+// Кнопки "🔁 Повторить" из сообщений об ошибках.
+bot.callbackQuery("retry_script", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await runScriptStep(ctx, ctx.chat!.id);
+});
+
+bot.callbackQuery("retry_images", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await runImagesStep(ctx, ctx.chat!.id);
+});
+
+bot.callbackQuery("retry_assemble", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await runAssembleStep(ctx, ctx.chat!.id);
+});
+
+bot.callbackQuery(/^regen_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await regenerateScene(ctx, ctx.chat!.id, Number(ctx.match[1]));
+});
+
 bot.on("message:text", async (ctx) => {
   const chatId = ctx.chat.id;
   const text = ctx.message.text.trim();
@@ -350,22 +430,28 @@ bot.on("message:text", async (ctx) => {
         return;
       }
       let referenceParsed = false;
-      await withGeneration(ctx, chatId, async () => {
-        await ctx.reply("Скачиваю референс и разбираю стиль…");
-        const workDir = await mkdtemp(path.join(tmpdir(), "amg-drive-"));
-        try {
-          const videoFile = path.join(workDir, "reference.mp4");
-          await downloadDriveFile(text, videoFile);
-          const styleNotes = await extractStyleNotes(videoFile);
-          updateSession(chatId, { styleNotes });
-          await ctx.reply(`Стиль из референса:\n\n${styleNotes}`);
-          referenceParsed = true;
-        } finally {
-          await rm(workDir, { recursive: true, force: true });
-        }
-      });
-      // Если разбор упал, withGeneration уже сообщил об ошибке и сбросил
-      // сессию — сценарий не пишем.
+      await withGeneration(
+        ctx,
+        chatId,
+        async () => {
+          await ctx.reply("Скачиваю референс и разбираю стиль…");
+          const workDir = await mkdtemp(path.join(tmpdir(), "amg-drive-"));
+          try {
+            const videoFile = path.join(workDir, "reference.mp4");
+            await downloadDriveFile(text, videoFile);
+            const styleNotes = await extractStyleNotes(videoFile);
+            updateSession(chatId, { styleNotes });
+            await ctx.reply(`Стиль из референса:\n\n${styleNotes}`);
+            referenceParsed = true;
+          } finally {
+            await rm(workDir, { recursive: true, force: true });
+          }
+        },
+        {
+          errorStep: "awaiting_reference",
+          errorHint: "Пришлите ссылку ещё раз, либо /skip.",
+        },
+      );
       if (referenceParsed) {
         await runScriptStep(ctx, chatId);
       }

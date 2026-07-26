@@ -19,12 +19,20 @@ export interface SceneImage {
   resultUrl: string;
 }
 
+export interface SceneAudio {
+  audioFileName: string;
+  durationInFrames: number;
+}
+
 export interface Session {
   step: Step;
   brief?: string;
   styleNotes?: string;
   script?: GeneratedScript;
   images?: SceneImage[];
+  // Кэш готовых озвучек: при повторе сборки после сбоя уже озвученные
+  // сцены не переозвучиваются (и не оплачиваются) заново.
+  audio?: SceneAudio[];
 }
 
 const STATE_FILE = path.resolve("data/bot-state.json");

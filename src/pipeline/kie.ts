@@ -172,5 +172,9 @@ export async function runKieTask({
     }
   }
 
+  console.error(
+    `Kie.ai (${label}): все попытки исчерпаны, запрос был:`,
+    JSON.stringify({ model, input }),
+  );
   throw lastError;
 }
