@@ -10,7 +10,8 @@ public/images/*.png
 public/music/*
 data/video-data.json
 
-# Состояние телеграм-бота и личная музыкальная библиотека
+# Состояние телеграм-бота, собранные сэмплы голоса и музыкальная библиотека
 data/bot-state.json
+data/clone-samples/
 assets/music/*
 !assets/music/README.md

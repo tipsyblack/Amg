@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -471,7 +471,10 @@ bot.command("deploy", async (ctx) => {
 });
 
 bot.command("cancel", async (ctx) => {
-  resetSession(ctx.chat.id);
+  const chatId = ctx.chat.id;
+  // Собранные для клонирования сэмплы — временный мусор, убираем.
+  await rm(cloneDir(chatId), { recursive: true, force: true }).catch(() => {});
+  resetSession(chatId);
   await ctx.reply("Сброшено. Новый ролик — /new");
 });
 
@@ -654,6 +657,40 @@ bot.command("tts", async (ctx) => {
 // ElevenLabs советует минимум минуту речи; ниже этого клон выходит грубым.
 const CLONE_MIN_SECONDS = 60;
 
+// Сэмплы копятся на диске: их присылают по одному, и сбор должен переживать
+// перезапуск бота.
+function cloneDir(chatId: number): string {
+  return path.resolve("data/clone-samples", String(chatId));
+}
+
+/** Извлекает дорожку, добавляет её к сэмплам и отчитывается о длительности. */
+async function addCloneSample(
+  ctx: Context,
+  chatId: number,
+  sourceFile: string,
+): Promise<void> {
+  const dir = cloneDir(chatId);
+  await mkdir(dir, { recursive: true });
+  const samples = getSession(chatId).cloneSamples ?? [];
+  const target = path.join(dir, `sample-${samples.length}.mp3`);
+
+  await extractAudio(sourceFile, target);
+  const seconds = await audioDurationSeconds(target);
+  const next = [...samples, target];
+  updateSession(chatId, { cloneSamples: next });
+
+  let total = 0;
+  for (const file of next) total += await audioDurationSeconds(file);
+
+  await ctx.reply(
+    `🎧 Принято: ${Math.round(seconds)} с. Всего материала: ${Math.round(total)} с.\n\n` +
+      (total < CLONE_MIN_SECONDS
+        ? `Нужно хотя бы ${CLONE_MIN_SECONDS} с — пришлите ещё файлы или ссылки.\n`
+        : "Материала достаточно.\n") +
+      "Когда всё пришлёте — /done. Отменить — /cancel.",
+  );
+}
+
 bot.command("clone", async (ctx) => {
   if (!isElevenLabsAvailable()) {
     await ctx.reply(
@@ -673,43 +710,33 @@ bot.command("clone", async (ctx) => {
   );
 });
 
-async function runCloneStep(
-  ctx: Context,
-  chatId: number,
-  links: string[],
-): Promise<void> {
+async function runCloneStep(ctx: Context, chatId: number): Promise<void> {
   await withGeneration(
     ctx,
     chatId,
     async () => {
-      const name = getSession(chatId).cloneName ?? "Клон";
+      const session = getSession(chatId);
+      const name = session.cloneName ?? "Клон";
+      const parts = session.cloneSamples ?? [];
+      if (parts.length === 0) {
+        throw new Error(
+          "Нет ни одного сэмпла. Пришлите файлы или ссылки, потом /done.",
+        );
+      }
+
       const workDir = await mkdtemp(path.join(tmpdir(), "amg-clone-"));
       try {
-        const parts: string[] = [];
         let totalSeconds = 0;
-
-        for (let i = 0; i < links.length; i++) {
-          await ctx.reply(`⬇️ Скачиваю видео ${i + 1} из ${links.length}…`);
-          const videoFile = path.join(workDir, `src-${i}.mp4`);
-          await downloadDriveFile(links[i], videoFile);
-
-          const audioFile = path.join(workDir, `audio-${i}.mp3`);
-          await extractAudio(videoFile, audioFile);
-          const seconds = await audioDurationSeconds(audioFile);
-          totalSeconds += seconds;
-          parts.push(audioFile);
-          await ctx.reply(`🎧 Дорожка ${i + 1}: ${Math.round(seconds)} с речи с музыкой.`);
-        }
+        for (const file of parts) totalSeconds += await audioDurationSeconds(file);
 
         const merged = path.join(workDir, "merged.mp3");
         await concatAudio(parts, merged);
 
         await ctx.reply(
-          `Всего материала: ${Math.round(totalSeconds)} с.` +
+          `Материала: ${Math.round(totalSeconds)} с из ${parts.length} файл(ов).` +
             (totalSeconds < CLONE_MIN_SECONDS
-              ? `\n\n⚠️ Это меньше рекомендованной минуты — клон получится ` +
-                "узнаваемым, но грубоватым. Для заметно лучшего результата " +
-                "пришлите ещё ссылки и повторите /clone."
+              ? "\n\n⚠️ Меньше рекомендованной минуты — клон получится " +
+                "узнаваемым, но грубоватым."
               : ""),
         );
 
@@ -729,7 +756,13 @@ async function runCloneStep(
           files: [cleaned],
         });
 
-        updateSession(chatId, { voice: voiceId, step: "idle", cloneName: undefined });
+        updateSession(chatId, {
+          voice: voiceId,
+          step: "idle",
+          cloneName: undefined,
+          cloneSamples: undefined,
+        });
+        await rm(cloneDir(chatId), { recursive: true, force: true });
 
         await ctx.reply(
           `Готово. Голос «${name}» создан и выбран для роликов.\nVoice ID: ${voiceId}`,
@@ -756,7 +789,8 @@ async function runCloneStep(
     },
     {
       errorStep: "awaiting_clone_links",
-      errorHint: "Пришлите ссылки ещё раз или /cancel.",
+      // Сэмплы не трогаем: повтор через /done не потребует присылать заново.
+      errorHint: "Собранные сэмплы сохранены — повторите /done или /cancel.",
     },
   );
 }
@@ -1082,6 +1116,47 @@ bot.callbackQuery(/^regen_(\d+)$/, async (ctx) => {
   await regenerateScene(ctx, ctx.chat!.id, Number(ctx.match[1]));
 });
 
+// Материал для клонирования можно присылать файлом: видео, аудио, голосовое
+// или документ. Telegram отдаёт боту файлы до 20 МБ — для звука этого хватает
+// с запасом, а большие видео идут ссылкой на Drive.
+bot.on([":video", ":audio", ":voice", ":document", ":video_note"], async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (getSession(chatId).step !== "awaiting_clone_links") return;
+
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      const workDir = await mkdtemp(path.join(tmpdir(), "amg-tg-"));
+      try {
+        await ctx.reply("⬇️ Забираю файл…");
+        const file = await ctx.getFile();
+        if (!file.file_path) {
+          throw new Error("Telegram не отдал путь к файлу");
+        }
+        // Скачиваем сами: file.download() живёт в отдельном плагине grammY.
+        const response = await fetch(
+          `https://api.telegram.org/file/bot${token}/${file.file_path}`,
+        );
+        if (!response.ok) {
+          throw new Error(`Не удалось скачать файл: HTTP ${response.status}`);
+        }
+        const localPath = path.join(workDir, path.basename(file.file_path));
+        await writeFile(localPath, Buffer.from(await response.arrayBuffer()));
+        await addCloneSample(ctx, chatId, localPath);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    },
+    {
+      errorStep: "awaiting_clone_links",
+      errorHint:
+        "Не получилось разобрать файл. Пришлите другой, ссылку или /cancel.\n" +
+        "Файлы больше 20 МБ Telegram боту не отдаёт — такие только ссылкой.",
+    },
+  );
+});
+
 bot.on("message:text", async (ctx) => {
   const chatId = ctx.chat.id;
   const text = ctx.message.text.trim();
@@ -1110,17 +1185,31 @@ bot.on("message:text", async (ctx) => {
     }
 
     case "awaiting_clone_name": {
-      updateSession(chatId, { step: "awaiting_clone_links", cloneName: text });
+      updateSession(chatId, {
+        step: "awaiting_clone_links",
+        cloneName: text,
+        cloneSamples: undefined,
+      });
       await ctx.reply(
-        "Пришлите ссылки на видео с этим голосом — Google Drive, доступ " +
-          "«всем, у кого есть ссылка».\n\nМожно несколько сразу, каждая с " +
-          "новой строки: чем больше материала, тем лучше клон. " +
-          `ElevenLabs советует минимум ${CLONE_MIN_SECONDS} с речи.`,
+        `Голос «${text}». Теперь присылайте материал — можно двумя способами, ` +
+          "и вперемешку:\n\n" +
+          "• **файлом** прямо в чат: видео, аудио или голосовое (до 20 МБ — " +
+          "лимит Telegram);\n" +
+          "• **ссылкой** на Google Drive (доступ «всем, у кого есть ссылка») — " +
+          "так проходят и большие видео.\n\n" +
+          `Присылайте по одному, я буду считать. Нужно минимум ${CLONE_MIN_SECONDS} с речи.\n` +
+          "Когда всё — /done.",
+        { parse_mode: "Markdown" },
       );
       return;
     }
 
     case "awaiting_clone_links": {
+      if (text === "/done") {
+        await runCloneStep(ctx, chatId);
+        return;
+      }
+
       const links = text
         .split(/\s+/)
         .map((part) => part.trim())
@@ -1128,12 +1217,34 @@ bot.on("message:text", async (ctx) => {
 
       if (links.length === 0) {
         await ctx.reply(
-          "Не вижу ссылок. Пришлите адреса вида https://drive.google.com/... " +
-            "или /cancel, чтобы выйти.",
+          "Жду файл или ссылку. Файл — просто прикрепите к сообщению; " +
+            "ссылка — вида https://drive.google.com/...\n\n" +
+            "Закончить сбор — /done, отменить — /cancel.",
         );
         return;
       }
-      await runCloneStep(ctx, chatId, links);
+
+      await withGeneration(
+        ctx,
+        chatId,
+        async () => {
+          const workDir = await mkdtemp(path.join(tmpdir(), "amg-dl-"));
+          try {
+            for (let i = 0; i < links.length; i++) {
+              await ctx.reply(`⬇️ Скачиваю ${i + 1} из ${links.length}…`);
+              const videoFile = path.join(workDir, `src-${i}.mp4`);
+              await downloadDriveFile(links[i], videoFile);
+              await addCloneSample(ctx, chatId, videoFile);
+            }
+          } finally {
+            await rm(workDir, { recursive: true, force: true });
+          }
+        },
+        {
+          errorStep: "awaiting_clone_links",
+          errorHint: "Пришлите ссылку ещё раз, файл или /cancel.",
+        },
+      );
       return;
     }
 
