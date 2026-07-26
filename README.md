@@ -105,12 +105,14 @@ scripts/
   amg-bot.service   # systemd-сервис для постоянной работы бота
   test-kie-client.mjs # проверка клиента Kie.ai на локальном моке
   test-image-models.mjs # форматы запросов моделей картинок
+  build-font-data.mjs # пересборка вшитого шрифта из public/fonts
 src/
   remotion/        # шаблон видео (Remotion)
     Root.tsx        # регистрация композиции, схема входных данных
     VideoComposition.tsx  # раскладка сцен по таймлайну + фоновая музыка
     Scene.tsx       # стиль и анимация одной сцены (карточка + подпись)
-    font.ts         # локальный шрифт подписей (Oswald 700, с кириллицей)
+    font.ts         # шрифт подписей (Oswald 700, вшит в код)
+    fontData.ts     # шрифт в base64 (генерируется скриптом)
   pipeline/         # генерация контента
     config.ts        # чтение .env
     generateScript.ts # запрос к OpenRouter (сценарий, цикл правок)
