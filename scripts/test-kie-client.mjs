@@ -117,7 +117,7 @@ process.env.KIE_POLL_INTERVAL_SECONDS = "0.05";
 process.env.KIE_TIMEOUT_SECONDS = "5";
 process.env.KIE_RETRY_BASE_SECONDS = "0.02";
 
-const { runKieTask } = await import("../src/pipeline/kie.ts");
+const { runKieTask, probeKieTask } = await import("../src/pipeline/kie.ts");
 
 const workDir = await mkdtemp(path.join(tmpdir(), "kie-test-"));
 let failures = 0;
@@ -204,6 +204,42 @@ try {
   check("сообщение про таймаут", error.message.includes("не ответил за"), error.message);
   check("уложился примерно в лимит", Date.now() - started < 8000, `${Date.now() - started} мс`);
 }
+
+console.log("\n6) probeKieTask для /diag: не бросает, а описывает результат");
+const probeOk = await probeKieTask({ model: "m", input: {} });
+check("успех описан", probeOk.ok === true && probeOk.detail === "успех", JSON.stringify(probeOk));
+check("вернулась ссылка", probeOk.resultUrl === `http://127.0.0.1:${PORT}/file.bin`);
+
+const probeFail = await probeKieTask({
+  model: "m",
+  input: { __scenario: "task-fail" },
+});
+check(
+  "провал описан без исключения",
+  probeFail.ok === false && probeFail.detail.includes("нет кредитов"),
+  probeFail.detail,
+);
+
+const probeEmpty = await probeKieTask({
+  model: "m",
+  input: { __scenario: "task-empty" },
+});
+check(
+  "пустой результат описан",
+  probeEmpty.ok === false && probeEmpty.detail.includes("resultUrls пуст"),
+  probeEmpty.detail,
+);
+
+const probeTimeout = await probeKieTask({
+  model: "m",
+  input: { __scenario: "task-hang" },
+  timeoutMs: 400,
+});
+check(
+  "таймаут описан",
+  probeTimeout.ok === false && probeTimeout.detail.includes("не ответил"),
+  probeTimeout.detail,
+);
 
 await rm(workDir, { recursive: true, force: true });
 server.close();

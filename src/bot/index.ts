@@ -15,7 +15,12 @@ import {
 } from "../pipeline/assets";
 import { config } from "../pipeline/config";
 import { generateScript } from "../pipeline/generateScript";
-import { synthesizeSpeech } from "../pipeline/generateVoiceover";
+import {
+  buildTtsInput,
+  synthesizeSpeech,
+  TTS_MODEL_CANDIDATES,
+} from "../pipeline/generateVoiceover";
+import { probeKieTask } from "../pipeline/kie";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
 import { extractStyleNotes } from "./referenceStyle";
@@ -256,6 +261,7 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
           i,
           script.scenes[i].voiceoverText,
           session.voice,
+          session.ttsModel,
         );
         updateSession(chatId, { audio });
       }
@@ -308,6 +314,8 @@ bot.command(["start", "help"], async (ctx) => {
       "/new — начать новый ролик\n" +
       "/cancel — сбросить текущий диалог\n" +
       "/voice — посмотреть или сменить голос озвучки\n" +
+      "/model — модель озвучки\n" +
+      "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
       "картинки с перегенерацией → озвучка и сборка.\n\n" +
@@ -379,11 +387,76 @@ bot.command("voice", async (ctx) => {
     await ctx.reply(`Пробую голос ${requested}…`);
     const samplePath = path.resolve("out/voice-sample.mp3");
     await mkdir(path.dirname(samplePath), { recursive: true });
-    await synthesizeSpeech(VOICE_SAMPLE_TEXT, samplePath, requested);
+    await synthesizeSpeech(
+      VOICE_SAMPLE_TEXT,
+      samplePath,
+      requested,
+      getSession(chatId).ttsModel,
+    );
     updateSession(chatId, { voice: requested, step: "idle" });
     await ctx.replyWithVoice(new InputFile(samplePath), {
       caption: `Голос ${requested} сохранён — будет использован для роликов.`,
     });
+  });
+});
+
+bot.command("model", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const requested = ctx.match.trim();
+  if (!requested) {
+    await ctx.reply(
+      `Текущая модель озвучки: ${getSession(chatId).ttsModel ?? config.kieTtsModel}\n\n` +
+        "Сменить: /model <слаг модели>\n" +
+        "Найти рабочую автоматически: /diag",
+    );
+    return;
+  }
+  updateSession(chatId, { ttsModel: requested });
+  await ctx.reply(
+    `Модель озвучки: ${requested}. Проверить — /voice ${getSession(chatId).voice ?? config.kieTtsVoice}`,
+  );
+});
+
+// Диагностика озвучки: перебирает модели-кандидаты с текущим голосом и
+// показывает, что именно отвечает Kie.ai по каждой. Первую рабочую сохраняет.
+bot.command("diag", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const session = getSession(chatId);
+  const voice = session.voice ?? config.kieTtsVoice;
+
+  await withGeneration(ctx, chatId, async () => {
+    await ctx.reply(
+      `Проверяю озвучку.\nГолос: ${voice}\nМоделей к проверке: ${TTS_MODEL_CANDIDATES.length}\n` +
+        "Каждая до 2 минут, подождите…",
+    );
+
+    const lines: string[] = [];
+    let working: string | undefined;
+
+    for (const model of TTS_MODEL_CANDIDATES) {
+      const result = await probeKieTask({
+        model,
+        input: buildTtsInput("Проверка связи, раз, два, три.", voice),
+      });
+      lines.push(`${result.ok ? "✅" : "❌"} ${model}\n   ${result.detail}`);
+      if (result.ok && !working) working = model;
+    }
+
+    let summary = lines.join("\n\n");
+    if (working) {
+      updateSession(chatId, { ttsModel: working, step: "idle" });
+      summary +=
+        `\n\nРабочая модель найдена и сохранена: ${working}\n` +
+        "Можно возвращаться к сборке — кнопка «Повторить» выше.";
+    } else {
+      summary +=
+        "\n\nНи одна модель не отработала. Скорее всего дело в голосе или " +
+        "в балансе Kie.ai:\n" +
+        "• проверьте кредиты в кабинете Kie.ai;\n" +
+        `• попробуйте другой ID голоса: /voice <id> (текущий — ${voice});\n` +
+        "• сверьте список моделей в кабинете и задайте вручную: /model <слаг>.";
+    }
+    await ctx.reply(summary);
   });
 });
 

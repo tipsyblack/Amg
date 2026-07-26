@@ -38,10 +38,11 @@ export async function generateSceneAudio(
   index: number,
   voiceoverText: string,
   voiceOverride?: string,
+  modelOverride?: string,
 ): Promise<{ audioFileName: string; durationInFrames: number }> {
   const audioFileName = `scene-${index}.mp3`;
   const audioPath = path.join(PUBLIC_AUDIO_DIR, audioFileName);
-  await synthesizeSpeech(voiceoverText, audioPath, voiceOverride);
+  await synthesizeSpeech(voiceoverText, audioPath, voiceOverride, modelOverride);
   const durationSeconds =
     (await getAudioDurationInSeconds(audioPath)) + SCENE_PADDING_SECONDS;
   return {

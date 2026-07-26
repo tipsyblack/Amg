@@ -111,6 +111,7 @@ async function waitForTask(taskId: string, label: string): Promise<string[]> {
       );
     }
 
+
     await new Promise((resolve) => setTimeout(resolve, config.kiePollIntervalMs));
   }
 
@@ -128,6 +129,60 @@ async function downloadToFile(url: string, outFile: string): Promise<void> {
     );
   }
   await writeFile(outFile, Buffer.from(await response.arrayBuffer()));
+}
+
+/**
+ * Диагностический прогон: одна попытка, короткий таймаут, без ретраев.
+ * Ничего не бросает — возвращает, что именно ответил Kie.ai, чтобы это можно
+ * было показать пользователю (например, командой /diag в боте).
+ */
+export async function probeKieTask({
+  model,
+  input,
+  timeoutMs = 120_000,
+}: {
+  model: string;
+  input: Record<string, unknown>;
+  timeoutMs?: number;
+}): Promise<{ ok: boolean; detail: string; resultUrl?: string }> {
+  let taskId: string;
+  try {
+    taskId = await createTask(model, input);
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `создание задачи: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${config.kieApiBase}/recordInfo?taskId=${encodeURIComponent(taskId)}`,
+      { headers: authHeaders() },
+    );
+    if (!response.ok) {
+      return { ok: false, detail: `recordInfo: HTTP ${response.status}` };
+    }
+    const body = (await response.json()) as RecordInfoResponse;
+    const state = body.data?.state;
+
+    if (state === "success") {
+      const urls = extractResultUrls(body.data?.resultJson);
+      return urls.length
+        ? { ok: true, detail: "успех", resultUrl: urls[0] }
+        : { ok: false, detail: "success, но resultUrls пуст" };
+    }
+    if (state === "fail") {
+      return {
+        ok: false,
+        detail: `fail: ${body.data?.failMsg ?? "без причины"} (код ${body.data?.failCode ?? "—"})`,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, config.kiePollIntervalMs));
+  }
+
+  return { ok: false, detail: `не ответил за ${Math.round(timeoutMs / 1000)} с` };
 }
 
 /**
