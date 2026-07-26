@@ -19,6 +19,15 @@ import {
   writeVideoData,
 } from "../pipeline/assets";
 import { generateMusicTrack, MUSIC_PRESETS } from "../pipeline/generateMusic";
+import {
+  createInstantVoiceClone,
+  isolateVoice,
+} from "../pipeline/voiceClone";
+import {
+  audioDurationSeconds,
+  concatAudio,
+  extractAudio,
+} from "./extractAudio";
 import { config } from "../pipeline/config";
 import { generateScript } from "../pipeline/generateScript";
 import {
@@ -420,6 +429,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/model — модель озвучки\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека и генерация\n" +
+      "/clone — клонировать голос из своих роликов\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
@@ -638,6 +648,118 @@ bot.command("tts", async (ctx) => {
     `Провайдер озвучки: ${requested}. Проверить — /voice ${getSession(chatId).voice ?? config.kieTtsVoice}`,
   );
 });
+
+// ——— Клонирование голоса из референс-видео ———
+
+// ElevenLabs советует минимум минуту речи; ниже этого клон выходит грубым.
+const CLONE_MIN_SECONDS = 60;
+
+bot.command("clone", async (ctx) => {
+  if (!isElevenLabsAvailable()) {
+    await ctx.reply(
+      "Для клонирования нужен ELEVENLABS_API_KEY в .env на сервере — через " +
+        "Kie.ai эта операция недоступна.",
+    );
+    return;
+  }
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  updateSession(ctx.chat.id, { step: "awaiting_clone_name" });
+  await ctx.reply(
+    "Клонируем голос из ваших роликов.\n\nКак назвать голос? Например " +
+      "«Шамиль» — под этим именем он появится в ElevenLabs.",
+  );
+});
+
+async function runCloneStep(
+  ctx: Context,
+  chatId: number,
+  links: string[],
+): Promise<void> {
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      const name = getSession(chatId).cloneName ?? "Клон";
+      const workDir = await mkdtemp(path.join(tmpdir(), "amg-clone-"));
+      try {
+        const parts: string[] = [];
+        let totalSeconds = 0;
+
+        for (let i = 0; i < links.length; i++) {
+          await ctx.reply(`⬇️ Скачиваю видео ${i + 1} из ${links.length}…`);
+          const videoFile = path.join(workDir, `src-${i}.mp4`);
+          await downloadDriveFile(links[i], videoFile);
+
+          const audioFile = path.join(workDir, `audio-${i}.mp3`);
+          await extractAudio(videoFile, audioFile);
+          const seconds = await audioDurationSeconds(audioFile);
+          totalSeconds += seconds;
+          parts.push(audioFile);
+          await ctx.reply(`🎧 Дорожка ${i + 1}: ${Math.round(seconds)} с речи с музыкой.`);
+        }
+
+        const merged = path.join(workDir, "merged.mp3");
+        await concatAudio(parts, merged);
+
+        await ctx.reply(
+          `Всего материала: ${Math.round(totalSeconds)} с.` +
+            (totalSeconds < CLONE_MIN_SECONDS
+              ? `\n\n⚠️ Это меньше рекомендованной минуты — клон получится ` +
+                "узнаваемым, но грубоватым. Для заметно лучшего результата " +
+                "пришлите ещё ссылки и повторите /clone."
+              : ""),
+        );
+
+        // Очищенную дорожку присылаем послушать: если голос звучит
+        // «подводно», клонировать такой материал бессмысленно.
+        await ctx.reply("🧹 Убираю музыку с фона…");
+        const cleaned = path.join(workDir, "cleaned.mp3");
+        await isolateVoice(merged, cleaned);
+        await ctx.replyWithAudio(new InputFile(cleaned), {
+          title: `${name} — исходник без музыки`,
+          caption: "Так звучит материал после удаления музыки. Из него делаю клон.",
+        });
+
+        await ctx.reply("🧬 Создаю клон голоса…");
+        const { voiceId } = await createInstantVoiceClone({
+          name,
+          files: [cleaned],
+        });
+
+        updateSession(chatId, { voice: voiceId, step: "idle", cloneName: undefined });
+
+        await ctx.reply(
+          `Готово. Голос «${name}» создан и выбран для роликов.\nVoice ID: ${voiceId}`,
+        );
+
+        // Пробная фраза тем же путём, которым пойдёт озвучка роликов.
+        const samplePath = path.resolve("out/voice-sample.mp3");
+        await mkdir(path.dirname(samplePath), { recursive: true });
+        await synthesizeSpeech(
+          VOICE_SAMPLE_TEXT,
+          samplePath,
+          voiceId,
+          undefined,
+          "elevenlabs",
+        );
+        await ctx.replyWithVoice(new InputFile(samplePath), {
+          caption:
+            "Так он звучит на озвучке. Не понравилось — /clone с другими " +
+            "исходниками, вернуться к прежнему — /voice <id>.",
+        });
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    },
+    {
+      errorStep: "awaiting_clone_links",
+      errorHint: "Пришлите ссылки ещё раз или /cancel.",
+    },
+  );
+}
 
 // ——— Фоновая музыка: библиотека в assets/music, генерация через Kie.ai ———
 
@@ -984,6 +1106,34 @@ bot.on("message:text", async (ctx) => {
         });
       }
       await runScriptStep(ctx, chatId);
+      return;
+    }
+
+    case "awaiting_clone_name": {
+      updateSession(chatId, { step: "awaiting_clone_links", cloneName: text });
+      await ctx.reply(
+        "Пришлите ссылки на видео с этим голосом — Google Drive, доступ " +
+          "«всем, у кого есть ссылка».\n\nМожно несколько сразу, каждая с " +
+          "новой строки: чем больше материала, тем лучше клон. " +
+          `ElevenLabs советует минимум ${CLONE_MIN_SECONDS} с речи.`,
+      );
+      return;
+    }
+
+    case "awaiting_clone_links": {
+      const links = text
+        .split(/\s+/)
+        .map((part) => part.trim())
+        .filter((part) => /^https?:\/\//.test(part));
+
+      if (links.length === 0) {
+        await ctx.reply(
+          "Не вижу ссылок. Пришлите адреса вида https://drive.google.com/... " +
+            "или /cancel, чтобы выйти.",
+        );
+        return;
+      }
+      await runCloneStep(ctx, chatId, links);
       return;
     }
 

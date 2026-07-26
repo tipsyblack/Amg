@@ -14,6 +14,8 @@ export type Step =
   | "awaiting_profile_name"
   | "awaiting_profile_brief"
   | "awaiting_profile_reference"
+  | "awaiting_clone_name"
+  | "awaiting_clone_links"
   | "awaiting_script_feedback"
   | "awaiting_scene_number"
   | "busy";
@@ -61,6 +63,8 @@ export interface Session {
   imageModel?: string;
   // Профиль, из которого собирается текущий ролик.
   profileId?: string;
+  // Имя будущего клонированного голоса, пока собираем ссылки.
+  cloneName?: string;
   // Профиль в процессе создания.
   draftProfile?: {
     name?: string;
