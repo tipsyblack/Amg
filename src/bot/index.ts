@@ -26,6 +26,11 @@ import {
   listVoices,
   synthesizeSpeechDirect,
 } from "../pipeline/elevenlabs";
+import {
+  DEFAULT_IMAGE_MODEL_KEY,
+  getImageModel,
+  IMAGE_MODELS,
+} from "../pipeline/imageModels";
 import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline/voices";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
@@ -165,6 +170,25 @@ const imagesKeyboard = new InlineKeyboard()
   .text("✅ Собирать видео", "images_ok")
   .text("🔄 Перегенерировать сцену", "images_regen");
 
+// Выбор модели картинок перед отрисовкой. Запомненная помечается звёздочкой.
+async function askImageModel(ctx: Context, chatId: number): Promise<void> {
+  const current = getSession(chatId).imageModel ?? DEFAULT_IMAGE_MODEL_KEY;
+  const keyboard = new InlineKeyboard();
+  for (const spec of IMAGE_MODELS) {
+    keyboard
+      .text(
+        `${spec.key === current ? "⭐ " : ""}${spec.title}`,
+        `imgmodel_${spec.key}`,
+      )
+      .row();
+  }
+  await ctx.reply(
+    "Какой моделью рисовать картинки?\n\n" +
+      IMAGE_MODELS.map((spec) => `• ${spec.title} — ${spec.note}`).join("\n"),
+    { reply_markup: keyboard },
+  );
+}
+
 async function runScriptStep(
   ctx: Context,
   chatId: number,
@@ -219,6 +243,7 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
           i,
           buildImagePrompt(script.scenes[i], session.styleNotes),
           previousSceneUrl,
+          session.imageModel,
         );
         images[i] = { imageFileName, resultUrl };
         previousSceneUrl = resultUrl;
@@ -257,6 +282,7 @@ async function regenerateScene(
         index,
         buildImagePrompt(script.scenes[index], session.styleNotes),
         images[index - 1]?.resultUrl,
+        session.imageModel,
       );
       images[index] = { imageFileName, resultUrl };
       updateSession(chatId, { step: "idle", images });
@@ -669,7 +695,16 @@ bot.command("new", async (ctx) => {
 
 bot.callbackQuery("script_ok", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await runImagesStep(ctx, ctx.chat!.id);
+  await askImageModel(ctx, ctx.chat!.id);
+});
+
+bot.callbackQuery(/^imgmodel_(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = ctx.chat!.id;
+  const spec = getImageModel(ctx.match[1]);
+  updateSession(chatId, { imageModel: spec.key });
+  await ctx.reply(`Рисую моделью ${spec.title}.`);
+  await runImagesStep(ctx, chatId);
 });
 
 bot.callbackQuery("script_edit", async (ctx) => {

@@ -62,12 +62,14 @@ export async function generateSceneIllustration(
   index: number,
   prompt: string,
   previousSceneUrl?: string,
+  modelKey?: string,
 ): Promise<{ imageFileName: string; resultUrl: string }> {
   const imageFileName = `scene-${index}.png`;
   const resultUrl = await generateSceneImage({
     prompt,
     outFile: path.join(PUBLIC_IMAGES_DIR, imageFileName),
     previousSceneUrl,
+    modelKey,
   });
   return { imageFileName, resultUrl };
 }

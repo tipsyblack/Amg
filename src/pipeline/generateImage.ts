@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { getImageModel } from "./imageModels";
 import { runKieTask } from "./kie";
 
 // Стиль сцены выведен из присланного референс-видео: плоская векторная
@@ -27,6 +28,8 @@ interface GenerateSceneImageOptions {
   // Ссылка на картинку предыдущей сцены — передаётся вторым референсом,
   // чтобы окружение и палитра не "уплывали" между сценами.
   previousSceneUrl?: string;
+  // Ключ модели из IMAGE_MODELS (выбор в боте); пусто = модель по умолчанию.
+  modelKey?: string;
 }
 
 /**
@@ -37,21 +40,18 @@ export async function generateSceneImage({
   prompt,
   outFile,
   previousSceneUrl,
+  modelKey,
 }: GenerateSceneImageOptions): Promise<string> {
+  const spec = getImageModel(modelKey);
   const imageUrls = [config.characterReferenceUrl];
   if (previousSceneUrl) {
     imageUrls.push(previousSceneUrl);
   }
 
   return runKieTask({
-    model: config.kieImageModel,
-    input: {
-      prompt,
-      image_urls: imageUrls,
-      output_format: "png",
-      image_size: "9:16",
-    },
+    model: spec.model,
+    input: spec.buildInput(prompt, imageUrls),
     outFile,
-    label: "иллюстрация сцены",
+    label: `иллюстрация сцены, модель ${spec.model}`,
   });
 }

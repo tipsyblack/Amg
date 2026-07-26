@@ -38,6 +38,9 @@ export interface Session {
   voice?: string;
   ttsModel?: string;
   ttsProvider?: "kie" | "elevenlabs";
+  // Модель генерации картинок (ключ из IMAGE_MODELS) — выбирается кнопками
+  // перед отрисовкой, запоминается между роликами.
+  imageModel?: string;
 }
 
 const STATE_FILE = path.resolve("data/bot-state.json");
@@ -67,8 +70,14 @@ export function updateSession(chatId: number, patch: Partial<Session>): Session 
 }
 
 export function resetSession(chatId: number): void {
-  // Настройки озвучки — не часть диалога, переживают сброс.
-  const { voice, ttsModel, ttsProvider } = getSession(chatId);
-  sessions[String(chatId)] = { step: "idle", voice, ttsModel, ttsProvider };
+  // Настройки озвучки и картинок — не часть диалога, переживают сброс.
+  const { voice, ttsModel, ttsProvider, imageModel } = getSession(chatId);
+  sessions[String(chatId)] = {
+    step: "idle",
+    voice,
+    ttsModel,
+    ttsProvider,
+    imageModel,
+  };
   persist();
 }
