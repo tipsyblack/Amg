@@ -5,7 +5,12 @@ import { continueRender, delayRender, staticFile } from "remotion";
 //
 // Файлы лежат в public/fonts, а не тянутся с fonts.gstatic.com: рендер не
 // должен зависеть от внешней сети. Лицензия — public/fonts/OFL.txt.
-export const CAPTION_FONT_FAMILY = "Oswald Local";
+const FAMILY = "Oswald Local";
+
+// Если шрифт по какой-то причине не встанет, подписи всё равно должны
+// остаться узкими и плотными, а не расплыться системным шрифтом.
+export const CAPTION_FONT_FAMILY =
+  `"${FAMILY}", "Arial Narrow", "Liberation Sans Narrow", Impact, sans-serif`;
 
 // Диапазоны из метаданных Google Fonts: браузер берёт нужный файл по символу.
 const SUBSETS = [
@@ -20,30 +25,50 @@ const SUBSETS = [
   },
 ];
 
-// Грузим один раз на модуль: при рендере кадры считаются в одном браузере.
-let loaded = false;
+// Ждём шрифт не дольше этого: лучше отрендерить кадр запасным шрифтом, чем
+// уронить весь рендер по таймауту delayRender. Локальные файлы встают за
+// десятки миллисекунд, так что в норме ожидание незаметно.
+const MAX_WAIT_MS = 3000;
+
+let started = false;
 
 export function loadCaptionFont(): void {
-  if (loaded || typeof window === "undefined") return;
-  loaded = true;
+  if (started || typeof document === "undefined") return;
+  started = true;
 
-  const handle = delayRender("Загрузка шрифта подписей");
+  // Объявляем шрифт декларативно через CSS: браузер сам подхватит файлы при
+  // отрисовке текста, без обращения к FontFace API из JS.
+  const style = document.createElement("style");
+  style.textContent = SUBSETS.map(
+    ({ file, unicodeRange }) => `@font-face {
+  font-family: "${FAMILY}";
+  font-style: normal;
+  font-weight: 700;
+  /* swap, не block: при block текст на время загрузки невидим, и кадр,
+     снятый в этот момент, вышел бы пустым. */
+  font-display: swap;
+  src: url("${staticFile(file)}") format("woff2");
+  unicode-range: ${unicodeRange};
+}`,
+  ).join("\n");
+  document.head.appendChild(style);
 
-  Promise.all(
-    SUBSETS.map(async ({ file, unicodeRange }) => {
-      const face = new FontFace(
-        CAPTION_FONT_FAMILY,
-        `url(${staticFile(file)}) format('woff2')`,
-        { weight: "700", unicodeRange },
-      );
-      await face.load();
-      // Типы DOM в @types/react-dom не описывают FontFaceSet.add.
-      (document.fonts as unknown as { add(f: FontFace): void }).add(face);
-    }),
-  )
+  const handle = delayRender("Загрузка шрифта подписей", {
+    timeoutInMilliseconds: MAX_WAIT_MS * 3,
+  });
+
+  // Гонка с таймером: continueRender вызывается при любом исходе и заведомо
+  // раньше, чем сработает таймаут delayRender.
+  const timer = new Promise<void>((resolve) => setTimeout(resolve, MAX_WAIT_MS));
+  const fontsReady = Promise.all([
+    // Кириллица и латиница лежат в разных файлах — просим оба.
+    document.fonts.load(`700 100px "${FAMILY}"`, "Пример"),
+    document.fonts.load(`700 100px "${FAMILY}"`, "Sample"),
+  ]).then(() => undefined);
+
+  Promise.race([fontsReady, timer])
     .catch((error) => {
-      // Без шрифта кадр всё равно нужно отрисовать: иначе рендер встанет.
-      console.error("Не удалось загрузить шрифт подписей:", error);
+      console.error("Шрифт подписей не загрузился, беру запасной:", error);
     })
     .finally(() => continueRender(handle));
 }
