@@ -54,6 +54,19 @@ export const IMAGE_MODELS: ImageModelSpec[] = [
     }),
   },
   {
+    key: "nbpro",
+    title: "Nano Banana Pro",
+    note: "максимум качества, дороже (~$0.09/картинка)",
+    model: "nano-banana-pro",
+    buildInput: (prompt, imageUrls) => ({
+      prompt,
+      image_input: imageUrls,
+      aspect_ratio: "9:16",
+      resolution: "1K",
+      output_format: "png",
+    }),
+  },
+  {
     key: "gpt2",
     title: "GPT Image 2",
     note: "другая манера, от OpenAI",

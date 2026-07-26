@@ -21,6 +21,10 @@ check('nb2: слаг', byKey.nb2.model === 'nano-banana-2');
 const lite = byKey.nb2lite.buildInput('промпт', urls);
 check('lite: как nb2', lite.image_input === urls && byKey.nb2lite.model === 'nano-banana-2-lite');
 
+const pro = byKey.nbpro.buildInput('промпт', urls);
+check('pro: image_input + aspect_ratio', pro.image_input === urls && pro.aspect_ratio === '9:16' && !('image_urls' in pro));
+check('pro: слаг', byKey.nbpro.model === 'nano-banana-pro');
+
 const gpt = byKey.gpt2.buildInput('промпт', urls);
 check('gpt2: input_urls + nsfw_checker', gpt.input_urls === urls && gpt.nsfw_checker === false && !('image_urls' in gpt), JSON.stringify(gpt));
 check('gpt2: слаг', byKey.gpt2.model === 'gpt-image-2-image-to-image');
