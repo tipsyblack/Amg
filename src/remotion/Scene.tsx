@@ -9,15 +9,13 @@ import {
   useVideoConfig,
 } from "remotion";
 import { CAPTION_FONT_FAMILY, loadCaptionFont } from "./font";
+import { sceneMotion } from "./transitions";
 
 loadCaptionFont();
 const fontFamily = CAPTION_FONT_FAMILY;
 
-// Единый язык движения: все сцены анимируются одинаково, меняется только
-// направление наплыва — чтобы ролик читался как одно целое.
 const ENTRANCE_DAMPING = 200;
 const IMAGE_ZOOM = 0.07; // насколько картинка подъезжает за сцену
-const CARD_DRIFT = 14; // px, вертикальный сдвиг карточки на входе
 const CAPTION_RISE = 46; // px, подъём подписи на входе
 const CAPTION_DELAY = 5; // кадров: подпись появляется чуть позже карточки
 
@@ -37,20 +35,6 @@ function cardAspect(width?: number, height?: number): number {
   return Math.min(Math.max(width / height, MIN_CARD_ASPECT), MAX_CARD_ASPECT);
 }
 
-interface SceneProps {
-  caption: string;
-  imageFileName?: string;
-  imageWidth?: number;
-  imageHeight?: number;
-  sceneIndex: number;
-  // Кроссфейд со предыдущей сценой: сколько кадров проявляется вся сцена
-  // целиком, включая фон. У первой сцены — 0.
-  fadeInFrames: number;
-  // Длительность этой сцены с учётом перекрытия — по ней считается наплыв на
-  // картинку. Из useVideoConfig пришла бы длина всего ролика.
-  visualDuration: number;
-}
-
 /**
  * Подпись набирается в одну-две строки, поэтому длинным словам нужен меньший
  * кегль — иначе они вылезают за поля и каждая сцена смотрится по-своему.
@@ -63,6 +47,22 @@ function captionFontSize(caption: string): number {
   return 92;
 }
 
+interface SceneProps {
+  caption: string;
+  imageFileName?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  sceneIndex: number;
+  // Кроссфейд с предыдущей сценой: сколько кадров проявляется вся сцена
+  // целиком, включая фон. У первой сцены — 0.
+  fadeInFrames: number;
+  // Длительность этой сцены с учётом перекрытия — по ней считается наплыв на
+  // картинку. Из useVideoConfig пришла бы длина всего ролика.
+  visualDuration: number;
+  // С этого кадра сцена уходит: под ней уже проявляется следующая.
+  exitStartFrame: number;
+}
+
 export const Scene: React.FC<SceneProps> = ({
   caption,
   imageFileName,
@@ -71,23 +71,20 @@ export const Scene: React.FC<SceneProps> = ({
   sceneIndex,
   fadeInFrames,
   visualDuration,
+  exitStartFrame,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const motion = sceneMotion(sceneIndex);
 
-  const entrance = spring({
-    frame,
-    fps,
-    config: { damping: ENTRANCE_DAMPING },
-  });
+  const entrance = spring({ frame, fps, config: { damping: ENTRANCE_DAMPING } });
   const captionEntrance = spring({
     frame: frame - CAPTION_DELAY,
     fps,
     config: { damping: ENTRANCE_DAMPING },
   });
 
-  // Медленный наплыв на картинку весь кадр — оживляет статичную иллюстрацию.
-  // Направление чередуется по номеру сцены, но задано детерминированно.
+  // 0 → 1 за всю сцену: по этому идёт медленный наплыв на картинку.
   const progress = interpolate(
     frame,
     [0, Math.max(visualDuration - 1, 1)],
@@ -95,7 +92,17 @@ export const Scene: React.FC<SceneProps> = ({
     { extrapolateRight: "clamp" },
   );
 
-  // Проявление всей сцены поверх предыдущей — это и есть переход.
+  // 0 → 1 на участке ухода сцены. У последней сцены участка нет (границы
+  // совпадают) — тогда ухода не происходит вовсе.
+  const exit =
+    visualDuration > exitStartFrame
+      ? interpolate(frame, [exitStartFrame, visualDuration], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        })
+      : 0;
+
+  // Проявление всей сцены поверх предыдущей — основа любого перехода.
   const sceneOpacity =
     fadeInFrames > 0
       ? interpolate(frame, [0, fadeInFrames], [0, 1], {
@@ -103,22 +110,74 @@ export const Scene: React.FC<SceneProps> = ({
           extrapolateRight: "clamp",
         })
       : 1;
-  const zoomsIn = sceneIndex % 2 === 0;
-  const imageScale = zoomsIn
-    ? 1 + IMAGE_ZOOM * progress
-    : 1 + IMAGE_ZOOM * (1 - progress);
-  const imageShift = interpolate(progress, [0, 1], zoomsIn ? [0, -10] : [-10, 0]);
 
-  const cardScale = interpolate(entrance, [0, 1], [0.94, 1]);
-  const cardShift = interpolate(entrance, [0, 1], [CARD_DRIFT, 0]);
-  const cardOpacity = interpolate(entrance, [0, 0.6], [0, 1], {
+  // ——— движение картинки внутри карточки ———
+  const zoom =
+    motion.pan === "out"
+      ? 1 + IMAGE_ZOOM * (1 - progress)
+      : 1 + IMAGE_ZOOM * progress;
+  const panX =
+    motion.pan === "left"
+      ? interpolate(progress, [0, 1], [14, -14])
+      : motion.pan === "right"
+        ? interpolate(progress, [0, 1], [-14, 14])
+        : 0;
+  const panY =
+    motion.pan === "in" || motion.pan === "out"
+      ? interpolate(progress, [0, 1], motion.pan === "in" ? [0, -10] : [-10, 0])
+      : 0;
+
+  // ——— появление карточки ———
+  let cardScale = interpolate(entrance, [0, 1], [0.94, 1]);
+  let cardX = 0;
+  let cardY = interpolate(entrance, [0, 1], [14, 0]);
+  let cardRotate = 0;
+  let cardOpacity = interpolate(entrance, [0, 0.6], [0, 1], {
     extrapolateRight: "clamp",
   });
+
+  if (motion.entry === "overlay") {
+    // Наложение: карточка приходит крупнее и ложится поверх предыдущей.
+    cardScale = interpolate(entrance, [0, 1], [1.18, 1]);
+    cardY = interpolate(entrance, [0, 1], [-40, 0]);
+  } else if (motion.entry === "slide") {
+    cardX = interpolate(entrance, [0, 1], [520, 0]);
+    cardY = 0;
+  } else if (motion.entry === "punch") {
+    cardScale = interpolate(entrance, [0, 1], [0.62, 1]);
+    cardY = 0;
+  } else if (motion.entry === "swing") {
+    cardRotate = interpolate(entrance, [0, 1], [-7, 0]);
+    cardScale = interpolate(entrance, [0, 1], [0.9, 1]);
+  }
+
+  // ——— уход карточки (играет под проявляющейся следующей сценой) ———
+  if (exit > 0) {
+    if (motion.exit === "crumple") {
+      // Смятие: карточка резко сжимается, кренится и слегка перекашивается —
+      // как комкают лист бумаги.
+      cardScale *= interpolate(exit, [0, 1], [1, 0.45]);
+      cardRotate += interpolate(exit, [0, 1], [0, 13]);
+      cardY += interpolate(exit, [0, 1], [0, 70]);
+      cardOpacity *= interpolate(exit, [0, 1], [1, 0.2]);
+    } else if (motion.exit === "shrink") {
+      cardScale *= interpolate(exit, [0, 1], [1, 0.88]);
+      cardOpacity *= interpolate(exit, [0, 1], [1, 0.4]);
+    } else if (motion.exit === "driftUp") {
+      cardY += interpolate(exit, [0, 1], [0, -70]);
+      cardOpacity *= interpolate(exit, [0, 1], [1, 0.3]);
+    }
+  }
+
+  // Перекос применяем отдельно: он нужен только смятию.
+  const crumpleSkew =
+    motion.exit === "crumple" ? interpolate(exit, [0, 1], [0, 6]) : 0;
 
   const captionShift = interpolate(captionEntrance, [0, 1], [CAPTION_RISE, 0]);
-  const captionOpacity = interpolate(captionEntrance, [0, 0.5], [0, 1], {
-    extrapolateRight: "clamp",
-  });
+  const captionOpacity =
+    interpolate(captionEntrance, [0, 0.5], [0, 1], {
+      extrapolateRight: "clamp",
+    }) * (exit > 0 ? interpolate(exit, [0, 1], [1, 0.15]) : 1);
 
   return (
     <AbsoluteFill
@@ -142,7 +201,10 @@ export const Scene: React.FC<SceneProps> = ({
           justifyContent: "center",
           flexShrink: 0,
           opacity: cardOpacity,
-          transform: `translateY(${cardShift}px) scale(${cardScale})`,
+          transform:
+            `translate(${cardX}px, ${cardY}px) ` +
+            `rotate(${cardRotate}deg) skewY(${crumpleSkew}deg) ` +
+            `scale(${cardScale})`,
         }}
       >
         {imageFileName ? (
@@ -152,7 +214,7 @@ export const Scene: React.FC<SceneProps> = ({
               width: "100%",
               height: "100%",
               objectFit: "cover",
-              transform: `scale(${imageScale}) translateY(${imageShift}px)`,
+              transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,
             }}
           />
         ) : (

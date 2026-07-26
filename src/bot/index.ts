@@ -10,6 +10,7 @@ import {
   ensureDirs,
   generateSceneAudio,
   generateSceneIllustration,
+  fitToBudget,
   pickMusic,
   writeVideoData,
 } from "../pipeline/assets";
@@ -345,15 +346,26 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       });
     }
 
+    const fitted = fitToBudget(scenes);
     const videoData: VideoData = {
       title: script.title,
       fps: config.fps,
       width: config.width,
       height: config.height,
       musicFileName: await pickMusic(),
-      scenes,
+      sfxEnabled: true,
+      scenes: fitted.scenes,
     };
     await writeVideoData(videoData);
+
+    if (fitted.overBudgetSeconds > 0.5) {
+      await ctx.reply(
+        `Внимание: ролик выходит на ${Math.round(fitted.totalSeconds)} с — ` +
+          `дольше лимита ${config.maxVideoSeconds} с. Паузы уже сжаты до ` +
+          "предела, дальше сокращать можно только текст: нажмите «✏️ Правки» " +
+          "у сценария и попросите короче.",
+      );
+    }
 
     await ctx.reply("🎬 Собираю видео — это займёт несколько минут…");
     await ctx.replyWithChatAction("upload_video");
@@ -372,7 +384,10 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
 
     // Размеры и длительность обязательны: без них Telegram не знает пропорций
     // и показывает вертикальный ролик квадратным превью.
-    const totalFrames = scenes.reduce((sum, s) => sum + s.durationInFrames, 0);
+    const totalFrames = fitted.scenes.reduce(
+      (sum, s) => sum + s.durationInFrames,
+      0,
+    );
     await ctx.replyWithVideo(new InputFile(path.resolve("out/video.mp4")), {
       caption:
         `«${script.title}» готово (${videoData.width}×${videoData.height}). ` +

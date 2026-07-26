@@ -3,12 +3,16 @@ import { AbsoluteFill, Audio, Sequence, staticFile } from "remotion";
 import type { CalculateMetadataFunction } from "remotion";
 import type { VideoData } from "../types";
 import { Scene } from "./Scene";
+import { sceneMotion } from "./transitions";
 
 // Длина перекрытия сцен. Держим коротким и меньше запаса тишины в конце
-// озвучки (SCENE_PADDING_SECONDS = 0.4 c), чтобы кроссфейд накладывался на
-// паузу, а не на речь. Тайминг аудио при этом не сдвигается: сцены остаются
-// на своих кадрах, наплывает только картинка уходящей сцены.
-const CROSSFADE_FRAMES = 7;
+// озвучки, чтобы переход накладывался на паузу, а не на речь. Тайминг аудио
+// при этом не сдвигается: сцены остаются на своих кадрах.
+const CROSSFADE_FRAMES = 8;
+
+// Звук перехода играет чуть раньше стыка — так он попадает на начало движения.
+const SFX_LEAD_FRAMES = 4;
+const SFX_VOLUME = 0.32;
 
 export const calculateVideoMetadata: CalculateMetadataFunction<
   VideoData
@@ -29,6 +33,7 @@ export const calculateVideoMetadata: CalculateMetadataFunction<
 export const VideoComposition: React.FC<VideoData> = ({
   scenes,
   musicFileName,
+  sfxEnabled = true,
 }) => {
   let startFrame = 0;
 
@@ -60,6 +65,9 @@ export const VideoComposition: React.FC<VideoData> = ({
                 sceneIndex={index}
                 fadeInFrames={index === 0 ? 0 : CROSSFADE_FRAMES}
                 visualDuration={visualDuration}
+                exitStartFrame={
+                  isLast ? visualDuration : scene.durationInFrames
+                }
               />
             </Sequence>
             {/* Аудио отдельной дорожкой: перекрытие картинки не должно
@@ -67,6 +75,20 @@ export const VideoComposition: React.FC<VideoData> = ({
             <Sequence from={from} durationInFrames={scene.durationInFrames}>
               <Audio src={staticFile(`audio/${scene.audioFileName}`)} />
             </Sequence>
+            {/* Звук перехода на стыке со следующей сценой. */}
+            {sfxEnabled && !isLast && (
+              <Sequence
+                from={Math.max(
+                  from + scene.durationInFrames - SFX_LEAD_FRAMES,
+                  0,
+                )}
+              >
+                <Audio
+                  src={staticFile(`sfx/${sceneMotion(index).sfx}.mp3`)}
+                  volume={SFX_VOLUME}
+                />
+              </Sequence>
+            )}
           </React.Fragment>
         );
       })}

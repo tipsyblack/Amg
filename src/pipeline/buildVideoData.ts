@@ -4,6 +4,7 @@ import {
   ensureDirs,
   generateSceneAudio,
   generateSceneIllustration,
+  fitToBudget,
   pickMusic,
   writeVideoData,
 } from "./assets";
@@ -53,7 +54,8 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     width: config.width,
     height: config.height,
     musicFileName: await pickMusic(),
-    scenes,
+    sfxEnabled: true,
+    scenes: fitToBudget(scenes).scenes,
   };
 
   await writeVideoData(videoData);

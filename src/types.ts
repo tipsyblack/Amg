@@ -21,6 +21,8 @@ export const videoDataSchema = z.object({
   height: z.number().int().positive(),
   // Необязательно: фоновая музыка из public/music/, играет тихо под озвучкой.
   musicFileName: z.string().optional(),
+  // Звуки на стыках сцен (public/sfx). По умолчанию включены.
+  sfxEnabled: z.boolean().optional(),
   scenes: z.array(sceneSchema).min(1),
 });
 

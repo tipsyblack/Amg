@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { VideoData } from "../types";
+import type { Scene, VideoData } from "../types";
 import { getAudioDurationInSeconds } from "./audioDuration";
 import { config } from "./config";
 import {
@@ -19,6 +19,8 @@ export const DATA_FILE = path.resolve("data/video-data.json");
 
 // Небольшой запас после конца озвучки, чтобы подпись не исчезала мгновенно.
 const SCENE_PADDING_SECONDS = 0.4;
+// До какого значения запас можно урезать, если ролик не влезает в лимит.
+const MIN_SCENE_PADDING_SECONDS = 0.12;
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 
@@ -120,6 +122,49 @@ export async function pickMusic(): Promise<string | undefined> {
     path.join(PUBLIC_MUSIC_DIR, chosen),
   );
   return chosen;
+}
+
+/**
+ * Подгоняет ролик под лимит длины: сначала урезает паузы после реплик — это
+ * незаметно, — и сообщает, сколько осталось лишнего, если пауз не хватило.
+ * Сцены не выбрасываем: в последней призыв к действию, а в остальных сюжет.
+ */
+export function fitToBudget(scenes: Scene[]): {
+  scenes: Scene[];
+  totalSeconds: number;
+  overBudgetSeconds: number;
+} {
+  const budgetFrames = Math.round(config.maxVideoSeconds * config.fps);
+  const totalFrames = scenes.reduce((sum, s) => sum + s.durationInFrames, 0);
+
+  if (totalFrames <= budgetFrames) {
+    return {
+      scenes,
+      totalSeconds: totalFrames / config.fps,
+      overBudgetSeconds: 0,
+    };
+  }
+
+  const shavablePerScene = Math.round(
+    (SCENE_PADDING_SECONDS - MIN_SCENE_PADDING_SECONDS) * config.fps,
+  );
+  const needed = totalFrames - budgetFrames;
+  const shavePerScene = Math.min(
+    shavablePerScene,
+    Math.ceil(needed / scenes.length),
+  );
+
+  const trimmed = scenes.map((scene) => ({
+    ...scene,
+    durationInFrames: Math.max(scene.durationInFrames - shavePerScene, 1),
+  }));
+  const trimmedTotal = trimmed.reduce((sum, s) => sum + s.durationInFrames, 0);
+
+  return {
+    scenes: trimmed,
+    totalSeconds: trimmedTotal / config.fps,
+    overBudgetSeconds: Math.max(trimmedTotal - budgetFrames, 0) / config.fps,
+  };
 }
 
 export async function writeVideoData(videoData: VideoData): Promise<void> {

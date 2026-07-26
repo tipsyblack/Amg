@@ -60,6 +60,9 @@ export const config = {
     env("CHARACTER_REFERENCE_URL") ?? DEFAULT_CHARACTER_REFERENCE_URL,
 
   fps: 30,
+  // Сколько сцен максимум и в какую длину должен уложиться ролик.
+  maxScenes: Number(env("MAX_SCENES") ?? 15),
+  maxVideoSeconds: Number(env("MAX_VIDEO_SECONDS") ?? 60),
   width: Number(env("VIDEO_WIDTH") ?? 1080),
   height: Number(env("VIDEO_HEIGHT") ?? 1920),
 };

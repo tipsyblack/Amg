@@ -10,16 +10,27 @@ export interface GeneratedScript {
   scenes: ScriptScene[];
 }
 
-const SYSTEM_PROMPT = `Ты — сценарист коротких вертикальных видео для соцсетей (Instagram Reels, YouTube Shorts, TikTok, VK Клипы).
+// Бюджет слов на сцену считаем от лимита длины: речь идёт примерно в 2.5
+// слова в секунду, и из этого времени часть уходит на паузы между сценами.
+function buildSystemPrompt(): string {
+  const { maxScenes, maxVideoSeconds } = config;
+  const secondsPerScene = maxVideoSeconds / maxScenes;
+  const wordsPerScene = Math.max(Math.floor(secondsPerScene * 2.2), 6);
+
+  return `Ты — сценарист коротких вертикальных видео для соцсетей (Instagram Reels, YouTube Shorts, TikTok, VK Клипы).
 Отвечай СТРОГО валидным JSON без markdown-обёртки и без пояснений, по схеме:
 {"title": string, "scenes": [{"caption": string, "voiceoverText": string}]}
 
 Правила:
-- 4-7 сцен.
+- От 4 до ${maxScenes} сцен. Больше сцен — быстрее ритм; выбирай столько, сколько нужно теме.
+- ГЛАВНОЕ ОГРАНИЧЕНИЕ: вся озвучка вместе должна укладываться в ${maxVideoSeconds} секунд.
+  Поэтому чем больше сцен, тем короче реплики. При ${maxScenes} сценах — не больше
+  ${wordsPerScene} слов на сцену. Лучше сделать меньше сцен, чем растянуть ролик.
 - caption — короткий текст на экране (до 8 слов).
-- voiceoverText — текст озвучки для этой сцены (1-2 предложения, разговорный стиль).
+- voiceoverText — одна короткая фраза для озвучки этой сцены, разговорным тоном.
 - Первая сцена — цепляющий хук, последняя — призыв к действию.
 - Пиши на языке брифа пользователя.`;
+}
 
 export interface ScriptRevision {
   // Предыдущая версия сценария и замечания пользователя — для цикла правок.
@@ -32,7 +43,7 @@ export async function generateScript(
   revision?: ScriptRevision,
 ): Promise<GeneratedScript> {
   const messages: { role: string; content: string }[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: buildSystemPrompt() },
     { role: "user", content: brief },
   ];
   if (revision) {
@@ -75,6 +86,13 @@ export async function generateScript(
   const parsed = JSON.parse(content) as GeneratedScript;
   if (!parsed.scenes?.length) {
     throw new Error("Сгенерированный сценарий не содержит сцен");
+  }
+
+  // Модель может увлечься и выдать больше сцен, чем разрешено: обрезаем,
+  // сохраняя последнюю — в ней призыв к действию.
+  if (parsed.scenes.length > config.maxScenes) {
+    const kept = parsed.scenes.slice(0, config.maxScenes - 1);
+    parsed.scenes = [...kept, parsed.scenes[parsed.scenes.length - 1]];
   }
 
   return parsed;
