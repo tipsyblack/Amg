@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -15,6 +15,7 @@ import {
 } from "../pipeline/assets";
 import { config } from "../pipeline/config";
 import { generateScript } from "../pipeline/generateScript";
+import { synthesizeSpeech } from "../pipeline/generateVoiceover";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
 import { extractStyleNotes } from "./referenceStyle";
@@ -251,7 +252,11 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       // Озвученные при прошлой попытке сцены не переозвучиваем.
       if (!audio[i]) {
         await ctx.reply(`🎙 Озвучка ${i + 1} из ${script.scenes.length}…`);
-        audio[i] = await generateSceneAudio(i, script.scenes[i].voiceoverText);
+        audio[i] = await generateSceneAudio(
+          i,
+          script.scenes[i].voiceoverText,
+          session.voice,
+        );
         updateSession(chatId, { audio });
       }
       scenes.push({
@@ -302,6 +307,7 @@ bot.command(["start", "help"], async (ctx) => {
     "Бот собирает короткие вертикальные ролики с Шамилем.\n\n" +
       "/new — начать новый ролик\n" +
       "/cancel — сбросить текущий диалог\n" +
+      "/voice — посмотреть или сменить голос озвучки\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
       "картинки с перегенерацией → озвучка и сборка.\n\n" +
@@ -344,6 +350,41 @@ bot.command("deploy", async (ctx) => {
 bot.command("cancel", async (ctx) => {
   resetSession(ctx.chat.id);
   await ctx.reply("Сброшено. Новый ролик — /new");
+});
+
+// Подбор голоса прямо из чата: /voice покажет текущий, /voice <id> поставит
+// новый и сразу пришлёт пробную фразу, чтобы послушать.
+const VOICE_SAMPLE_TEXT =
+  "Ассаламу алейкум, дорогой! Слушай сюда: наша нейросеть всё сделает за тебя.";
+
+bot.command("voice", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const requested = ctx.match.trim();
+  const current = getSession(chatId).voice ?? config.kieTtsVoice;
+
+  if (!requested) {
+    await ctx.reply(
+      `Текущий голос: ${current}\n\n` +
+        "Сменить: /voice <voice_id>\n" +
+        "Нужен именно ID голоса из ElevenLabs (например, " +
+        "21m00Tcm4TlvDq8ikWAM — это Rachel), а не имя: с именем Kie.ai " +
+        "падает с internal error.\n\n" +
+        "ID берутся в библиотеке голосов ElevenLabs или в кабинете Kie.ai. " +
+        "После смены пришлю пробную фразу — послушайте, прежде чем собирать ролик.",
+    );
+    return;
+  }
+
+  await withGeneration(ctx, chatId, async () => {
+    await ctx.reply(`Пробую голос ${requested}…`);
+    const samplePath = path.resolve("out/voice-sample.mp3");
+    await mkdir(path.dirname(samplePath), { recursive: true });
+    await synthesizeSpeech(VOICE_SAMPLE_TEXT, samplePath, requested);
+    updateSession(chatId, { voice: requested, step: "idle" });
+    await ctx.replyWithVoice(new InputFile(samplePath), {
+      caption: `Голос ${requested} сохранён — будет использован для роликов.`,
+    });
+  });
 });
 
 bot.command("new", async (ctx) => {

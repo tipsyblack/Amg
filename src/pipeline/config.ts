@@ -34,8 +34,13 @@ export const config = {
   // Переопределяется только в тестах (см. scripts/test-kie-client.mjs).
   kieApiBase: env("KIE_API_BASE") ?? "https://api.kie.ai/api/v1/jobs",
   kieTtsModel: env("KIE_TTS_MODEL") ?? "elevenlabs/text-to-speech-multilingual-v2",
-  kieTtsVoice: env("KIE_TTS_VOICE") ?? "Rachel",
+  // Именно ID голоса, а не имя: в документации Kie.ai пример показывает имя
+  // ("Rachel"), но список допустимых значений — ID, и с именем генерация
+  // падает с "internal error". По умолчанию — ID голоса Rachel.
+  kieTtsVoice: env("KIE_TTS_VOICE") ?? "21m00Tcm4TlvDq8ikWAM",
   kieTtsSpeed: Number(env("KIE_TTS_SPEED") ?? 1),
+  // Пусто = модель определяет язык сама.
+  kieTtsLanguageCode: env("KIE_TTS_LANGUAGE_CODE") ?? "",
   kieImageModel: env("KIE_IMAGE_MODEL") ?? "google/nano-banana-edit",
   kiePollIntervalMs: Number(env("KIE_POLL_INTERVAL_SECONDS") ?? 3) * 1000,
   kieTimeoutMs: Number(env("KIE_TIMEOUT_SECONDS") ?? 600) * 1000,

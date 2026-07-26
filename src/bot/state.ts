@@ -33,6 +33,9 @@ export interface Session {
   // Кэш готовых озвучек: при повторе сборки после сбоя уже озвученные
   // сцены не переозвучиваются (и не оплачиваются) заново.
   audio?: SceneAudio[];
+  // Голос, выбранный командой /voice — переопределяет KIE_TTS_VOICE из .env
+  // и живёт между роликами (в отличие от остальных полей, /new его не трёт).
+  voice?: string;
 }
 
 const STATE_FILE = path.resolve("data/bot-state.json");
@@ -62,6 +65,8 @@ export function updateSession(chatId: number, patch: Partial<Session>): Session 
 }
 
 export function resetSession(chatId: number): void {
-  sessions[String(chatId)] = { step: "idle" };
+  // Выбранный голос — это настройка, а не часть диалога: переживает сброс.
+  const { voice } = getSession(chatId);
+  sessions[String(chatId)] = { step: "idle", voice };
   persist();
 }
