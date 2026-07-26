@@ -21,7 +21,30 @@ const SYSTEM_PROMPT = `Ты — сценарист коротких вертик
 - Первая сцена — цепляющий хук, последняя — призыв к действию.
 - Пиши на языке брифа пользователя.`;
 
-export async function generateScript(brief: string): Promise<GeneratedScript> {
+export interface ScriptRevision {
+  // Предыдущая версия сценария и замечания пользователя — для цикла правок.
+  previousScript: GeneratedScript;
+  feedback: string;
+}
+
+export async function generateScript(
+  brief: string,
+  revision?: ScriptRevision,
+): Promise<GeneratedScript> {
+  const messages: { role: string; content: string }[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: brief },
+  ];
+  if (revision) {
+    messages.push(
+      { role: "assistant", content: JSON.stringify(revision.previousScript) },
+      {
+        role: "user",
+        content: `Перепиши сценарий с учётом замечаний, сохранив формат ответа: ${revision.feedback}`,
+      },
+    );
+  }
+
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -30,10 +53,7 @@ export async function generateScript(brief: string): Promise<GeneratedScript> {
     },
     body: JSON.stringify({
       model: config.openRouterModel,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: brief },
-      ],
+      messages,
       response_format: { type: "json_object" },
     }),
   });

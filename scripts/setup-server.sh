@@ -33,6 +33,10 @@ apt-get update -y
 echo "==> Ставлю базовые утилиты"
 apt-get install -y --no-install-recommends ca-certificates curl gnupg git
 
+# ffmpeg нужен боту для нарезки кадров из референс-видео.
+echo "==> Ставлю ffmpeg"
+apt-get install -y --no-install-recommends ffmpeg
+
 # Node.js 18+ обязателен (в проекте используется встроенный fetch).
 NEED_NODE=1
 if command -v node >/dev/null 2>&1; then

@@ -81,34 +81,52 @@ cp .env.example .env
 sudo bash scripts/setup-server.sh
 ```
 
+## Телеграм-бот
+
+Ролики можно собирать прямо из Telegram: бриф → референс по ссылке с
+Google Drive → согласование сценария (с правками) → согласование картинок
+(с перегенерацией отдельных сцен) → озвучка → готовое видео в чат.
+Настройка: **[docs/BOT.md](docs/BOT.md)**, запуск — `npm run bot`.
+
 ## Структура
 
 ```
 assets/
   characters/shamil.png # эталонное изображение персонажа (Шамиль)
-docs/SERVER.md      # установка и запуск на выделенном сервере
+  music/            # ваша библиотека фоновых треков (в git не попадает)
+docs/
+  SERVER.md         # установка и запуск на выделенном сервере
+  BOT.md            # телеграм-бот: настройка и использование
 scripts/
   setup-server.sh   # установка окружения на Ubuntu/Debian
   auto-deploy.sh    # подтягивание обновлений из GitHub на сервер
+  amg-bot.service   # systemd-сервис для постоянной работы бота
   test-kie-client.mjs # проверка клиента Kie.ai на локальном моке
 src/
   remotion/        # шаблон видео (Remotion)
     Root.tsx        # регистрация композиции, схема входных данных
-    VideoComposition.tsx  # раскладка сцен по таймлайну
+    VideoComposition.tsx  # раскладка сцен по таймлайну + фоновая музыка
     Scene.tsx       # визуальный стиль одной сцены (карточка + подпись)
   pipeline/         # генерация контента
     config.ts        # чтение .env
-    generateScript.ts # запрос к OpenRouter (сценарий)
+    generateScript.ts # запрос к OpenRouter (сценарий, цикл правок)
     kie.ts           # клиент Kie.ai: создание задачи, ожидание, скачивание
     generateImage.ts  # иллюстрация сцены через Kie.ai, STYLE_PROMPT
     generateVoiceover.ts # озвучка через Kie.ai (модель ElevenLabs)
     audioDuration.ts # длительность сгенерированного аудио
+    assets.ts        # пошаговые операции: аудио/картинка сцены, музыка
     buildVideoData.ts # сборка data/video-data.json
     index.ts          # CLI-точка входа (npm run generate)
+  bot/              # телеграм-бот (npm run bot)
+    index.ts         # диалог, согласования, очередь
+    state.ts         # состояние диалога (data/bot-state.json)
+    drive.ts         # скачивание референса с Google Drive
+    referenceStyle.ts # кадры из референса -> описание стиля (vision)
   types.ts          # схема данных видео (zod), общая для pipeline и Remotion
 public/audio/       # аудио-дорожки сцен (генерируются, в git не попадают)
 public/images/      # иллюстрации сцен (генерируются, в git не попадают)
-data/               # video-data.json (генерируется, в git не попадает)
+public/music/       # трек текущего ролика (копируется из assets/music)
+data/               # video-data.json, bot-state.json (в git не попадают)
 ```
 
 ## Проверки

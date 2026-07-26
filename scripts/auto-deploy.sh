@@ -53,3 +53,12 @@ else
 fi
 
 log "Готово, версия на сервере: $(git rev-parse --short HEAD) ($(git log -1 --format=%s))"
+
+# Если бот установлен как systemd-сервис — перезапускаем, чтобы он подхватил
+# новый код. На машинах без сервиса эта строка молча ничего не делает.
+if command -v systemctl >/dev/null 2>&1 &&
+  systemctl list-unit-files amg-bot.service >/dev/null 2>&1 &&
+  systemctl is-enabled amg-bot.service >/dev/null 2>&1; then
+  log "Перезапускаю amg-bot"
+  systemctl restart amg-bot.service || log "Не удалось перезапустить amg-bot"
+fi

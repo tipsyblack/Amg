@@ -20,11 +20,21 @@ export const calculateVideoMetadata: CalculateMetadataFunction<
   };
 };
 
-export const VideoComposition: React.FC<VideoData> = ({ scenes }) => {
+export const VideoComposition: React.FC<VideoData> = ({
+  scenes,
+  musicFileName,
+}) => {
   let startFrame = 0;
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#ffffff" }}>
+      {musicFileName && (
+        <Audio
+          src={staticFile(`music/${musicFileName}`)}
+          volume={0.12}
+          loop
+        />
+      )}
       {scenes.map((scene, index) => {
         const from = startFrame;
         startFrame += scene.durationInFrames;

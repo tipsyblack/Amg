@@ -6,6 +6,7 @@
   "description": "Пайплайн автогенерации коротких видео: сценарий (OpenRouter) + озвучка (ElevenLabs) + сборка ролика (Remotion)",
   "scripts": {
     "generate": "tsx src/pipeline/index.ts",
+    "bot": "tsx src/bot/index.ts",
     "preview": "remotion studio src/remotion/index.ts",
     "render": "remotion render src/remotion/index.ts VideoComposition out/video.mp4 --props=data/video-data.json",
     "typecheck": "tsc --noEmit",
@@ -15,11 +16,12 @@
     "@remotion/cli": "4.0.499",
     "@remotion/google-fonts": "4.0.499",
     "@remotion/renderer": "4.0.499",
-    "remotion": "4.0.499",
+    "dotenv": "16.4.5",
+    "grammy": "1.45.1",
+    "music-metadata": "10.5.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "dotenv": "16.4.5",
-    "music-metadata": "10.5.1",
+    "remotion": "4.0.499",
     "zod": "4.4.3"
   },
   "devDependencies": {

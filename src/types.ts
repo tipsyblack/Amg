@@ -15,6 +15,8 @@ export const videoDataSchema = z.object({
   fps: z.number().int().positive(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
+  // Необязательно: фоновая музыка из public/music/, играет тихо под озвучкой.
+  musicFileName: z.string().optional(),
   scenes: z.array(sceneSchema).min(1),
 });
 
