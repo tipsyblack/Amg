@@ -51,6 +51,12 @@ export const config = {
   kieImageModel: env("KIE_IMAGE_MODEL") ?? "google/nano-banana-edit",
   // Музыка (Suno через Kie.ai). Считается дольше картинок — свой лимит.
   kieMusicModel: env("KIE_MUSIC_MODEL") ?? "V5",
+  // Suno у Kie.ai требует callBackUrl обязательно, но нам он не нужен: мы
+  // сами опрашиваем статус задачи. Поэтому здесь заглушка на зарезервированном
+  // IANA домене example.com — Kie.ai постучится в пустоту и это ни на что не
+  // влияет. Если однажды поднимете свой обработчик, впишите его адрес.
+  kieMusicCallbackUrl:
+    env("KIE_MUSIC_CALLBACK_URL") ?? "https://example.com/kie-music-callback",
   kieMusicTimeoutMs: Number(env("KIE_MUSIC_TIMEOUT_SECONDS") ?? 600) * 1000,
   kiePollIntervalMs: Number(env("KIE_POLL_INTERVAL_SECONDS") ?? 3) * 1000,
   kieTimeoutMs: Number(env("KIE_TIMEOUT_SECONDS") ?? 600) * 1000,

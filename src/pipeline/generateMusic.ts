@@ -94,6 +94,9 @@ async function createMusicTask(prompt: string): Promise<string> {
       customMode: false,
       instrumental: true,
       model: config.kieMusicModel,
+      // Обязательное поле у Suno (без него 422 "Please enter callBackUrl"),
+      // хотя результат мы забираем опросом статуса, а не колбэком.
+      callBackUrl: config.kieMusicCallbackUrl,
     }),
   });
 

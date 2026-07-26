@@ -105,6 +105,8 @@ check("instrumental=true (фон без вокала)", createBody.instrumental 
 check("customMode=false (простой режим)", createBody.customMode === false);
 check("промпт передан", createBody.prompt.includes("Upbeat"));
 check("модель передана", typeof createBody.model === "string" && createBody.model.length > 0, createBody.model);
+// Suno отвечает 422 "Please enter callBackUrl", если поля нет.
+check("callBackUrl передан", typeof createBody.callBackUrl === "string" && createBody.callBackUrl.startsWith("http"), createBody.callBackUrl);
 
 console.log("\n=== ошибки ===");
 scenario = "fail";
