@@ -3,7 +3,7 @@ import path from "node:path";
 import type { VideoData } from "../types";
 import { getAudioDurationInSeconds } from "./audioDuration";
 import { config } from "./config";
-import { generateSceneImage, STYLE_PROMPT } from "./generateImage";
+import { generateSceneImage, NO_TEXT_RULE, STYLE_PROMPT } from "./generateImage";
 import { synthesizeSpeech, type TtsProvider } from "./generateVoiceover";
 
 export const PUBLIC_AUDIO_DIR = path.resolve("public/audio");
@@ -31,7 +31,13 @@ export function buildImagePrompt(
   const styleAddition = styleNotes
     ? `\n\nДополнительные заметки о стиле из референса пользователя (учитывай их, не ломая описанный выше стиль и персонажа): ${styleNotes}`
     : "";
-  return `${STYLE_PROMPT}${styleAddition}\n\nСцена: ${scene.caption}. Контекст: ${scene.voiceoverText}`;
+  // NO_TEXT_RULE идёт после заметок из референса: те могут упоминать надписи
+  // (в референсе они есть), и запрет должен быть последним словом.
+  return (
+    `${STYLE_PROMPT}${styleAddition}` +
+    `\n\nСцена: ${scene.caption}. Контекст: ${scene.voiceoverText}` +
+    `\n\n${NO_TEXT_RULE}`
+  );
 }
 
 export async function generateSceneAudio(
