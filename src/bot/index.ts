@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -31,6 +31,20 @@ if (!token) {
 }
 
 const bot = new Bot(token);
+
+// Версия кода, на которой работает бот — показывается в /start, чтобы было
+// видно, доехал ли свежий деплой.
+let botVersion = "неизвестна";
+try {
+  const { stdout } = await promisify(execFile)("git", [
+    "rev-parse",
+    "--short",
+    "HEAD",
+  ]);
+  botVersion = stdout.trim();
+} catch {
+  // не в git-репозитории — не критично
+}
 
 // Необязательное ограничение "только мой чат": если переменная пуста, бот
 // открыт всем, кто его найдёт (осознанное решение для личного использования).
@@ -229,10 +243,44 @@ bot.command(["start", "help"], async (ctx) => {
   await ctx.reply(
     "Бот собирает короткие вертикальные ролики с Шамилем.\n\n" +
       "/new — начать новый ролик\n" +
-      "/cancel — сбросить текущий диалог\n\n" +
+      "/cancel — сбросить текущий диалог\n" +
+      "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
-      "картинки с перегенерацией → озвучка и сборка.",
+      "картинки с перегенерацией → озвучка и сборка.\n\n" +
+      `Версия кода: ${botVersion}`,
   );
+});
+
+bot.command("deploy", async (ctx) => {
+  if (generationRunning) {
+    await ctx.reply(
+      "Идёт генерация — обновлюсь, когда закончится. Попробуйте /deploy позже.",
+    );
+    return;
+  }
+  await ctx.reply(
+    "Обновляюсь с GitHub… Если были изменения, перезапущусь — снова буду " +
+      "на связи через минуту-другую. Проверить версию — /start",
+  );
+  const script = path.resolve("scripts/auto-deploy.sh");
+  try {
+    // Отдельный transient-юнит systemd: переживает перезапуск самого бота,
+    // который auto-deploy делает в конце.
+    await execFileAsync("systemd-run", [
+      "--collect",
+      `--unit=amg-manual-deploy-${Date.now()}`,
+      "/bin/bash",
+      script,
+    ]);
+  } catch {
+    // Нет systemd (например, запуск через npm run bot вручную) — обычный
+    // отвязанный процесс.
+    const child = spawn("/bin/bash", [script], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+  }
 });
 
 bot.command("cancel", async (ctx) => {

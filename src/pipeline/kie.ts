@@ -42,6 +42,7 @@ async function createTask(
   });
 
   if (!response.ok) {
+    console.error("Kie.ai createTask payload:", JSON.stringify({ model, input }));
     throw new Error(
       `Kie.ai createTask (${model}) вернул ошибку ${response.status}: ${await response.text()}`,
     );
@@ -49,6 +50,7 @@ async function createTask(
 
   const body = (await response.json()) as CreateTaskResponse;
   if (body.code !== 200 || !body.data?.taskId) {
+    console.error("Kie.ai createTask payload:", JSON.stringify({ model, input }));
     throw new Error(
       `Kie.ai createTask (${model}) не создал задачу: code=${body.code}, msg=${body.msg}`,
     );
