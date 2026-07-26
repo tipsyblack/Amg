@@ -17,6 +17,8 @@ const scenarios = {
 const pollCounts = {};
 const requests = [];
 
+let flakyCreateCalls = 0;
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
 
@@ -29,6 +31,21 @@ const server = createServer(async (req, res) => {
       contentType: req.headers["content-type"],
       body: parsed,
     });
+    // Сценарий "нестабильный сервис": первые два createTask падают 500-й,
+    // третий проходит — проверяем, что ретраи спасают.
+    if (parsed.input.__scenario === "task-flaky") {
+      flakyCreateCalls++;
+      if (flakyCreateCalls <= 2) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ code: 500, msg: "internal error" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({ code: 200, msg: "success", data: { taskId: "task-ok-flaky" } }),
+      );
+      return;
+    }
     const taskId = parsed.input.__scenario ?? "task-ok";
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ code: 200, msg: "success", data: { taskId } }));
@@ -98,6 +115,7 @@ process.env.KIE_API_KEY = "test-key";
 process.env.OPENROUTER_API_KEY = "test-key";
 process.env.KIE_POLL_INTERVAL_SECONDS = "0.05";
 process.env.KIE_TIMEOUT_SECONDS = "5";
+process.env.KIE_RETRY_BASE_SECONDS = "0.02";
 
 const { runKieTask } = await import("../src/pipeline/kie.ts");
 
@@ -131,7 +149,8 @@ check("Content-Type json", first.contentType === "application/json");
 check("model на верхнем уровне", first.body.model === "elevenlabs/text-to-speech-multilingual-v2");
 check("input вложен", first.body.input?.text === "привет");
 
-console.log("\n3) задача завершилась ошибкой");
+console.log("\n3) задача завершилась ошибкой (с ретраями)");
+const createCallsBefore = requests.length;
 try {
   await runKieTask({
     model: "m",
@@ -142,7 +161,20 @@ try {
   check("должно было упасть", false);
 } catch (error) {
   check("сообщение содержит причину от сервиса", error.message.includes("нет кредитов"), error.message);
+  const attempts = requests.length - createCallsBefore;
+  check("сделано ровно 5 попыток", attempts === 5, `попыток: ${attempts}`);
 }
+
+console.log("\n3а) временный сбой createTask лечится ретраем");
+const flakyOut = path.join(workDir, "flaky.bin");
+await runKieTask({
+  model: "m",
+  input: { __scenario: "task-flaky" },
+  outFile: flakyOut,
+  label: "тест-флаки",
+});
+check("успех с 3-й попытки", flakyCreateCalls === 3, `createTask вызовов: ${flakyCreateCalls}`);
+check("файл скачан после ретраев", (await readFile(flakyOut, "utf8")) === "СОДЕРЖИМОЕ-РЕЗУЛЬТАТА");
 
 console.log("\n4) success без результата");
 try {

@@ -72,6 +72,10 @@ function extractResultUrls(
   return parsed.resultUrls ?? [];
 }
 
+// Таймаут ожидания не ретраим: каждая попытка длится до kieTimeoutMs, и
+// повторы растянули бы одну зависшую сцену на десятки минут.
+class KieTimeoutError extends Error {}
+
 async function waitForTask(taskId: string, label: string): Promise<string[]> {
   const deadline = Date.now() + config.kieTimeoutMs;
 
@@ -110,7 +114,7 @@ async function waitForTask(taskId: string, label: string): Promise<string[]> {
     await new Promise((resolve) => setTimeout(resolve, config.kiePollIntervalMs));
   }
 
-  throw new Error(
+  throw new KieTimeoutError(
     `Kie.ai (${label}) не ответил за ${Math.round(config.kieTimeoutMs / 1000)} с — ` +
       "задача слишком долгая или зависла. Можно увеличить KIE_TIMEOUT_SECONDS.",
   );
@@ -130,6 +134,9 @@ async function downloadToFile(url: string, outFile: string): Promise<void> {
  * Запускает задачу в Kie.ai, ждёт результат и сохраняет первый файл на диск.
  * Возвращает ссылку на результат — её можно передать следующей задаче как
  * входное изображение (Kie.ai принимает картинки только по URL).
+ *
+ * Сбои Kie.ai (ошибка создания задачи, state=fail, пустой результат, сбой
+ * скачивания) ретраятся до config.kieMaxAttempts раз с растущей паузой.
  */
 export async function runKieTask({
   model,
@@ -142,8 +149,28 @@ export async function runKieTask({
   outFile: string;
   label: string;
 }): Promise<string> {
-  const taskId = await createTask(model, input);
-  const [resultUrl] = await waitForTask(taskId, label);
-  await downloadToFile(resultUrl, outFile);
-  return resultUrl;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= config.kieMaxAttempts; attempt++) {
+    try {
+      const taskId = await createTask(model, input);
+      const [resultUrl] = await waitForTask(taskId, label);
+      await downloadToFile(resultUrl, outFile);
+      return resultUrl;
+    } catch (error) {
+      if (error instanceof KieTimeoutError) throw error;
+      lastError = error;
+      if (attempt === config.kieMaxAttempts) break;
+
+      const delayMs = config.kieRetryBaseMs * 2 ** (attempt - 1);
+      console.error(
+        `Kie.ai (${label}): попытка ${attempt} из ${config.kieMaxAttempts} не удалась, ` +
+          `повтор через ${Math.round(delayMs / 1000)} с: ` +
+          (error instanceof Error ? error.message : String(error)),
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError;
 }

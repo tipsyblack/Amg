@@ -39,6 +39,10 @@ export const config = {
   kieImageModel: env("KIE_IMAGE_MODEL") ?? "google/nano-banana-edit",
   kiePollIntervalMs: Number(env("KIE_POLL_INTERVAL_SECONDS") ?? 3) * 1000,
   kieTimeoutMs: Number(env("KIE_TIMEOUT_SECONDS") ?? 600) * 1000,
+  // Повторы при сбоях Kie.ai: сколько попыток на задачу и базовая пауза
+  // между ними (растёт вдвое с каждой попыткой: 2с, 4с, 8с, 16с).
+  kieMaxAttempts: Number(env("KIE_MAX_ATTEMPTS") ?? 5),
+  kieRetryBaseMs: Number(env("KIE_RETRY_BASE_SECONDS") ?? 2) * 1000,
 
   characterReferenceUrl:
     env("CHARACTER_REFERENCE_URL") ?? DEFAULT_CHARACTER_REFERENCE_URL,
