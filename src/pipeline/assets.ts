@@ -9,6 +9,7 @@ import {
   STYLE_PROMPT,
 } from "./generateImage";
 import { synthesizeSpeech, type TtsProvider } from "./generateVoiceover";
+import { getImageSize } from "./imageDimensions";
 
 export const PUBLIC_AUDIO_DIR = path.resolve("public/audio");
 export const PUBLIC_IMAGES_DIR = path.resolve("public/images");
@@ -74,15 +75,27 @@ export async function generateSceneIllustration(
   prompt: string,
   previousSceneUrl?: string,
   modelKey?: string,
-): Promise<{ imageFileName: string; resultUrl: string }> {
+): Promise<{
+  imageFileName: string;
+  resultUrl: string;
+  imageWidth?: number;
+  imageHeight?: number;
+}> {
   const imageFileName = `scene-${index}.png`;
+  const outFile = path.join(PUBLIC_IMAGES_DIR, imageFileName);
   const resultUrl = await generateSceneImage({
     prompt,
-    outFile: path.join(PUBLIC_IMAGES_DIR, imageFileName),
+    outFile,
     previousSceneUrl,
     modelKey,
   });
-  return { imageFileName, resultUrl };
+  const size = await getImageSize(outFile);
+  return {
+    imageFileName,
+    resultUrl,
+    imageWidth: size?.width,
+    imageHeight: size?.height,
+  };
 }
 
 /**

@@ -7,6 +7,10 @@ export const sceneSchema = z.object({
   // Необязательно: без картинки Scene.tsx покажет заглушку.
   // Пайплайн кладёт сюда сгенерированный файл из public/images/.
   imageFileName: z.string().optional(),
+  // Реальные размеры картинки: по ним карточка подстраивает пропорции, чтобы
+  // не обрезать изображение, если модель вернула не вертикаль.
+  imageWidth: z.number().int().positive().optional(),
+  imageHeight: z.number().int().positive().optional(),
   durationInFrames: z.number().int().positive(),
 });
 

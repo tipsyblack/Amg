@@ -21,9 +21,27 @@ const CARD_DRIFT = 14; // px, вертикальный сдвиг карточк
 const CAPTION_RISE = 46; // px, подъём подписи на входе
 const CAPTION_DELAY = 5; // кадров: подпись появляется чуть позже карточки
 
+// Пропорции карточки, если размеры картинки неизвестны — как в референсе.
+const DEFAULT_CARD_ASPECT = 0.74;
+// Границы: слишком узкая карточка выдавила бы подпись за кадр, слишком
+// широкая перестала бы походить на референс.
+const MIN_CARD_ASPECT = 0.66;
+const MAX_CARD_ASPECT = 1;
+
+/**
+ * Карточка повторяет пропорции самой картинки: модели иногда отдают квадрат
+ * вместо вертикали, и жёсткая рамка обрезала бы его по бокам.
+ */
+function cardAspect(width?: number, height?: number): number {
+  if (!width || !height) return DEFAULT_CARD_ASPECT;
+  return Math.min(Math.max(width / height, MIN_CARD_ASPECT), MAX_CARD_ASPECT);
+}
+
 interface SceneProps {
   caption: string;
   imageFileName?: string;
+  imageWidth?: number;
+  imageHeight?: number;
   sceneIndex: number;
   // Кроссфейд со предыдущей сценой: сколько кадров проявляется вся сцена
   // целиком, включая фон. У первой сцены — 0.
@@ -48,6 +66,8 @@ function captionFontSize(caption: string): number {
 export const Scene: React.FC<SceneProps> = ({
   caption,
   imageFileName,
+  imageWidth,
+  imageHeight,
   sceneIndex,
   fadeInFrames,
   visualDuration,
@@ -112,7 +132,7 @@ export const Scene: React.FC<SceneProps> = ({
       <div
         style={{
           width: "82%",
-          aspectRatio: "0.74",
+          aspectRatio: String(cardAspect(imageWidth, imageHeight)),
           border: "10px solid #0d0d0d",
           borderRadius: 28,
           overflow: "hidden",

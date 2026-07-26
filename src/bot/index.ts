@@ -239,13 +239,14 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
           continue;
         }
         await ctx.reply(`🎨 Сцена ${i + 1} из ${script.scenes.length}…`);
-        const { imageFileName, resultUrl } = await generateSceneIllustration(
+        const illustration = await generateSceneIllustration(
           i,
           buildImagePrompt(script.scenes[i], session.styleNotes),
           previousSceneUrl,
           session.imageModel,
         );
-        images[i] = { imageFileName, resultUrl };
+        const { imageFileName, resultUrl } = illustration;
+        images[i] = illustration;
         previousSceneUrl = resultUrl;
         updateSession(chatId, { images });
         await ctx.replyWithPhoto(
@@ -278,13 +279,14 @@ async function regenerateScene(
       }
 
       await ctx.reply(`🎨 Перегенерирую сцену ${index + 1}…`);
-      const { imageFileName, resultUrl } = await generateSceneIllustration(
+      const illustration = await generateSceneIllustration(
         index,
         buildImagePrompt(script.scenes[index], session.styleNotes),
         images[index - 1]?.resultUrl,
         session.imageModel,
       );
-      images[index] = { imageFileName, resultUrl };
+      const { imageFileName } = illustration;
+      images[index] = illustration;
       updateSession(chatId, { step: "idle", images });
 
       await ctx.replyWithPhoto(
@@ -329,6 +331,8 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         voiceoverText: script.scenes[i].voiceoverText,
         audioFileName: audio[i].audioFileName,
         imageFileName: images[i].imageFileName,
+        imageWidth: images[i].imageWidth,
+        imageHeight: images[i].imageHeight,
         durationInFrames: audio[i].durationInFrames,
       });
     }
@@ -358,8 +362,17 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       { timeout: 20 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 },
     );
 
+    // Размеры и длительность обязательны: без них Telegram не знает пропорций
+    // и показывает вертикальный ролик квадратным превью.
+    const totalFrames = scenes.reduce((sum, s) => sum + s.durationInFrames, 0);
     await ctx.replyWithVideo(new InputFile(path.resolve("out/video.mp4")), {
-      caption: `«${script.title}» готово. Новый ролик — /new`,
+      caption:
+        `«${script.title}» готово (${videoData.width}×${videoData.height}). ` +
+        "Новый ролик — /new",
+      width: videoData.width,
+      height: videoData.height,
+      duration: Math.round(totalFrames / videoData.fps),
+      supports_streaming: true,
     });
     resetSession(chatId);
     },

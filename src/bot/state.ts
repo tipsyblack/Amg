@@ -17,6 +17,8 @@ export type Step =
 export interface SceneImage {
   imageFileName: string;
   resultUrl: string;
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
 export interface SceneAudio {

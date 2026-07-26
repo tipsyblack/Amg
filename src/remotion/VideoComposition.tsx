@@ -55,6 +55,8 @@ export const VideoComposition: React.FC<VideoData> = ({
               <Scene
                 caption={scene.caption}
                 imageFileName={scene.imageFileName}
+                imageWidth={scene.imageWidth}
+                imageHeight={scene.imageHeight}
                 sceneIndex={index}
                 fadeInFrames={index === 0 ? 0 : CROSSFADE_FRAMES}
                 visualDuration={visualDuration}

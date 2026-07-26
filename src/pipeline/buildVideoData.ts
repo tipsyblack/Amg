@@ -29,18 +29,20 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       scriptScene.voiceoverText,
     );
 
-    const { imageFileName, resultUrl } = await generateSceneIllustration(
+    const illustration = await generateSceneIllustration(
       i,
       buildImagePrompt(scriptScene),
       previousSceneUrl,
     );
-    previousSceneUrl = resultUrl;
+    previousSceneUrl = illustration.resultUrl;
 
     scenes.push({
       caption: scriptScene.caption,
       voiceoverText: scriptScene.voiceoverText,
       audioFileName,
-      imageFileName,
+      imageFileName: illustration.imageFileName,
+      imageWidth: illustration.imageWidth,
+      imageHeight: illustration.imageHeight,
       durationInFrames,
     });
   }
