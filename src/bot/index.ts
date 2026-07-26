@@ -490,10 +490,28 @@ bot.command("voice", async (ctx) => {
 
   if (!requested) {
     const resolved = resolveVoiceId(current);
+
+    // По ID непонятно, какой из клонов выбран, поэтому спрашиваем имя у
+    // ElevenLabs — это главный способ проверить, что активен нужный голос.
+    let named = "";
+    if (isElevenLabsAvailable()) {
+      try {
+        const voices = await listVoices();
+        const match = voices.find((v) => v.voiceId === resolved);
+        named = match
+          ? `\nИмя в ElevenLabs: «${match.name}» (${match.category})`
+          : "\nВ вашем аккаунте ElevenLabs такого голоса нет — возможно, " +
+            "он удалён или это голос из Kie.ai.";
+      } catch {
+        named = "";
+      }
+    }
+
     await ctx.reply(
       `Текущий голос: ${resolved}` +
         (resolved === current ? "" : ` (имя «${current}» → ID)`) +
-        "\n\nСменить: /voice <voice_id>\n" +
+        named +
+        "\n\nСменить: /voice <voice_id>, список — /voices\n" +
         "Kie.ai понимает только ID голоса, не имя. Имена классических " +
         `голосов подставляются автоматически (${KNOWN_VOICE_NAMES.join(", ")}), ` +
         "остальные указывайте как ID из библиотеки ElevenLabs или кабинета " +
@@ -581,8 +599,16 @@ bot.command("voices", async (ctx) => {
     const premade = voices.filter((v) => v.category === "premade");
     const others = voices.filter((v) => v.category !== "premade");
 
+    const active = resolveVoiceId(
+      getSession(ctx.chat.id).voice ?? config.kieTtsVoice,
+    );
     const format = (list: typeof voices) =>
-      list.map((v) => `• ${v.name} — ${v.voiceId}`).join("\n");
+      list
+        .map(
+          (v) =>
+            `${v.voiceId === active ? "▶️" : "•"} ${v.name} — ${v.voiceId}`,
+        )
+        .join("\n");
 
     let text = `Голосов доступно: ${voices.length}\n\n`;
     if (premade.length) {
@@ -597,7 +623,9 @@ bot.command("voices", async (ctx) => {
         format(others.slice(0, 10)) +
         "\n\n";
     }
-    text += "Выбрать: /voice <id> — бот сразу пришлёт пробную фразу.";
+    text +=
+      "▶️ — голос, выбранный сейчас.\n" +
+      "Выбрать другой: /voice <id> — бот сразу пришлёт пробную фразу.";
 
     await ctx.reply(text);
   });
@@ -677,7 +705,12 @@ async function addCloneSample(
   await extractAudio(sourceFile, target);
   const seconds = await audioDurationSeconds(target);
   const next = [...samples, target];
-  updateSession(chatId, { cloneSamples: next });
+  // Шаг возвращаем явно: withGeneration после успешной задачи сбрасывает
+  // "busy" в "idle", а сбор сэмплов должен продолжаться до /done.
+  updateSession(chatId, {
+    cloneSamples: next,
+    step: "awaiting_clone_links",
+  });
 
   let total = 0;
   for (const file of next) total += await audioDurationSeconds(file);
@@ -690,6 +723,18 @@ async function addCloneSample(
       "Когда всё пришлёте — /done. Отменить — /cancel.",
   );
 }
+
+bot.command("done", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const samples = getSession(chatId).cloneSamples ?? [];
+  if (samples.length === 0) {
+    await ctx.reply(
+      "Нечего завершать: сэмплы для клонирования не собраны. Начать — /clone",
+    );
+    return;
+  }
+  await runCloneStep(ctx, chatId);
+});
 
 bot.command("clone", async (ctx) => {
   if (!isElevenLabsAvailable()) {

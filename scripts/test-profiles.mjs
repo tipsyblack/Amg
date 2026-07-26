@@ -66,6 +66,19 @@ check("удаление несуществующего не падает", state
 const reused = state.saveProfile(111, { name: "Снова", brief: "b" });
 check("освободившийся id переиспользуется", reused.id === "p2", reused.id);
 
+console.log("\n=== сбор сэмплов для клонирования ===");
+// Баг, который это ловит: страховка в withGeneration сбрасывала шаг в "idle"
+// после каждого принятого файла, и /done перестаёт распознаваться.
+state.updateSession(111, { step: "awaiting_clone_links", cloneName: "Шамиль2" });
+state.updateSession(111, { cloneSamples: ["/tmp/s0.mp3"], step: "awaiting_clone_links" });
+check("шаг сбора сохранился", state.getSession(111).step === "awaiting_clone_links", state.getSession(111).step);
+state.updateSession(111, { cloneSamples: ["/tmp/s0.mp3", "/tmp/s1.mp3"], step: "awaiting_clone_links" });
+check("сэмплы накапливаются", state.getSession(111).cloneSamples.length === 2);
+check("имя клона держится", state.getSession(111).cloneName === "Шамиль2");
+// Даже если шаг сбился, сэмплы остаются — /done как команда их подхватит.
+state.updateSession(111, { step: "idle" });
+check("сэмплы живы при сбросе шага", (state.getSession(111).cloneSamples ?? []).length === 2);
+
 console.log("\n=== запись на диск в новом формате ===");
 const onDisk = JSON.parse(readFileSync(path.join(workDir, "data/bot-state.json"), "utf-8"));
 check("есть разделы sessions и profiles", "sessions" in onDisk && "profiles" in onDisk);
