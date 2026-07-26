@@ -15,7 +15,8 @@
     "test:elevenlabs": "tsx scripts/test-elevenlabs.mjs",
     "test:images": "tsx scripts/test-image-models.mjs",
     "test:profiles": "tsx scripts/test-profiles.mjs",
-    "test:timing": "tsx scripts/test-timing.mjs"
+    "test:timing": "tsx scripts/test-timing.mjs",
+    "test:music": "tsx scripts/test-music.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",

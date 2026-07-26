@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Scene, VideoData } from "../types";
 import { getAudioDurationInSeconds } from "./audioDuration";
@@ -98,6 +98,31 @@ export async function generateSceneIllustration(
     imageWidth: size?.width,
     imageHeight: size?.height,
   };
+}
+
+export async function listMusicTracks(): Promise<string[]> {
+  try {
+    const files = await readdir(MUSIC_LIBRARY_DIR);
+    return files.filter((f) => AUDIO_EXTENSIONS.has(path.extname(f).toLowerCase()));
+  } catch {
+    return [];
+  }
+}
+
+export async function ensureMusicLibraryDir(): Promise<void> {
+  await mkdir(MUSIC_LIBRARY_DIR, { recursive: true });
+}
+
+export async function deleteMusicTrack(fileName: string): Promise<boolean> {
+  // Имя приходит из чата — берём только базовое, чтобы нельзя было выйти
+  // из папки библиотеки.
+  const safe = path.basename(fileName);
+  try {
+    await rm(path.join(MUSIC_LIBRARY_DIR, safe));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

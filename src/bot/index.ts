@@ -7,13 +7,18 @@ import { promisify } from "node:util";
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import {
   buildImagePrompt,
+  deleteMusicTrack,
   ensureDirs,
+  ensureMusicLibraryDir,
+  fitToBudget,
   generateSceneAudio,
   generateSceneIllustration,
-  fitToBudget,
+  listMusicTracks,
+  MUSIC_LIBRARY_DIR,
   pickMusic,
   writeVideoData,
 } from "../pipeline/assets";
+import { generateMusicTrack, MUSIC_PRESETS } from "../pipeline/generateMusic";
 import { config } from "../pipeline/config";
 import { generateScript } from "../pipeline/generateScript";
 import {
@@ -414,6 +419,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/voices — список голосов, доступных вашему ключу ElevenLabs\n" +
       "/model — модель озвучки\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
+      "/music — фоновая музыка: библиотека и генерация\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
@@ -630,6 +636,66 @@ bot.command("tts", async (ctx) => {
   updateSession(chatId, { ttsProvider: requested });
   await ctx.reply(
     `Провайдер озвучки: ${requested}. Проверить — /voice ${getSession(chatId).voice ?? config.kieTtsVoice}`,
+  );
+});
+
+// ——— Фоновая музыка: библиотека в assets/music, генерация через Kie.ai ———
+
+bot.command("music", async (ctx) => {
+  const tracks = await listMusicTracks();
+  const keyboard = new InlineKeyboard();
+  for (const preset of MUSIC_PRESETS) {
+    keyboard.text(`🎵 ${preset.title}`, `music_gen_${preset.key}`).row();
+  }
+  if (tracks.length > 0) {
+    keyboard.text("🗑 Очистить библиотеку", "music_clear");
+  }
+
+  await ctx.reply(
+    (tracks.length === 0
+      ? "Библиотека музыки пуста — ролики собираются без фона.\n\n"
+      : `В библиотеке ${tracks.length} трек(ов):\n` +
+        tracks.map((t) => `• ${t}`).join("\n") +
+        "\n\nДля каждого ролика берётся случайный.\n\n") +
+      "Сгенерировать трек (Suno через Kie.ai, ~1-2 минуты, тратит кредиты). " +
+      "Можно нажать несколько раз — соберётся набор на разные настроения:",
+    { reply_markup: keyboard },
+  );
+});
+
+bot.callbackQuery(/^music_gen_(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = ctx.chat!.id;
+  const preset = MUSIC_PRESETS.find((p) => p.key === ctx.match[1]);
+  if (!preset) {
+    await ctx.reply("Не знаю такого пресета. Список — /music");
+    return;
+  }
+
+  await withGeneration(ctx, chatId, async () => {
+    await ensureMusicLibraryDir();
+    await ctx.reply(
+      `🎵 Генерирую трек «${preset.title}» — это займёт минуту-две…`,
+    );
+    const fileName = `${preset.key}-${Date.now()}.mp3`;
+    const outFile = path.join(MUSIC_LIBRARY_DIR, fileName);
+    const info = await generateMusicTrack(preset.prompt, outFile);
+
+    await ctx.replyWithAudio(new InputFile(outFile), {
+      title: info.title ?? preset.title,
+      caption:
+        `Добавлен в библиотеку: ${fileName}\n` +
+        "Будет случайно подмешиваться в ролики. Ещё треки — /music",
+    });
+  });
+});
+
+bot.callbackQuery("music_clear", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const tracks = await listMusicTracks();
+  for (const track of tracks) await deleteMusicTrack(track);
+  await ctx.reply(
+    `Удалено треков: ${tracks.length}. Ролики снова будут без фоновой музыки.`,
   );
 });
 

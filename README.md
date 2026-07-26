@@ -101,7 +101,8 @@ Google Drive → согласование сценария (с правками)
 ```
 assets/
   characters/shamil.png # эталонное изображение персонажа (Шамиль)
-  music/            # ваша библиотека фоновых треков (в git не попадает)
+  music/            # библиотека фоновых треков: /music в боте или свои
+                    # файлы (в git не попадает)
 docs/
   SERVER.md         # установка и запуск на выделенном сервере
   BOT.md            # телеграм-бот: настройка и использование
@@ -126,6 +127,7 @@ src/
     kie.ts           # клиент Kie.ai: создание задачи, ожидание, скачивание
     generateImage.ts  # иллюстрация сцены через Kie.ai, STYLE_PROMPT
     generateVoiceover.ts # озвучка через Kie.ai (модель ElevenLabs)
+    generateMusic.ts # фоновая музыка через Kie.ai (Suno), 7 пресетов
     audioDuration.ts # длительность сгенерированного аудио
     assets.ts        # пошаговые операции: аудио/картинка сцены, музыка
     buildVideoData.ts # сборка data/video-data.json
@@ -154,6 +156,7 @@ npm run test:elevenlabs # список голосов и расшифровка 
 npm run test:images # форматы запросов моделей генерации картинок
 npm run test:profiles # профили продуктов и хранилище состояния бота
 npm run test:timing # лимит длины ролика и набор вариантов анимации
+npm run test:music  # генерация музыки на моке и библиотека треков
 ```
 
 `npm run test:kie` поднимает фальшивый сервер Kie.ai и проверяет асинхронный

@@ -49,6 +49,9 @@ export const config = {
   elevenLabsApiKey: env("ELEVENLABS_API_KEY"),
   elevenLabsModelId: env("ELEVENLABS_MODEL_ID") ?? "eleven_multilingual_v2",
   kieImageModel: env("KIE_IMAGE_MODEL") ?? "google/nano-banana-edit",
+  // Музыка (Suno через Kie.ai). Считается дольше картинок — свой лимит.
+  kieMusicModel: env("KIE_MUSIC_MODEL") ?? "V5",
+  kieMusicTimeoutMs: Number(env("KIE_MUSIC_TIMEOUT_SECONDS") ?? 600) * 1000,
   kiePollIntervalMs: Number(env("KIE_POLL_INTERVAL_SECONDS") ?? 3) * 1000,
   kieTimeoutMs: Number(env("KIE_TIMEOUT_SECONDS") ?? 600) * 1000,
   // Повторы при сбоях Kie.ai: сколько попыток на задачу и базовая пауза
