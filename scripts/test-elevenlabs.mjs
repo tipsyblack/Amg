@@ -2,8 +2,14 @@ import { createServer } from 'node:http';
 
 const PORT = 45793;
 let mode = 'voices';
+let voicesMode = 'ok';
 const server = createServer(async (req, res) => {
   if (req.url === '/voices') {
+    if (voicesMode === 'no-permission') {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end('{"detail":{"message":"The API key you used is missing the permission voices_read to execute this operation.","status":"missing_permissions"}}');
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ voices: [
       { voice_id: '9BWtsMINqrJLrRacOk9x', name: 'Aria', category: 'premade' },
@@ -47,6 +53,17 @@ const voices = await el.listVoices();
 check('голоса разобраны, безымянный без id отброшен', voices.length === 3, String(voices.length));
 check('premade помечены', voices.filter(v => v.category === 'premade').length === 2);
 check('имя и id на месте', voices[0].name === 'Aria' && voices[0].voiceId === '9BWtsMINqrJLrRacOk9x');
+
+console.log('=== список голосов без права voices_read ===');
+voicesMode = 'no-permission';
+try {
+  await el.listVoices();
+  check('должно было упасть', false);
+} catch (e) {
+  check('объяснено про право voices_read', e.message.includes('voices_read'), e.message.slice(0, 60));
+  check('подсказан путь через сайт без прав', e.message.includes('Voice ID'));
+}
+voicesMode = 'ok';
 
 console.log('=== расшифровка ошибок ===');
 for (const [m, expect] of [

@@ -34,8 +34,20 @@ export async function listVoices(): Promise<ElevenLabsVoice[]> {
     headers: { "xi-api-key": config.elevenLabsApiKey },
   });
   if (!response.ok) {
+    const body = await response.text();
+    if (body.includes("voices_read")) {
+      throw new Error(
+        "У ключа ElevenLabs нет права voices_read, поэтому список голосов " +
+          "через API недоступен.\n\n" +
+          "Либо добавьте это право (elevenlabs.io → Settings → API Keys → " +
+          "ваш ключ → включить Voices Read), либо возьмите ID голоса вручную: " +
+          "elevenlabs.io → Voices / My Voices → выбрать голос → там же " +
+          "показан Voice ID. Права для этого не нужны.\n\n" +
+          "Затем: /voice <id>",
+      );
+    }
     throw new Error(
-      `ElevenLabs (список голосов) вернул ошибку ${response.status}: ${await response.text()}`,
+      `ElevenLabs (список голосов) вернул ошибку ${response.status}: ${body}`,
     );
   }
 
