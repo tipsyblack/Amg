@@ -65,6 +65,27 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
+// Telegram помечает команды сущностью bot_command, и bot.command() ищет
+// именно её. Но если текст пришёл с форматированием — например, команду
+// скопировали из сообщения, где она была в обратных кавычках, — пометки нет,
+// и команда молча проваливается в обработчик обычного текста. Восстанавливаем.
+bot.use(async (ctx, next) => {
+  const message = ctx.message;
+  if (message?.text?.startsWith("/")) {
+    const alreadyMarked = message.entities?.some(
+      (entity) => entity.type === "bot_command" && entity.offset === 0,
+    );
+    if (!alreadyMarked) {
+      const length = message.text.split(/\s/, 1)[0].length;
+      message.entities = [
+        { type: "bot_command", offset: 0, length },
+        ...(message.entities ?? []),
+      ];
+    }
+  }
+  await next();
+});
+
 // Генерация тяжёлая и одна на весь процесс: пока идёт — новые не начинаем.
 let generationRunning = false;
 
@@ -93,6 +114,11 @@ async function withGeneration(
   updateSession(chatId, { step: "busy" });
   try {
     await task();
+    // Страховка: если задача не выставила шаг сама, диалог не должен остаться
+    // навсегда "занят" — иначе бот перестаёт отвечать на что-либо.
+    if (getSession(chatId).step === "busy") {
+      updateSession(chatId, { step: "idle" });
+    }
   } catch (error) {
     console.error(error);
     updateSession(chatId, { step: options.errorStep ?? "idle" });
@@ -704,7 +730,17 @@ bot.on("message:text", async (ctx) => {
     }
 
     case "busy": {
-      await ctx.reply("Идёт генерация, подождите…");
+      // generationRunning — правда о том, работает ли что-то прямо сейчас;
+      // шаг в сессии мог просто остаться от прерванной задачи.
+      if (generationRunning) {
+        await ctx.reply("Идёт генерация, подождите…");
+      } else {
+        updateSession(chatId, { step: "idle" });
+        await ctx.reply(
+          "Прошлая задача уже не выполняется — состояние сброшено. " +
+            "Повторите команду или начните новый ролик: /new",
+        );
+      }
       return;
     }
 

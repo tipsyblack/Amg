@@ -3,14 +3,15 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Пайплайн автогенерации коротких видео: сценарий (OpenRouter) + озвучка (ElevenLabs) + сборка ролика (Remotion)",
+  "description": "Пайплайн автогенерации коротких видео: сценарий (OpenRouter) + картинки и озвучка (Kie.ai) + сборка ролика (Remotion)",
   "scripts": {
     "generate": "tsx src/pipeline/index.ts",
     "bot": "tsx src/bot/index.ts",
     "preview": "remotion studio src/remotion/index.ts",
     "render": "remotion render src/remotion/index.ts VideoComposition out/video.mp4 --props=data/video-data.json",
     "typecheck": "tsc --noEmit",
-    "test:kie": "tsx scripts/test-kie-client.mjs"
+    "test:kie": "tsx scripts/test-kie-client.mjs",
+    "test:bot": "tsx scripts/test-bot-commands.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",
