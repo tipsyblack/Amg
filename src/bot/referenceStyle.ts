@@ -14,6 +14,17 @@ const VISION_PROMPT = `Перед тобой кадры из видеороли�
 палитра, характер контура, манера отрисовки, фон, композиция, настроение.
 4-6 предложений, без вступлений и выводов — только сама инструкция.`;
 
+async function assertFfmpegInstalled(): Promise<void> {
+  try {
+    await execFileAsync("ffprobe", ["-version"]);
+  } catch {
+    throw new Error(
+      "На сервере не установлен ffmpeg (нужен для разбора референса). " +
+        "Выполните на сервере: sudo apt install -y ffmpeg — и повторите.",
+    );
+  }
+}
+
 async function videoDurationSeconds(file: string): Promise<number> {
   const { stdout } = await execFileAsync("ffprobe", [
     "-v",
@@ -36,6 +47,7 @@ async function videoDurationSeconds(file: string): Promise<number> {
  * описать стиль. Возвращает текст-инструкцию для промпта генерации картинок.
  */
 export async function extractStyleNotes(videoFile: string): Promise<string> {
+  await assertFfmpegInstalled();
   const duration = await videoDurationSeconds(videoFile);
   const workDir = await mkdtemp(path.join(tmpdir(), "amg-ref-"));
 
