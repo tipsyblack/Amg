@@ -154,6 +154,11 @@ npm run test:kie    # клиент Kie.ai на локальном моке (бе
 - **OpenRouter** (сценарий): модель задаётся через `OPENROUTER_MODEL` (по
   умолчанию `google/gemini-2.5-flash`). Список ID моделей может меняться,
   актуальный — на openrouter.ai/models.
+- **Резервная озвучка**: прокси Kie.ai для моделей ElevenLabs бывает
+  нестабилен (отдаёт свои `internal error` при работающей генерации картинок
+  тем же ключом). На этот случай есть прямой путь к ElevenLabs — добавьте
+  `ELEVENLABS_API_KEY` в `.env` и переключитесь командой `/tts elevenlabs`
+  в боте (или `TTS_PROVIDER=elevenlabs`).
 - **Kie.ai** (озвучка + картинки): один ключ `KIE_API_KEY` на оба сервиса.
   API асинхронный — задача создаётся, потом опрашивается до готовности; вся
   эта логика в `src/pipeline/kie.ts`. Модели задаются через `KIE_TTS_MODEL`

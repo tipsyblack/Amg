@@ -41,6 +41,13 @@ export const config = {
   kieTtsSpeed: Number(env("KIE_TTS_SPEED") ?? 1),
   // Пусто = модель определяет язык сама.
   kieTtsLanguageCode: env("KIE_TTS_LANGUAGE_CODE") ?? "",
+
+  // Резервная озвучка напрямую через ElevenLabs — нужна, когда прокси Kie.ai
+  // для их моделей лежит. Провайдер: "kie" (по умолчанию) или "elevenlabs";
+  // переключается командой /tts в боте.
+  ttsProvider: (env("TTS_PROVIDER") ?? "kie") as "kie" | "elevenlabs",
+  elevenLabsApiKey: env("ELEVENLABS_API_KEY"),
+  elevenLabsModelId: env("ELEVENLABS_MODEL_ID") ?? "eleven_multilingual_v2",
   kieImageModel: env("KIE_IMAGE_MODEL") ?? "google/nano-banana-edit",
   kiePollIntervalMs: Number(env("KIE_POLL_INTERVAL_SECONDS") ?? 3) * 1000,
   kieTimeoutMs: Number(env("KIE_TIMEOUT_SECONDS") ?? 600) * 1000,

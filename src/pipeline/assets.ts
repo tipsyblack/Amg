@@ -4,7 +4,7 @@ import type { VideoData } from "../types";
 import { getAudioDurationInSeconds } from "./audioDuration";
 import { config } from "./config";
 import { generateSceneImage, STYLE_PROMPT } from "./generateImage";
-import { synthesizeSpeech } from "./generateVoiceover";
+import { synthesizeSpeech, type TtsProvider } from "./generateVoiceover";
 
 export const PUBLIC_AUDIO_DIR = path.resolve("public/audio");
 export const PUBLIC_IMAGES_DIR = path.resolve("public/images");
@@ -39,10 +39,17 @@ export async function generateSceneAudio(
   voiceoverText: string,
   voiceOverride?: string,
   modelOverride?: string,
+  providerOverride?: TtsProvider,
 ): Promise<{ audioFileName: string; durationInFrames: number }> {
   const audioFileName = `scene-${index}.mp3`;
   const audioPath = path.join(PUBLIC_AUDIO_DIR, audioFileName);
-  await synthesizeSpeech(voiceoverText, audioPath, voiceOverride, modelOverride);
+  await synthesizeSpeech(
+    voiceoverText,
+    audioPath,
+    voiceOverride,
+    modelOverride,
+    providerOverride,
+  );
   const durationSeconds =
     (await getAudioDurationInSeconds(audioPath)) + SCENE_PADDING_SECONDS;
   return {

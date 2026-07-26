@@ -1,6 +1,9 @@
 import { config } from "./config";
+import { synthesizeSpeechDirect } from "./elevenlabs";
 import { runKieTask } from "./kie";
 import { resolveVoiceId } from "./voices";
+
+export type TtsProvider = "kie" | "elevenlabs";
 
 // Кандидаты моделей TTS для диагностики (/diag в боте): у Kie.ai слаги
 // моделей меняются, и какая доступна на вашем аккаунте — выясняется опытом.
@@ -34,16 +37,27 @@ export function buildTtsInput(
   return input;
 }
 
-// Озвучка идёт через Kie.ai, который проксирует модели ElevenLabs —
-// отдельный аккаунт и ключ ElevenLabs не нужны.
+/**
+ * Озвучка. По умолчанию через Kie.ai (проксирует модели ElevenLabs, отдельный
+ * ключ не нужен). Провайдер "elevenlabs" — резервный путь напрямую, на случай
+ * сбоев прокси Kie.ai; требует ELEVENLABS_API_KEY в .env.
+ */
 export async function synthesizeSpeech(
   text: string,
   outFile: string,
   voiceOverride?: string,
   modelOverride?: string,
+  providerOverride?: TtsProvider,
 ): Promise<void> {
-  const model = modelOverride ?? config.kieTtsModel;
+  const provider = providerOverride ?? config.ttsProvider;
   const voice = resolveVoiceId(voiceOverride ?? config.kieTtsVoice);
+
+  if (provider === "elevenlabs") {
+    await synthesizeSpeechDirect(text, outFile, voice);
+    return;
+  }
+
+  const model = modelOverride ?? config.kieTtsModel;
   await runKieTask({
     model,
     input: buildTtsInput(text, voice),

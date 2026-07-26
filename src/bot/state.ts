@@ -37,6 +37,7 @@ export interface Session {
   // переопределяют .env и живут между роликами (/new их не трёт).
   voice?: string;
   ttsModel?: string;
+  ttsProvider?: "kie" | "elevenlabs";
 }
 
 const STATE_FILE = path.resolve("data/bot-state.json");
@@ -66,8 +67,8 @@ export function updateSession(chatId: number, patch: Partial<Session>): Session 
 }
 
 export function resetSession(chatId: number): void {
-  // Голос и модель — настройки, а не часть диалога: переживают сброс.
-  const { voice, ttsModel } = getSession(chatId);
-  sessions[String(chatId)] = { step: "idle", voice, ttsModel };
+  // Настройки озвучки — не часть диалога, переживают сброс.
+  const { voice, ttsModel, ttsProvider } = getSession(chatId);
+  sessions[String(chatId)] = { step: "idle", voice, ttsModel, ttsProvider };
   persist();
 }

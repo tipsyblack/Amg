@@ -21,6 +21,10 @@ import {
   TTS_MODEL_CANDIDATES,
 } from "../pipeline/generateVoiceover";
 import { probeKieTask } from "../pipeline/kie";
+import {
+  isElevenLabsAvailable,
+  synthesizeSpeechDirect,
+} from "../pipeline/elevenlabs";
 import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline/voices";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
@@ -263,6 +267,7 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
           script.scenes[i].voiceoverText,
           session.voice,
           session.ttsModel,
+          session.ttsProvider,
         );
         updateSession(chatId, { audio });
       }
@@ -316,6 +321,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/cancel — сбросить текущий диалог\n" +
       "/voice — посмотреть или сменить голос озвучки\n" +
       "/model — модель озвучки\n" +
+      "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
@@ -406,6 +412,7 @@ bot.command("voice", async (ctx) => {
       samplePath,
       resolved,
       getSession(chatId).ttsModel,
+      getSession(chatId).ttsProvider,
     );
     updateSession(chatId, { voice: resolved, step: "idle" });
     await ctx.replyWithVoice(new InputFile(samplePath), {
@@ -432,6 +439,7 @@ bot.command("voiceforce", async (ctx) => {
       samplePath,
       requested,
       getSession(chatId).ttsModel,
+      getSession(chatId).ttsProvider,
     );
     updateSession(chatId, { voice: requested, step: "idle" });
     await ctx.replyWithVoice(new InputFile(samplePath), {
@@ -457,8 +465,40 @@ bot.command("model", async (ctx) => {
   );
 });
 
-// Диагностика озвучки: перебирает модели-кандидаты с текущим голосом и
-// показывает, что именно отвечает Kie.ai по каждой. Первую рабочую сохраняет.
+bot.command("tts", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const requested = ctx.match.trim();
+  const current = getSession(chatId).ttsProvider ?? config.ttsProvider;
+
+  if (requested !== "kie" && requested !== "elevenlabs") {
+    await ctx.reply(
+      `Провайдер озвучки: ${current}\n\n` +
+        "Переключить: /tts kie или /tts elevenlabs\n\n" +
+        "• kie — модели ElevenLabs через Kie.ai, один ключ на всё;\n" +
+        "• elevenlabs — напрямую, нужен ELEVENLABS_API_KEY в .env. Резервный " +
+        "путь, когда прокси Kie.ai для озвучки не работает.\n\n" +
+        `Прямой ElevenLabs сейчас ${isElevenLabsAvailable() ? "доступен (ключ есть)" : "недоступен: нет ключа в .env"}.`,
+    );
+    return;
+  }
+
+  if (requested === "elevenlabs" && !isElevenLabsAvailable()) {
+    await ctx.reply(
+      "Нужен ELEVENLABS_API_KEY в .env на сервере. Добавьте строку\n" +
+        "ELEVENLABS_API_KEY=ваш_ключ\n" +
+        "и перезапустите бота (/deploy или systemctl restart amg-bot).",
+    );
+    return;
+  }
+
+  updateSession(chatId, { ttsProvider: requested });
+  await ctx.reply(
+    `Провайдер озвучки: ${requested}. Проверить — /voice ${getSession(chatId).voice ?? config.kieTtsVoice}`,
+  );
+});
+
+// Диагностика озвучки: перебирает модели Kie.ai и, если есть ключ, проверяет
+// прямой ElevenLabs. Первый рабочий вариант сохраняет.
 bot.command("diag", async (ctx) => {
   const chatId = ctx.chat.id;
   const session = getSession(chatId);
@@ -470,12 +510,12 @@ bot.command("diag", async (ctx) => {
       "Проверяю озвучку.\n" +
         `Голос: ${voice}` +
         (voice === configured ? "" : ` (имя «${configured}» → ID)`) +
-        `\nМоделей к проверке: ${TTS_MODEL_CANDIDATES.length}\n` +
-        "Каждая до 2 минут, подождите…",
+        `\nВариантов к проверке: ${TTS_MODEL_CANDIDATES.length + (isElevenLabsAvailable() ? 1 : 0)}\n` +
+        "Каждый до 2 минут, подождите…",
     );
 
     const lines: string[] = [];
-    let working: string | undefined;
+    let workingModel: string | undefined;
 
     for (const model of TTS_MODEL_CANDIDATES) {
       const result = await probeKieTask({
@@ -483,22 +523,53 @@ bot.command("diag", async (ctx) => {
         input: buildTtsInput("Проверка связи, раз, два, три.", voice),
       });
       lines.push(`${result.ok ? "✅" : "❌"} ${model}\n   ${result.detail}`);
-      if (result.ok && !working) working = model;
+      if (result.ok && !workingModel) workingModel = model;
+    }
+
+    // Резервный путь проверяем, только если Kie.ai не справился.
+    let directWorks = false;
+    if (!workingModel && isElevenLabsAvailable()) {
+      try {
+        await synthesizeSpeechDirect(
+          "Проверка связи, раз, два, три.",
+          path.resolve("out/diag-sample.mp3"),
+          voice,
+        );
+        directWorks = true;
+        lines.push("✅ ElevenLabs напрямую\n   успех");
+      } catch (error) {
+        lines.push(
+          `❌ ElevenLabs напрямую\n   ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
 
     let summary = lines.join("\n\n");
-    if (working) {
-      updateSession(chatId, { ttsModel: working, step: "idle" });
+    if (workingModel) {
+      updateSession(chatId, {
+        ttsModel: workingModel,
+        ttsProvider: "kie",
+        step: "idle",
+      });
       summary +=
-        `\n\nРабочая модель найдена и сохранена: ${working}\n` +
+        `\n\nРабочая модель найдена и сохранена: ${workingModel}\n` +
         "Можно возвращаться к сборке — кнопка «Повторить» выше.";
+    } else if (directWorks) {
+      updateSession(chatId, { ttsProvider: "elevenlabs", step: "idle" });
+      summary +=
+        "\n\nКie.ai не отдаёт озвучку, но прямой ElevenLabs работает — " +
+        "переключил на него. Можно возвращаться к сборке кнопкой «Повторить».";
     } else {
       summary +=
-        "\n\nНи одна модель не отработала. Скорее всего дело в голосе или " +
-        "в балансе Kie.ai:\n" +
-        "• проверьте кредиты в кабинете Kie.ai;\n" +
-        `• попробуйте другой ID голоса: /voice <id> (текущий — ${voice});\n` +
-        "• сверьте список моделей в кабинете и задайте вручную: /model <слаг>.";
+        "\n\nНи один вариант не отработал.\n" +
+        "Судя по ответам, это сбой на стороне Kie.ai (их собственная ошибка " +
+        "предлагает обратиться в поддержку), а не проблема запроса: картинки " +
+        "тем же ключом генерируются нормально.\n\n" +
+        "Что делать:\n" +
+        "• написать в поддержку Kie.ai, приложив текст ошибок выше;\n" +
+        "• тем временем добавить ELEVENLABS_API_KEY в .env и включить " +
+        "резервный путь: /tts elevenlabs;\n" +
+        `• либо попробовать другой голос: /voice <id> (текущий — ${voice}).`;
     }
     await ctx.reply(summary);
   });
