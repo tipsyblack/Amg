@@ -135,6 +135,7 @@ data/               # video-data.json, bot-state.json (в git не попада�
 npm run typecheck   # типы
 npm run test:kie    # клиент Kie.ai на локальном моке (без реальных запросов)
 npm run test:bot    # разбор команд бота (в т.ч. скопированных с форматированием)
+npm run test:elevenlabs # список голосов и расшифровка ошибок ElevenLabs
 ```
 
 `npm run test:kie` поднимает фальшивый сервер Kie.ai и проверяет асинхронный

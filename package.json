@@ -11,7 +11,8 @@
     "render": "remotion render src/remotion/index.ts VideoComposition out/video.mp4 --props=data/video-data.json",
     "typecheck": "tsc --noEmit",
     "test:kie": "tsx scripts/test-kie-client.mjs",
-    "test:bot": "tsx scripts/test-bot-commands.mjs"
+    "test:bot": "tsx scripts/test-bot-commands.mjs",
+    "test:elevenlabs": "tsx scripts/test-elevenlabs.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",

@@ -23,6 +23,7 @@ import {
 import { probeKieTask } from "../pipeline/kie";
 import {
   isElevenLabsAvailable,
+  listVoices,
   synthesizeSpeechDirect,
 } from "../pipeline/elevenlabs";
 import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline/voices";
@@ -346,6 +347,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/new — начать новый ролик\n" +
       "/cancel — сбросить текущий диалог\n" +
       "/voice — посмотреть или сменить голос озвучки\n" +
+      "/voices — список голосов, доступных вашему ключу ElevenLabs\n" +
       "/model — модель озвучки\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
@@ -471,6 +473,50 @@ bot.command("voiceforce", async (ctx) => {
     await ctx.replyWithVoice(new InputFile(samplePath), {
       caption: `Голос ${requested} сохранён.`,
     });
+  });
+});
+
+// Список голосов, доступных вашему ключу ElevenLabs. Состав зависит от
+// тарифа, поэтому спрашиваем у API, а не гадаем по документации.
+bot.command("voices", async (ctx) => {
+  if (!isElevenLabsAvailable()) {
+    await ctx.reply(
+      "Список голосов доступен только для прямого ElevenLabs — нужен " +
+        "ELEVENLABS_API_KEY в .env на сервере.",
+    );
+    return;
+  }
+
+  await withGeneration(ctx, ctx.chat.id, async () => {
+    const voices = await listVoices();
+    if (voices.length === 0) {
+      await ctx.reply("ElevenLabs не вернул ни одного голоса.");
+      return;
+    }
+
+    // На бесплатном тарифе через API работают только premade-голоса.
+    const premade = voices.filter((v) => v.category === "premade");
+    const others = voices.filter((v) => v.category !== "premade");
+
+    const format = (list: typeof voices) =>
+      list.map((v) => `• ${v.name} — ${v.voiceId}`).join("\n");
+
+    let text = `Голосов доступно: ${voices.length}\n\n`;
+    if (premade.length) {
+      text +=
+        "Базовые (premade) — работают и на бесплатном тарифе:\n" +
+        format(premade.slice(0, 25)) +
+        "\n\n";
+    }
+    if (others.length) {
+      text +=
+        "Остальные (библиотечные/клонированные) — требуют платной подписки:\n" +
+        format(others.slice(0, 10)) +
+        "\n\n";
+    }
+    text += "Выбрать: /voice <id> — бот сразу пришлёт пробную фразу.";
+
+    await ctx.reply(text);
   });
 });
 
