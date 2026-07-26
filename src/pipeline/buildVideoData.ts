@@ -9,12 +9,15 @@ import {
   writeVideoData,
 } from "./assets";
 import { config } from "./config";
-import { generateScript } from "./generateScript";
+import { generateScriptWithHook } from "./generateScript";
 
 export async function buildVideoData(brief: string): Promise<VideoData> {
   await ensureDirs();
 
-  const script = await generateScript(brief);
+  const { script, hookFixed } = await generateScriptWithHook(brief);
+  if (hookFixed) {
+    console.log(`Хук переписан: ${hookFixed}`);
+  }
 
   const scenes: Scene[] = [];
   // Ссылка на картинку предыдущей сцены передаётся следующей генерации как

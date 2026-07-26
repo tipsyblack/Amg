@@ -15,9 +15,17 @@ loadCaptionFont();
 const fontFamily = CAPTION_FONT_FAMILY;
 
 const ENTRANCE_DAMPING = 200;
+// У хука пружина мягче — карточка чуть перелетает и садится на место.
+const HOOK_DAMPING = 14;
 const IMAGE_ZOOM = 0.07; // насколько картинка подъезжает за сцену
 const CAPTION_RISE = 46; // px, подъём подписи на входе
 const CAPTION_DELAY = 5; // кадров: подпись появляется чуть позже карточки
+// В хуке текст не ждёт: он и есть то, что цепляет.
+const HOOK_CAPTION_DELAY = 2;
+const HOOK_CAPTION_OVERSHOOT = 1.14;
+// Наезд хука начинается не с точки: первый кадр ролика — это ещё и обложка в
+// ленте, поэтому он должен быть непустым и читаемым сразу.
+const HOOK_PUNCH_FROM = 0.78;
 
 // Пропорции карточки, если размеры картинки неизвестны — как в референсе.
 const DEFAULT_CARD_ASPECT = 0.74;
@@ -77,11 +85,12 @@ export const Scene: React.FC<SceneProps> = ({
   const { fps } = useVideoConfig();
   const motion = sceneMotion(sceneIndex);
 
-  const entrance = spring({ frame, fps, config: { damping: ENTRANCE_DAMPING } });
+  const damping = motion.emphasis ? HOOK_DAMPING : ENTRANCE_DAMPING;
+  const entrance = spring({ frame, fps, config: { damping } });
   const captionEntrance = spring({
-    frame: frame - CAPTION_DELAY,
+    frame: frame - (motion.emphasis ? HOOK_CAPTION_DELAY : CAPTION_DELAY),
     fps,
-    config: { damping: ENTRANCE_DAMPING },
+    config: { damping },
   });
 
   // 0 → 1 за всю сцену: по этому идёт медленный наплыв на картинку.
@@ -132,9 +141,11 @@ export const Scene: React.FC<SceneProps> = ({
   let cardX = 0;
   let cardY = interpolate(entrance, [0, 1], [14, 0]);
   let cardRotate = 0;
-  let cardOpacity = interpolate(entrance, [0, 0.6], [0, 1], {
-    extrapolateRight: "clamp",
-  });
+  // Хук не проявляется: он врубается на первом же кадре и только доезжает
+  // масштабом. Проявление съело бы те самые полсекунды внимания.
+  let cardOpacity = motion.emphasis
+    ? 1
+    : interpolate(entrance, [0, 0.6], [0, 1], { extrapolateRight: "clamp" });
 
   if (motion.entry === "overlay") {
     // Наложение: карточка приходит крупнее и ложится поверх предыдущей.
@@ -144,7 +155,11 @@ export const Scene: React.FC<SceneProps> = ({
     cardX = interpolate(entrance, [0, 1], [520, 0]);
     cardY = 0;
   } else if (motion.entry === "punch") {
-    cardScale = interpolate(entrance, [0, 1], [0.62, 1]);
+    cardScale = interpolate(
+      entrance,
+      [0, 1],
+      [motion.emphasis ? HOOK_PUNCH_FROM : 0.62, 1],
+    );
     cardY = 0;
   } else if (motion.entry === "swing") {
     cardRotate = interpolate(entrance, [0, 1], [-7, 0]);
@@ -174,10 +189,16 @@ export const Scene: React.FC<SceneProps> = ({
     motion.exit === "crumple" ? interpolate(exit, [0, 1], [0, 6]) : 0;
 
   const captionShift = interpolate(captionEntrance, [0, 1], [CAPTION_RISE, 0]);
+  // Подпись хука приходит крупнее и садится в размер — короткий удар по глазу.
+  const captionScale = motion.emphasis
+    ? interpolate(captionEntrance, [0, 1], [HOOK_CAPTION_OVERSHOOT, 1])
+    : 1;
   const captionOpacity =
-    interpolate(captionEntrance, [0, 0.5], [0, 1], {
-      extrapolateRight: "clamp",
-    }) * (exit > 0 ? interpolate(exit, [0, 1], [1, 0.15]) : 1);
+    (motion.emphasis
+      ? 1
+      : interpolate(captionEntrance, [0, 0.5], [0, 1], {
+          extrapolateRight: "clamp",
+        })) * (exit > 0 ? interpolate(exit, [0, 1], [1, 0.15]) : 1);
 
   return (
     <AbsoluteFill
@@ -245,7 +266,7 @@ export const Scene: React.FC<SceneProps> = ({
           textTransform: "uppercase",
           textAlign: "center",
           opacity: captionOpacity,
-          transform: `translateY(${captionShift}px)`,
+          transform: `translateY(${captionShift}px) scale(${captionScale})`,
         }}
       >
         {caption}

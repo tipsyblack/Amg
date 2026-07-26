@@ -14,6 +14,10 @@ const CROSSFADE_FRAMES = 8;
 const SFX_LEAD_FRAMES = 4;
 const SFX_VOLUME = 0.32;
 
+// Звук хука на первом кадре: подъём и удар под наезд карточки. Громче
+// переходных — он должен остановить палец на пролистывании.
+const HOOK_SFX_VOLUME = 0.42;
+
 export const calculateVideoMetadata: CalculateMetadataFunction<
   VideoData
 > = async ({ props }) => {
@@ -41,6 +45,11 @@ export const VideoComposition: React.FC<VideoData> = ({
     <AbsoluteFill style={{ backgroundColor: "#ffffff" }}>
       {musicFileName && (
         <Audio src={staticFile(`music/${musicFileName}`)} volume={0.12} loop />
+      )}
+      {sfxEnabled && (
+        <Sequence from={0}>
+          <Audio src={staticFile("sfx/hook.mp3")} volume={HOOK_SFX_VOLUME} />
+        </Sequence>
       )}
       {scenes.map((scene, index) => {
         const from = startFrame;

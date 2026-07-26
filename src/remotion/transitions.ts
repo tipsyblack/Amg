@@ -12,6 +12,8 @@ export interface SceneMotion {
   sfx: "whoosh" | "swish" | "pop" | "thud";
   // Куда ведёт наплыв на картинку внутри сцены.
   pan: "in" | "out" | "left" | "right";
+  // Усиленная подача: пружина мягче, подпись бьёт крупнее. Нужна хуку.
+  emphasis?: boolean;
 }
 
 // Пары подобраны так, чтобы уход предыдущей сцены сочетался с появлением
@@ -25,6 +27,18 @@ const CYCLE: SceneMotion[] = [
   { entry: "swing", exit: "driftUp", sfx: "whoosh", pan: "out" },
 ];
 
+// Первая сцена — хук. Зритель решает за 1-2 секунды, поэтому кадр должен
+// выстрелить, а не проявиться: наезд из мелкого масштаба с упругой пружиной,
+// подпись сразу крупно, уход — смятием под глухой удар.
+const HOOK_MOTION: SceneMotion = {
+  entry: "punch",
+  exit: "crumple",
+  sfx: "thud",
+  pan: "in",
+  emphasis: true,
+};
+
 export function sceneMotion(index: number): SceneMotion {
+  if (index === 0) return HOOK_MOTION;
   return CYCLE[index % CYCLE.length];
 }

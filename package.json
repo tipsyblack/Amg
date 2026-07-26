@@ -18,7 +18,8 @@
     "test:timing": "tsx scripts/test-timing.mjs",
     "test:music": "tsx scripts/test-music.mjs",
     "test:clone": "tsx scripts/test-voice-clone.mjs",
-    "test:drive": "tsx scripts/test-drive.mjs"
+    "test:drive": "tsx scripts/test-drive.mjs",
+    "test:hook": "tsx scripts/test-hook.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",

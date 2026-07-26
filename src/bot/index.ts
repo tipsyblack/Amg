@@ -29,7 +29,7 @@ import {
   extractAudio,
 } from "./extractAudio";
 import { config } from "../pipeline/config";
-import { generateScript } from "../pipeline/generateScript";
+import { generateScriptWithHook } from "../pipeline/generateScript";
 import {
   buildTtsInput,
   synthesizeSpeech,
@@ -179,7 +179,8 @@ function formatScript(script: {
   const scenes = script.scenes
     .map(
       (scene, i) =>
-        `${i + 1}. ${scene.caption}\n   🎙 ${scene.voiceoverText}`,
+        // Первая сцена — хук, помечаем: по нему решается, досмотрят ли ролик.
+        `${i + 1}. ${i === 0 ? "🪝 " : ""}${scene.caption}\n   🎙 ${scene.voiceoverText}`,
     )
     .join("\n\n");
   return `📋 «${script.title}»\n\n${scenes}`;
@@ -223,7 +224,7 @@ async function runScriptStep(
     async () => {
       const session = getSession(chatId);
       await ctx.reply(feedback ? "Переписываю сценарий…" : "Пишу сценарий…");
-      const script = await generateScript(
+      const { script, hookFixed } = await generateScriptWithHook(
         session.brief ?? "",
         feedback && session.script
           ? { previousScript: session.script, feedback }
@@ -236,6 +237,9 @@ async function runScriptStep(
         images: undefined,
         audio: undefined,
       });
+      if (hookFixed) {
+        await ctx.reply(`🪝 Хук переписал: ${hookFixed}.`);
+      }
       await ctx.reply(formatScript(script), { reply_markup: scriptKeyboard });
     },
     { retryData: "retry_script" },
