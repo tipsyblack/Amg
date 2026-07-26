@@ -1,14 +1,33 @@
 import { writeFile } from "node:fs/promises";
 
 // Скачивание публичного файла с Google Drive по обычной ссылке "Поделиться".
-// Для больших файлов Google сначала отдаёт HTML-страницу "не удалось
-// проверить на вирусы" с формой подтверждения — проходим её автоматически.
+// Тонкостей две: для больших файлов Google сначала отдаёт HTML-страницу
+// "не удалось проверить на вирусы" с формой подтверждения, а для закрытых
+// файлов — страницу входа в аккаунт. Первую проходим, про вторую сообщаем
+// понятным текстом.
 
 export function extractDriveFileId(link: string): string | undefined {
   return (
     link.match(/\/d\/([A-Za-z0-9_-]{10,})/)?.[1] ??
     link.match(/[?&]id=([A-Za-z0-9_-]{10,})/)?.[1]
   );
+}
+
+const NOT_PUBLIC_MESSAGE =
+  "Google Drive потребовал вход в аккаунт — значит файл открыт не для всех.\n\n" +
+  "Откройте его на Drive → «Поделиться» → в разделе «Общий доступ» " +
+  "выберите «Все, у кого есть ссылка» → скопируйте ссылку заново.\n\n" +
+  "Либо пришлите файл прямо в чат (до 20 МБ — для звуковой дорожки хватает).";
+
+function isSignInPage(url: string, html: string): boolean {
+  return (
+    /accounts\.google\.com|\/v3\/signin|ServiceLogin/.test(url) ||
+    /\/v3\/signin|ServiceLogin|Sign in|Войдите/.test(html)
+  );
+}
+
+function isHtml(response: Response): boolean {
+  return (response.headers.get("content-type") ?? "").includes("text/html");
 }
 
 export async function downloadDriveFile(
@@ -27,11 +46,14 @@ export async function downloadDriveFile(
     `https://drive.google.com/uc?export=download&id=${fileId}`,
   );
 
-  if ((response.headers.get("content-type") ?? "").includes("text/html")) {
+  if (isHtml(response)) {
     const html = await response.text();
-    const action =
-      html.match(/action="([^"]+)"/)?.[1] ??
-      "https://drive.usercontent.google.com/download";
+    if (isSignInPage(response.url, html)) {
+      throw new Error(NOT_PUBLIC_MESSAGE);
+    }
+
+    // Страница подтверждения: забираем адрес формы и её скрытые поля.
+    const action = html.match(/action="([^"]+)"/)?.[1];
     const params = new URLSearchParams();
     for (const m of html.matchAll(/name="([^"]+)"\s+value="([^"]*)"/g)) {
       params.set(m[1], m[2]);
@@ -41,16 +63,33 @@ export async function downloadDriveFile(
       params.set("export", "download");
       params.set("confirm", "t");
     }
-    response = await fetch(`${action}?${params.toString()}`);
+
+    // Адрес формы у Google бывает относительным ("/v3/..."), поэтому
+    // разрешаем его относительно страницы, а не подставляем как есть —
+    // иначе fetch падает с "Failed to parse URL".
+    const base = action
+      ? new URL(action, response.url)
+      : new URL("https://drive.usercontent.google.com/download");
+    for (const [key, value] of params) base.searchParams.set(key, value);
+
+    if (isSignInPage(base.toString(), "")) {
+      throw new Error(NOT_PUBLIC_MESSAGE);
+    }
+
+    response = await fetch(base.toString());
   }
 
   if (!response.ok) {
     throw new Error(`Google Drive ответил ошибкой HTTP ${response.status}`);
   }
-  if ((response.headers.get("content-type") ?? "").includes("text/html")) {
+  if (isHtml(response)) {
+    const html = await response.text().catch(() => "");
     throw new Error(
-      "Google Drive не отдал файл. Проверьте, что доступ открыт " +
-        "«всем, у кого есть ссылка».",
+      isSignInPage(response.url, html)
+        ? NOT_PUBLIC_MESSAGE
+        : "Google Drive вернул страницу вместо файла. Проверьте, что доступ " +
+          "открыт «всем, у кого есть ссылка», и что ссылка ведёт на файл, а " +
+          "не на папку.",
     );
   }
 

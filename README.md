@@ -136,7 +136,7 @@ src/
   bot/              # телеграм-бот (npm run bot)
     index.ts         # диалог, согласования, очередь
     state.ts         # состояние диалога и профили (data/bot-state.json)
-    drive.ts         # скачивание референса с Google Drive
+    drive.ts         # скачивание с Google Drive (подтверждение, диагностика доступа)
     referenceStyle.ts # кадры из референса -> описание стиля (vision)
     extractAudio.ts  # дорожка из видео и склейка сэмплов для клонирования
   types.ts          # схема данных видео (zod), общая для pipeline и Remotion
@@ -160,6 +160,7 @@ npm run test:profiles # профили продуктов и хранилище 
 npm run test:timing # лимит длины ролика и набор вариантов анимации
 npm run test:music  # генерация музыки на моке и библиотека треков
 npm run test:clone  # извлечение/склейка дорожек и клонирование голоса
+npm run test:drive  # скачивание с Google Drive и диагностика закрытого доступа
 ```
 
 `npm run test:kie` поднимает фальшивый сервер Kie.ai и проверяет асинхронный
