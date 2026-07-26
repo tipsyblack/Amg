@@ -1,24 +1,112 @@
 import React from "react";
-import { AbsoluteFill, Img, staticFile } from "remotion";
-import { loadFont } from "@remotion/google-fonts/Anton";
+import {
+  AbsoluteFill,
+  Img,
+  interpolate,
+  spring,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
+import { CAPTION_FONT_FAMILY, loadCaptionFont } from "./font";
 
-const { fontFamily } = loadFont();
+loadCaptionFont();
+const fontFamily = CAPTION_FONT_FAMILY;
+
+// Единый язык движения: все сцены анимируются одинаково, меняется только
+// направление наплыва — чтобы ролик читался как одно целое.
+const ENTRANCE_DAMPING = 200;
+const IMAGE_ZOOM = 0.07; // насколько картинка подъезжает за сцену
+const CARD_DRIFT = 14; // px, вертикальный сдвиг карточки на входе
+const CAPTION_RISE = 46; // px, подъём подписи на входе
+const CAPTION_DELAY = 5; // кадров: подпись появляется чуть позже карточки
 
 interface SceneProps {
   caption: string;
   imageFileName?: string;
+  sceneIndex: number;
+  // Кроссфейд со предыдущей сценой: сколько кадров проявляется вся сцена
+  // целиком, включая фон. У первой сцены — 0.
+  fadeInFrames: number;
+  // Длительность этой сцены с учётом перекрытия — по ней считается наплыв на
+  // картинку. Из useVideoConfig пришла бы длина всего ролика.
+  visualDuration: number;
 }
 
-// Разобрано по кадрам присланного референса:
-// белый фон, скруглённая карточка в толстой чёрной рамке, под ней —
-// жирная чёрная капслок-подпись. Смена сцен — жёсткий склей, без фейдов.
-export const Scene: React.FC<SceneProps> = ({ caption, imageFileName }) => {
+/**
+ * Подпись набирается в одну-две строки, поэтому длинным словам нужен меньший
+ * кегль — иначе они вылезают за поля и каждая сцена смотрится по-своему.
+ */
+function captionFontSize(caption: string): number {
+  const longestWord = Math.max(...caption.split(/\s+/).map((w) => w.length), 1);
+  if (longestWord > 13) return 62;
+  if (longestWord > 10) return 74;
+  if (caption.length > 26) return 78;
+  return 92;
+}
+
+export const Scene: React.FC<SceneProps> = ({
+  caption,
+  imageFileName,
+  sceneIndex,
+  fadeInFrames,
+  visualDuration,
+}) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  const entrance = spring({
+    frame,
+    fps,
+    config: { damping: ENTRANCE_DAMPING },
+  });
+  const captionEntrance = spring({
+    frame: frame - CAPTION_DELAY,
+    fps,
+    config: { damping: ENTRANCE_DAMPING },
+  });
+
+  // Медленный наплыв на картинку весь кадр — оживляет статичную иллюстрацию.
+  // Направление чередуется по номеру сцены, но задано детерминированно.
+  const progress = interpolate(
+    frame,
+    [0, Math.max(visualDuration - 1, 1)],
+    [0, 1],
+    { extrapolateRight: "clamp" },
+  );
+
+  // Проявление всей сцены поверх предыдущей — это и есть переход.
+  const sceneOpacity =
+    fadeInFrames > 0
+      ? interpolate(frame, [0, fadeInFrames], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        })
+      : 1;
+  const zoomsIn = sceneIndex % 2 === 0;
+  const imageScale = zoomsIn
+    ? 1 + IMAGE_ZOOM * progress
+    : 1 + IMAGE_ZOOM * (1 - progress);
+  const imageShift = interpolate(progress, [0, 1], zoomsIn ? [0, -10] : [-10, 0]);
+
+  const cardScale = interpolate(entrance, [0, 1], [0.94, 1]);
+  const cardShift = interpolate(entrance, [0, 1], [CARD_DRIFT, 0]);
+  const cardOpacity = interpolate(entrance, [0, 0.6], [0, 1], {
+    extrapolateRight: "clamp",
+  });
+
+  const captionShift = interpolate(captionEntrance, [0, 1], [CAPTION_RISE, 0]);
+  const captionOpacity = interpolate(captionEntrance, [0, 0.5], [0, 1], {
+    extrapolateRight: "clamp",
+  });
+
   return (
     <AbsoluteFill
       style={{
         backgroundColor: "#ffffff",
         alignItems: "center",
         paddingTop: "9%",
+        opacity: sceneOpacity,
       }}
     >
       <div
@@ -33,12 +121,19 @@ export const Scene: React.FC<SceneProps> = ({ caption, imageFileName }) => {
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
+          opacity: cardOpacity,
+          transform: `translateY(${cardShift}px) scale(${cardScale})`,
         }}
       >
         {imageFileName ? (
           <Img
             src={staticFile(`images/${imageFileName}`)}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: `scale(${imageScale}) translateY(${imageShift}px)`,
+            }}
           />
         ) : (
           <div
@@ -60,11 +155,15 @@ export const Scene: React.FC<SceneProps> = ({ caption, imageFileName }) => {
           marginTop: "6%",
           padding: "0 6%",
           fontFamily,
-          fontSize: 84,
+          fontWeight: 700,
+          fontSize: captionFontSize(caption),
           lineHeight: 1.05,
+          letterSpacing: "-0.01em",
           color: "#0d0d0d",
           textTransform: "uppercase",
           textAlign: "center",
+          opacity: captionOpacity,
+          transform: `translateY(${captionShift}px)`,
         }}
       >
         {caption}

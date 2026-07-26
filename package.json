@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",
-    "@remotion/google-fonts": "4.0.499",
     "@remotion/renderer": "4.0.499",
     "dotenv": "16.4.5",
     "grammy": "1.45.1",
