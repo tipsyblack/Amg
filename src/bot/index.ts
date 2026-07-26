@@ -21,6 +21,7 @@ import {
   TTS_MODEL_CANDIDATES,
 } from "../pipeline/generateVoiceover";
 import { probeKieTask } from "../pipeline/kie";
+import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline/voices";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
 import { extractStyleNotes } from "./referenceStyle";
@@ -371,20 +372,59 @@ bot.command("voice", async (ctx) => {
   const current = getSession(chatId).voice ?? config.kieTtsVoice;
 
   if (!requested) {
+    const resolved = resolveVoiceId(current);
     await ctx.reply(
-      `Текущий голос: ${current}\n\n` +
-        "Сменить: /voice <voice_id>\n" +
-        "Нужен именно ID голоса из ElevenLabs (например, " +
-        "21m00Tcm4TlvDq8ikWAM — это Rachel), а не имя: с именем Kie.ai " +
-        "падает с internal error.\n\n" +
-        "ID берутся в библиотеке голосов ElevenLabs или в кабинете Kie.ai. " +
-        "После смены пришлю пробную фразу — послушайте, прежде чем собирать ролик.",
+      `Текущий голос: ${resolved}` +
+        (resolved === current ? "" : ` (имя «${current}» → ID)`) +
+        "\n\nСменить: /voice <voice_id>\n" +
+        "Kie.ai понимает только ID голоса, не имя. Имена классических " +
+        `голосов подставляются автоматически (${KNOWN_VOICE_NAMES.join(", ")}), ` +
+        "остальные указывайте как ID из библиотеки ElevenLabs или кабинета " +
+        "Kie.ai.\n\nПосле смены пришлю пробную фразу — послушайте, прежде чем " +
+        "собирать ролик.",
+    );
+    return;
+  }
+
+  const resolved = resolveVoiceId(requested);
+  if (!looksLikeVoiceId(resolved)) {
+    await ctx.reply(
+      `«${requested}» не похоже на ID голоса (ожидается 20 символов латиницы ` +
+        "и цифр). Имя понимаю только для классических голосов: " +
+        `${KNOWN_VOICE_NAMES.join(", ")}. Для остальных нужен ID.\n\n` +
+        "Всё равно попробовать как есть — /voiceforce " + requested,
     );
     return;
   }
 
   await withGeneration(ctx, chatId, async () => {
-    await ctx.reply(`Пробую голос ${requested}…`);
+    await ctx.reply(`Пробую голос ${resolved}…`);
+    const samplePath = path.resolve("out/voice-sample.mp3");
+    await mkdir(path.dirname(samplePath), { recursive: true });
+    await synthesizeSpeech(
+      VOICE_SAMPLE_TEXT,
+      samplePath,
+      resolved,
+      getSession(chatId).ttsModel,
+    );
+    updateSession(chatId, { voice: resolved, step: "idle" });
+    await ctx.replyWithVoice(new InputFile(samplePath), {
+      caption: `Голос ${resolved} сохранён — будет использован для роликов.`,
+    });
+  });
+});
+
+// Обход проверки формата: если Kie.ai когда-нибудь начнёт принимать имена
+// или у вас голос с нестандартным ID.
+bot.command("voiceforce", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const requested = ctx.match.trim();
+  if (!requested) {
+    await ctx.reply("Использование: /voiceforce <значение голоса>");
+    return;
+  }
+  await withGeneration(ctx, chatId, async () => {
+    await ctx.reply(`Пробую голос ${requested} без проверки формата…`);
     const samplePath = path.resolve("out/voice-sample.mp3");
     await mkdir(path.dirname(samplePath), { recursive: true });
     await synthesizeSpeech(
@@ -395,7 +435,7 @@ bot.command("voice", async (ctx) => {
     );
     updateSession(chatId, { voice: requested, step: "idle" });
     await ctx.replyWithVoice(new InputFile(samplePath), {
-      caption: `Голос ${requested} сохранён — будет использован для роликов.`,
+      caption: `Голос ${requested} сохранён.`,
     });
   });
 });
@@ -422,11 +462,15 @@ bot.command("model", async (ctx) => {
 bot.command("diag", async (ctx) => {
   const chatId = ctx.chat.id;
   const session = getSession(chatId);
-  const voice = session.voice ?? config.kieTtsVoice;
+  const configured = session.voice ?? config.kieTtsVoice;
+  const voice = resolveVoiceId(configured);
 
   await withGeneration(ctx, chatId, async () => {
     await ctx.reply(
-      `Проверяю озвучку.\nГолос: ${voice}\nМоделей к проверке: ${TTS_MODEL_CANDIDATES.length}\n` +
+      "Проверяю озвучку.\n" +
+        `Голос: ${voice}` +
+        (voice === configured ? "" : ` (имя «${configured}» → ID)`) +
+        `\nМоделей к проверке: ${TTS_MODEL_CANDIDATES.length}\n` +
         "Каждая до 2 минут, подождите…",
     );
 
