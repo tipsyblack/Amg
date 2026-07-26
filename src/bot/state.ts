@@ -2,14 +2,18 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { GeneratedScript } from "../pipeline/generateScript";
 
-// Состояние диалога хранится в JSON-файле, чтобы переживать перезапуски
-// бота. Для личного использования этого достаточно; при росте нагрузки
-// заменить на SQLite.
+// Состояние бота хранится в JSON-файле, чтобы переживать перезапуски.
+// Для личного использования этого достаточно; при росте нагрузки заменить
+// на SQLite.
 
 export type Step =
   | "idle"
   | "awaiting_brief"
   | "awaiting_reference"
+  | "awaiting_topic"
+  | "awaiting_profile_name"
+  | "awaiting_profile_brief"
+  | "awaiting_profile_reference"
   | "awaiting_script_feedback"
   | "awaiting_scene_number"
   | "busy";
@@ -26,6 +30,20 @@ export interface SceneAudio {
   durationInFrames: number;
 }
 
+/**
+ * Профиль продукта: роль/контекст для сценариста и разобранный стиль
+ * референса. Смысл в том, чтобы не пересылать референс и не переписывать
+ * бриф для каждого ролика — разбор видео делается один раз.
+ */
+export interface Profile {
+  id: string;
+  name: string;
+  brief: string;
+  styleNotes?: string;
+  referenceLink?: string;
+  createdAt: string;
+}
+
 export interface Session {
   step: Step;
   brief?: string;
@@ -35,38 +53,60 @@ export interface Session {
   // Кэш готовых озвучек: при повторе сборки после сбоя уже озвученные
   // сцены не переозвучиваются (и не оплачиваются) заново.
   audio?: SceneAudio[];
-  // Голос и модель озвучки, выбранные командами /voice, /model, /diag —
+  // Голос, модель озвучки и модель картинок — настройки, а не часть диалога:
   // переопределяют .env и живут между роликами (/new их не трёт).
   voice?: string;
   ttsModel?: string;
   ttsProvider?: "kie" | "elevenlabs";
-  // Модель генерации картинок (ключ из IMAGE_MODELS) — выбирается кнопками
-  // перед отрисовкой, запоминается между роликами.
   imageModel?: string;
+  // Профиль, из которого собирается текущий ролик.
+  profileId?: string;
+  // Профиль в процессе создания.
+  draftProfile?: {
+    name?: string;
+    brief?: string;
+    styleNotes?: string;
+    referenceLink?: string;
+  };
+}
+
+interface Store {
+  sessions: Record<string, Session>;
+  profiles: Record<string, Profile[]>;
 }
 
 const STATE_FILE = path.resolve("data/bot-state.json");
 
-let sessions: Record<string, Session> = {};
+function loadStore(): Store {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
+  } catch {
+    return { sessions: {}, profiles: {} };
+  }
 
-try {
-  sessions = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-} catch {
-  sessions = {};
+  if (raw && typeof raw === "object" && "sessions" in raw) {
+    const store = raw as Partial<Store>;
+    return { sessions: store.sessions ?? {}, profiles: store.profiles ?? {} };
+  }
+  // Старый формат: файл был просто картой сессий. Переносим как есть.
+  return { sessions: (raw as Record<string, Session>) ?? {}, profiles: {} };
 }
+
+const store = loadStore();
 
 function persist(): void {
   mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  writeFileSync(STATE_FILE, JSON.stringify(sessions, null, 2));
+  writeFileSync(STATE_FILE, JSON.stringify(store, null, 2));
 }
 
 export function getSession(chatId: number): Session {
-  return sessions[String(chatId)] ?? { step: "idle" };
+  return store.sessions[String(chatId)] ?? { step: "idle" };
 }
 
 export function updateSession(chatId: number, patch: Partial<Session>): Session {
   const next = { ...getSession(chatId), ...patch };
-  sessions[String(chatId)] = next;
+  store.sessions[String(chatId)] = next;
   persist();
   return next;
 }
@@ -74,7 +114,7 @@ export function updateSession(chatId: number, patch: Partial<Session>): Session 
 export function resetSession(chatId: number): void {
   // Настройки озвучки и картинок — не часть диалога, переживают сброс.
   const { voice, ttsModel, ttsProvider, imageModel } = getSession(chatId);
-  sessions[String(chatId)] = {
+  store.sessions[String(chatId)] = {
     step: "idle",
     voice,
     ttsModel,
@@ -82,4 +122,41 @@ export function resetSession(chatId: number): void {
     imageModel,
   };
   persist();
+}
+
+export function listProfiles(chatId: number): Profile[] {
+  return store.profiles[String(chatId)] ?? [];
+}
+
+export function getProfile(chatId: number, id: string): Profile | undefined {
+  return listProfiles(chatId).find((profile) => profile.id === id);
+}
+
+export function saveProfile(
+  chatId: number,
+  profile: Omit<Profile, "id" | "createdAt">,
+): Profile {
+  const profiles = listProfiles(chatId);
+  // Короткий id: он уезжает в callback_data кнопок, где мало места.
+  const used = new Set(profiles.map((p) => p.id));
+  let n = 1;
+  while (used.has(`p${n}`)) n++;
+
+  const created: Profile = {
+    ...profile,
+    id: `p${n}`,
+    createdAt: new Date().toISOString(),
+  };
+  store.profiles[String(chatId)] = [...profiles, created];
+  persist();
+  return created;
+}
+
+export function deleteProfile(chatId: number, id: string): boolean {
+  const profiles = listProfiles(chatId);
+  const rest = profiles.filter((profile) => profile.id !== id);
+  if (rest.length === profiles.length) return false;
+  store.profiles[String(chatId)] = rest;
+  persist();
+  return true;
 }

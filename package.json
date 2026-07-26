@@ -13,7 +13,8 @@
     "test:kie": "tsx scripts/test-kie-client.mjs",
     "test:bot": "tsx scripts/test-bot-commands.mjs",
     "test:elevenlabs": "tsx scripts/test-elevenlabs.mjs",
-    "test:images": "tsx scripts/test-image-models.mjs"
+    "test:images": "tsx scripts/test-image-models.mjs",
+    "test:profiles": "tsx scripts/test-profiles.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",

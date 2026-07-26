@@ -35,7 +35,15 @@ import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
 import { extractStyleNotes } from "./referenceStyle";
-import { getSession, resetSession, updateSession } from "./state";
+import {
+  deleteProfile,
+  getProfile,
+  getSession,
+  listProfiles,
+  resetSession,
+  saveProfile,
+  updateSession,
+} from "./state";
 
 const execFileAsync = promisify(execFile);
 
@@ -384,6 +392,8 @@ bot.command(["start", "help"], async (ctx) => {
   await ctx.reply(
     "Бот собирает короткие вертикальные ролики с Шамилем.\n\n" +
       "/new — начать новый ролик\n" +
+      "/profiles — профили продуктов (роль + стиль референса)\n" +
+      "/newprofile — создать профиль\n" +
       "/cancel — сбросить текущий диалог\n" +
       "/voice — посмотреть или сменить голос озвучки\n" +
       "/voices — список голосов, доступных вашему ключу ElevenLabs\n" +
@@ -687,23 +697,134 @@ bot.command("diag", async (ctx) => {
 });
 
 bot.command("new", async (ctx) => {
+  const chatId = ctx.chat.id;
   if (generationRunning) {
     await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
     return;
   }
-  updateSession(ctx.chat.id, {
-    step: "awaiting_brief",
+
+  const cleared = {
     brief: undefined,
     styleNotes: undefined,
     script: undefined,
     images: undefined,
     audio: undefined,
-  });
+    profileId: undefined,
+    draftProfile: undefined,
+  };
+
+  const profiles = listProfiles(chatId);
+  if (profiles.length > 0) {
+    updateSession(chatId, { step: "idle", ...cleared });
+    const keyboard = new InlineKeyboard();
+    for (const profile of profiles) {
+      keyboard.text(profile.name, `prof_use_${profile.id}`).row();
+    }
+    keyboard.text("Без профиля (ввести всё вручную)", "prof_none");
+    await ctx.reply("Из какого профиля делаем ролик?", {
+      reply_markup: keyboard,
+    });
+    return;
+  }
+
+  updateSession(chatId, { step: "awaiting_brief", ...cleared });
   await ctx.reply(
     "Опишите ролик: что за продукт, для кого, какой посыл?\n\n" +
       "Например: «Продукт: доступ к нейросетям в Телеграм. Для кого: " +
-      "новички. Посыл: нейросети — это просто.»",
+      "новички. Посыл: нейросети — это просто.»\n\n" +
+      "Чтобы не вводить это каждый раз, создайте профиль: /newprofile",
   );
+});
+
+// ——— Профили: роль и разобранный стиль референса, сохранённые под именем ———
+
+bot.command("profiles", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const profiles = listProfiles(chatId);
+  if (profiles.length === 0) {
+    await ctx.reply(
+      "Профилей пока нет.\n\n" +
+        "Профиль хранит роль/описание продукта и разобранный стиль " +
+        "референс-видео, чтобы не присылать их для каждого ролика. " +
+        "Создать: /newprofile",
+    );
+    return;
+  }
+
+  const keyboard = new InlineKeyboard();
+  for (const profile of profiles) {
+    keyboard
+      .text(`▶️ ${profile.name}`, `prof_use_${profile.id}`)
+      .text("🗑", `prof_del_${profile.id}`)
+      .row();
+  }
+  await ctx.reply(
+    profiles
+      .map(
+        (profile) =>
+          `• ${profile.name}\n  ${profile.brief.slice(0, 120)}${profile.brief.length > 120 ? "…" : ""}\n  Стиль из референса: ${profile.styleNotes ? "есть" : "нет"}`,
+      )
+      .join("\n\n") + "\n\nСоздать ещё — /newprofile",
+    { reply_markup: keyboard },
+  );
+});
+
+bot.command("newprofile", async (ctx) => {
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  updateSession(ctx.chat.id, {
+    step: "awaiting_profile_name",
+    draftProfile: {},
+  });
+  await ctx.reply(
+    "Создаём профиль.\n\nКак его назвать? Коротко, чтобы узнавать в списке — " +
+      "например «Телеграм-бот» или «VK».",
+  );
+});
+
+bot.callbackQuery(/^prof_use_(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = ctx.chat!.id;
+  const profile = getProfile(chatId, ctx.match[1]);
+  if (!profile) {
+    await ctx.reply("Профиль не найден — возможно, удалён. Список: /profiles");
+    return;
+  }
+
+  updateSession(chatId, {
+    step: "awaiting_topic",
+    profileId: profile.id,
+    brief: profile.brief,
+    styleNotes: profile.styleNotes,
+    script: undefined,
+    images: undefined,
+    audio: undefined,
+  });
+  await ctx.reply(
+    `Профиль «${profile.name}».\n\nО чём этот ролик? Напишите тему или ` +
+      "конкретный посыл — роль и стиль уже взяты из профиля.\n\n" +
+      "Если тема не важна, отправьте /skip — сценарист придумает сам.",
+  );
+});
+
+bot.callbackQuery("prof_none", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  updateSession(ctx.chat!.id, { step: "awaiting_brief" });
+  await ctx.reply("Опишите ролик: что за продукт, для кого, какой посыл?");
+});
+
+bot.callbackQuery(/^prof_del_(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = ctx.chat!.id;
+  const profile = getProfile(chatId, ctx.match[1]);
+  if (!profile) {
+    await ctx.reply("Профиль не найден. Список: /profiles");
+    return;
+  }
+  deleteProfile(chatId, profile.id);
+  await ctx.reply(`Профиль «${profile.name}» удалён.`);
 });
 
 bot.callbackQuery("script_ok", async (ctx) => {
@@ -769,6 +890,99 @@ bot.on("message:text", async (ctx) => {
       await ctx.reply(
         "Есть референс-видео для стиля? Пришлите ссылку на Google Drive " +
           "(доступ «всем, у кого есть ссылка»), либо /skip чтобы пропустить.",
+      );
+      return;
+    }
+
+    // Тема конкретного ролика поверх роли из профиля.
+    case "awaiting_topic": {
+      const profileBrief = session.brief ?? "";
+      if (text !== "/skip") {
+        updateSession(chatId, {
+          brief: `${profileBrief}\n\nТема этого ролика: ${text}`,
+        });
+      }
+      await runScriptStep(ctx, chatId);
+      return;
+    }
+
+    case "awaiting_profile_name": {
+      updateSession(chatId, {
+        step: "awaiting_profile_brief",
+        draftProfile: { ...session.draftProfile, name: text },
+      });
+      await ctx.reply(
+        "Теперь роль и контекст — это пойдёт сценаристу в каждом ролике " +
+          "этого профиля.\n\nНапример: «Ты маркетолог. Продукт: доступ к " +
+          "нейросетям в Телеграм. Аудитория: новички. Тон: дружелюбный, с " +
+          "юмором.»",
+      );
+      return;
+    }
+
+    case "awaiting_profile_brief": {
+      updateSession(chatId, {
+        step: "awaiting_profile_reference",
+        draftProfile: { ...session.draftProfile, brief: text },
+      });
+      await ctx.reply(
+        "Пришлите ссылку на референс-видео (Google Drive, доступ «всем, у " +
+          "кого есть ссылка») — разберу стиль один раз и сохраню в профиль.\n\n" +
+          "Либо /skip, если референс не нужен.",
+      );
+      return;
+    }
+
+    case "awaiting_profile_reference": {
+      const draft = session.draftProfile ?? {};
+
+      if (text === "/skip") {
+        const saved = saveProfile(chatId, {
+          name: draft.name ?? "Без названия",
+          brief: draft.brief ?? "",
+        });
+        updateSession(chatId, { step: "idle", draftProfile: undefined });
+        await ctx.reply(
+          `Профиль «${saved.name}» сохранён (без референса).\n\n` +
+            "Сделать ролик — /new, список профилей — /profiles",
+        );
+        return;
+      }
+
+      let styleNotes: string | undefined;
+      await withGeneration(
+        ctx,
+        chatId,
+        async () => {
+          await ctx.reply("Скачиваю референс и разбираю стиль…");
+          const workDir = await mkdtemp(path.join(tmpdir(), "amg-drive-"));
+          try {
+            const videoFile = path.join(workDir, "reference.mp4");
+            await downloadDriveFile(text, videoFile);
+            styleNotes = await extractStyleNotes(videoFile);
+            await ctx.reply(`Стиль из референса:\n\n${styleNotes}`);
+          } finally {
+            await rm(workDir, { recursive: true, force: true });
+          }
+        },
+        {
+          errorStep: "awaiting_profile_reference",
+          errorHint: "Пришлите ссылку ещё раз, либо /skip.",
+        },
+      );
+
+      if (!styleNotes) return;
+
+      const saved = saveProfile(chatId, {
+        name: draft.name ?? "Без названия",
+        brief: draft.brief ?? "",
+        styleNotes,
+        referenceLink: text,
+      });
+      updateSession(chatId, { step: "idle", draftProfile: undefined });
+      await ctx.reply(
+        `Профиль «${saved.name}» сохранён вместе со стилем референса.\n\n` +
+          "Теперь референс присылать не нужно: /new → выбрать профиль → тема.",
       );
       return;
     }

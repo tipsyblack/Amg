@@ -88,6 +88,8 @@ sudo bash scripts/setup-server.sh
 Ролики можно собирать прямо из Telegram: бриф → референс по ссылке с
 Google Drive → согласование сценария (с правками) → согласование картинок
 (с перегенерацией отдельных сцен) → озвучка → готовое видео в чат.
+Роль и стиль референса можно сохранить в **профиль** (`/newprofile`) — тогда
+для очередного ролика достаточно выбрать профиль и назвать тему.
 Настройка: **[docs/BOT.md](docs/BOT.md)**, запуск — `npm run bot`.
 
 ## Структура
@@ -125,7 +127,7 @@ src/
     index.ts          # CLI-точка входа (npm run generate)
   bot/              # телеграм-бот (npm run bot)
     index.ts         # диалог, согласования, очередь
-    state.ts         # состояние диалога (data/bot-state.json)
+    state.ts         # состояние диалога и профили (data/bot-state.json)
     drive.ts         # скачивание референса с Google Drive
     referenceStyle.ts # кадры из референса -> описание стиля (vision)
   types.ts          # схема данных видео (zod), общая для pipeline и Remotion
@@ -144,6 +146,7 @@ npm run test:kie    # клиент Kie.ai на локальном моке (бе
 npm run test:bot    # разбор команд бота (в т.ч. скопированных с форматированием)
 npm run test:elevenlabs # список голосов и расшифровка ошибок ElevenLabs
 npm run test:images # форматы запросов моделей генерации картинок
+npm run test:profiles # профили продуктов и хранилище состояния бота
 ```
 
 `npm run test:kie` поднимает фальшивый сервер Kie.ai и проверяет асинхронный
