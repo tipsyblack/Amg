@@ -29,7 +29,7 @@ import {
   extractAudio,
 } from "./extractAudio";
 import { config } from "../pipeline/config";
-import { generateScriptWithHook } from "../pipeline/generateScript";
+import { generateCheckedScript } from "../pipeline/generateScript";
 import {
   buildTtsInput,
   cloneViaProxyWarning,
@@ -225,7 +225,7 @@ async function runScriptStep(
     async () => {
       const session = getSession(chatId);
       await ctx.reply(feedback ? "Переписываю сценарий…" : "Пишу сценарий…");
-      const { script, hookFixed } = await generateScriptWithHook(
+      const { script, fixes, webSearchUnavailable } = await generateCheckedScript(
         session.brief ?? "",
         feedback && session.script
           ? { previousScript: session.script, feedback }
@@ -238,8 +238,14 @@ async function runScriptStep(
         images: undefined,
         audio: undefined,
       });
-      if (hookFixed) {
-        await ctx.reply(`🪝 Хук переписал: ${hookFixed}.`);
+      for (const fix of fixes) {
+        await ctx.reply(`✏️ Переписал: ${fix}.`);
+      }
+      if (webSearchUnavailable) {
+        await ctx.reply(
+          "⚠️ Веб-поиск не сработал — сценарий написан по знаниям модели, " +
+            "без свежих данных. Тему стоит перепроверить.",
+        );
       }
       await ctx.reply(formatScript(script), { reply_markup: scriptKeyboard });
     },

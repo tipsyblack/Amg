@@ -9,14 +9,16 @@ import {
   writeVideoData,
 } from "./assets";
 import { config } from "./config";
-import { generateScriptWithHook } from "./generateScript";
+import { generateCheckedScript } from "./generateScript";
 
 export async function buildVideoData(brief: string): Promise<VideoData> {
   await ensureDirs();
 
-  const { script, hookFixed } = await generateScriptWithHook(brief);
-  if (hookFixed) {
-    console.log(`Хук переписан: ${hookFixed}`);
+  const { script, fixes, webSearchUnavailable } =
+    await generateCheckedScript(brief);
+  for (const fix of fixes) console.log(`Сценарий переписан: ${fix}`);
+  if (webSearchUnavailable) {
+    console.log("Веб-поиск недоступен — сценарий написан без свежих данных");
   }
 
   const scenes: Scene[] = [];

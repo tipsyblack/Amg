@@ -28,6 +28,12 @@ export const config = {
   // Сценарий — OpenRouter.
   openRouterApiKey: requireEnv("OPENROUTER_API_KEY"),
   openRouterModel: env("OPENROUTER_MODEL") ?? "google/gemini-2.5-flash",
+  // Веб-поиск для сценария (плагин OpenRouter). Нужен, чтобы темы были
+  // актуальными, а не пересказом знаний модели: без него «свежие модели и
+  // тренды» опираются на дату обучения. Стоит порядка $4 за 1000 результатов,
+  // то есть копейки на ролик. SCRIPT_WEB_SEARCH=0 отключает.
+  scriptWebSearch: (env("SCRIPT_WEB_SEARCH") ?? "1") !== "0",
+  scriptWebSearchResults: Number(env("SCRIPT_WEB_SEARCH_RESULTS") ?? 3),
 
   // Озвучка и картинки — Kie.ai (один ключ на оба сервиса).
   kieApiKey: requireEnv("KIE_API_KEY"),
