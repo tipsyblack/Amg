@@ -385,6 +385,8 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         imageWidth: images[i].imageWidth,
         imageHeight: images[i].imageHeight,
         durationInFrames: audio[i].durationInFrames,
+        // Слова с таймингами — для субтитров «по слову».
+        words: audio[i].words,
       });
     }
 

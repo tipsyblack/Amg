@@ -30,6 +30,9 @@ export interface SceneImage {
 export interface SceneAudio {
   audioFileName: string;
   durationInFrames: number;
+  // Слова с таймингами для субтитров: кладём в состояние вместе с озвучкой,
+  // чтобы при повторе сборки не терялись (переозвучка стоит денег).
+  words?: { text: string; startMs: number; endMs: number }[];
 }
 
 /**

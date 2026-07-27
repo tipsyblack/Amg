@@ -30,7 +30,7 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     const scriptScene = script.scenes[i];
     console.log(`Сцена ${i + 1} из ${script.scenes.length}: ${scriptScene.caption}`);
 
-    const { audioFileName, durationInFrames } = await generateSceneAudio(
+    const { audioFileName, durationInFrames, words } = await generateSceneAudio(
       i,
       scriptScene.voiceoverText,
     );
@@ -50,6 +50,7 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       imageWidth: illustration.imageWidth,
       imageHeight: illustration.imageHeight,
       durationInFrames,
+      words,
     });
   }
 

@@ -20,11 +20,17 @@
     "test:clone": "tsx scripts/test-voice-clone.mjs",
     "test:drive": "tsx scripts/test-drive.mjs",
     "test:script": "tsx scripts/test-script.mjs",
-    "test:size": "tsx scripts/test-video-size.mjs"
+    "test:size": "tsx scripts/test-video-size.mjs",
+    "test:subs": "tsx scripts/test-subtitles.mjs"
   },
   "dependencies": {
+    "@remotion/captions": "4.0.499",
     "@remotion/cli": "4.0.499",
+    "@remotion/motion-blur": "4.0.499",
+    "@remotion/paths": "4.0.499",
     "@remotion/renderer": "4.0.499",
+    "@remotion/shapes": "4.0.499",
+    "@remotion/transitions": "4.0.499",
     "dotenv": "16.4.5",
     "grammy": "1.45.1",
     "music-metadata": "10.5.1",

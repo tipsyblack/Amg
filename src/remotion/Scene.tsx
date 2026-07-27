@@ -8,6 +8,8 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import { Accents } from "./Accents";
+import { Subtitles } from "./Subtitles";
 import { CAPTION_FONT_FAMILY, loadCaptionFont } from "./font";
 import { sceneMotion } from "./transitions";
 
@@ -60,6 +62,9 @@ function captionFontSize(caption: string): number {
 
 interface SceneProps {
   caption: string;
+  // Слова озвучки с таймингами — для субтитров «по слову». Нет слов — нет и
+  // субтитров, кадр остаётся как раньше.
+  words?: { text: string; startMs: number; endMs: number }[];
   imageFileName?: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -72,10 +77,15 @@ interface SceneProps {
   visualDuration: number;
   // С этого кадра сцена уходит: под ней уже проявляется следующая.
   exitStartFrame: number;
+  // На стыке работает переход из библиотеки — своё движение карточки на этом
+  // стыке отключаем, иначе два перехода наложатся друг на друга.
+  plainEntry?: boolean;
+  plainExit?: boolean;
 }
 
 export const Scene: React.FC<SceneProps> = ({
   caption,
+  words,
   imageFileName,
   imageWidth,
   imageHeight,
@@ -83,6 +93,8 @@ export const Scene: React.FC<SceneProps> = ({
   fadeInFrames,
   visualDuration,
   exitStartFrame,
+  plainEntry = false,
+  plainExit = false,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -150,7 +162,14 @@ export const Scene: React.FC<SceneProps> = ({
     ? 1
     : interpolate(entrance, [0, 0.6], [0, 1], { extrapolateRight: "clamp" });
 
-  if (motion.entry === "overlay") {
+  if (plainEntry) {
+    // Кадр целиком уже въезжает переходом — карточке достаётся только лёгкий
+    // масштаб, чтобы сцена не выглядела статичной картинкой.
+    cardScale = interpolate(entrance, [0, 1], [0.96, 1]);
+    cardX = 0;
+    cardY = 0;
+    cardOpacity = 1;
+  } else if (motion.entry === "overlay") {
     // Наложение: карточка приходит крупнее и ложится поверх предыдущей.
     cardScale = interpolate(entrance, [0, 1], [1.32, 1]);
     cardY = interpolate(entrance, [0, 1], [-70, 0]);
@@ -170,7 +189,7 @@ export const Scene: React.FC<SceneProps> = ({
   }
 
   // ——— уход карточки (играет под проявляющейся следующей сценой) ———
-  if (exit > 0) {
+  if (exit > 0 && !plainExit) {
     if (motion.exit === "crumple") {
       // Смятие: карточка резко сжимается, кренится и слегка перекашивается —
       // как комкают лист бумаги.
@@ -189,7 +208,9 @@ export const Scene: React.FC<SceneProps> = ({
 
   // Перекос применяем отдельно: он нужен только смятию.
   const crumpleSkew =
-    motion.exit === "crumple" ? interpolate(exit, [0, 1], [0, 10]) : 0;
+    motion.exit === "crumple" && !plainExit
+      ? interpolate(exit, [0, 1], [0, 10])
+      : 0;
 
   const captionShift = interpolate(captionEntrance, [0, 1], [CAPTION_RISE, 0]);
   // Подпись хука приходит крупнее и садится в размер — короткий удар по глазу.
@@ -199,7 +220,7 @@ export const Scene: React.FC<SceneProps> = ({
   // Подпись уходит быстрее карточки и до конца: иначе на удлинённом стыке
   // старый и новый текст видны одновременно и накладываются друг на друга.
   const captionExitFade =
-    exit > 0
+    exit > 0 && !plainExit
       ? interpolate(exit, [0, 0.4], [1, 0], { extrapolateRight: "clamp" })
       : 1;
   const captionOpacity =
@@ -209,15 +230,7 @@ export const Scene: React.FC<SceneProps> = ({
           extrapolateRight: "clamp",
         })) * captionExitFade;
 
-  return (
-    <AbsoluteFill
-      style={{
-        backgroundColor: "#ffffff",
-        alignItems: "center",
-        paddingTop: "9%",
-        opacity: sceneOpacity,
-      }}
-    >
+  const card = (
       <div
         style={{
           width: "82%",
@@ -261,6 +274,21 @@ export const Scene: React.FC<SceneProps> = ({
           </div>
         )}
       </div>
+  );
+
+  return (
+    <AbsoluteFill
+      style={{
+        backgroundColor: "#ffffff",
+        alignItems: "center",
+        paddingTop: "9%",
+        opacity: sceneOpacity,
+      }}
+    >
+      {/* Акценты под карточкой: они украшение, а не содержание. */}
+      <Accents sceneIndex={sceneIndex} exitProgress={plainExit ? 0 : exit} />
+
+      {card}
 
       <div
         style={{
@@ -280,6 +308,10 @@ export const Scene: React.FC<SceneProps> = ({
       >
         {caption}
       </div>
+
+      {words && words.length > 0 && (
+        <Subtitles words={words} exitProgress={plainExit ? 0 : exit} />
+      )}
     </AbsoluteFill>
   );
 };

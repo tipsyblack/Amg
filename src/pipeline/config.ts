@@ -55,6 +55,9 @@ export const config = {
   ttsSimilarityBoost: Number(env("TTS_SIMILARITY_BOOST") ?? 0.9),
   ttsStyle: Number(env("TTS_STYLE") ?? 0),
   ttsSpeakerBoost: (env("TTS_SPEAKER_BOOST") ?? "1") !== "0",
+  // Субтитры по словам. Точные тайминги приходят от прямого ElevenLabs вместе
+  // со звуком; при провайдере kie слова раскладываются приблизительно.
+  wordSubtitles: (env("WORD_SUBTITLES") ?? "1") !== "0",
   // Пусто = модель определяет язык сама.
   kieTtsLanguageCode: env("KIE_TTS_LANGUAGE_CODE") ?? "",
 

@@ -1,3 +1,4 @@
+import type { Caption } from "@remotion/captions";
 import { config } from "./config";
 import {
   isElevenLabsAvailable,
@@ -87,15 +88,19 @@ export async function synthesizeSpeech(
   voiceOverride?: string,
   modelOverride?: string,
   providerOverride?: TtsProvider,
-): Promise<void> {
+): Promise<{ words?: Caption[] }> {
   const provider = providerOverride ?? config.ttsProvider;
   const voice = resolveVoiceId(voiceOverride ?? config.kieTtsVoice);
 
   if (provider === "elevenlabs") {
-    await synthesizeSpeechDirect(text, outFile, voice);
-    return;
+    // Прямой путь умеет отдавать тайминги символов — из них получаются
+    // субтитры по словам без всякого распознавания.
+    return synthesizeSpeechDirect(text, outFile, voice, config.wordSubtitles);
   }
 
+  // У прокси Kie.ai таймингов нет: поле timestamps в их схеме есть, но что
+  // именно возвращается — не документировано, а ломать рабочую озвучку
+  // экспериментом не стоит. Слова для этого пути считаются приблизительно.
   const model = modelOverride ?? config.kieTtsModel;
   await runKieTask({
     model,
@@ -103,4 +108,5 @@ export async function synthesizeSpeech(
     outFile,
     label: `озвучка, модель ${model}, голос ${voice}`,
   });
+  return {};
 }

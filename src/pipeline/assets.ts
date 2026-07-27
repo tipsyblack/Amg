@@ -10,6 +10,7 @@ import {
 } from "./generateImage";
 import { synthesizeSpeech, type TtsProvider } from "./generateVoiceover";
 import { getImageSize } from "./imageDimensions";
+import { wordsForScene } from "./wordTimings";
 
 export const PUBLIC_AUDIO_DIR = path.resolve("public/audio");
 export const PUBLIC_IMAGES_DIR = path.resolve("public/images");
@@ -57,21 +58,33 @@ export async function generateSceneAudio(
   voiceOverride?: string,
   modelOverride?: string,
   providerOverride?: TtsProvider,
-): Promise<{ audioFileName: string; durationInFrames: number }> {
+): Promise<{
+  audioFileName: string;
+  durationInFrames: number;
+  words?: { text: string; startMs: number; endMs: number }[];
+}> {
   const audioFileName = `scene-${index}.mp3`;
   const audioPath = path.join(PUBLIC_AUDIO_DIR, audioFileName);
-  await synthesizeSpeech(
+  const { words } = await synthesizeSpeech(
     voiceoverText,
     audioPath,
     voiceOverride,
     modelOverride,
     providerOverride,
   );
-  const durationSeconds =
-    (await getAudioDurationInSeconds(audioPath)) + SCENE_PADDING_SECONDS;
+  const speechSeconds = await getAudioDurationInSeconds(audioPath);
+  const durationSeconds = speechSeconds + SCENE_PADDING_SECONDS;
+  // Тайминги от провайдера точные; без них раскладываем слова по длительности
+  // реплики — субтитры должны быть в любом случае.
+  const timed = config.wordSubtitles
+    ? wordsForScene(voiceoverText, speechSeconds, words)
+    : [];
   return {
     audioFileName,
     durationInFrames: Math.round(durationSeconds * config.fps),
+    words: timed.length > 0
+      ? timed.map(({ text, startMs, endMs }) => ({ text, startMs, endMs }))
+      : undefined,
   };
 }
 

@@ -268,11 +268,11 @@ check("запрещено вставлять ссылки в текст", prompt
 check("рекомендовано 5-7 сцен", prompt.includes("оптимально 5-7"));
 
 console.log("\n=== визуальный акцент на первой сцене ===");
-const { sceneMotion } = await import("../src/remotion/transitions.ts");
+const { sceneMotion, MOTION_CYCLE_LENGTH } = await import("../src/remotion/transitions.ts");
 check("у хука своё движение", sceneMotion(0).emphasis === true);
 check("хук наезжает, а не проявляется", sceneMotion(0).entry === "punch", sceneMotion(0).entry);
 check("у остальных сцен акцента нет", [1, 2, 3, 4, 5, 6, 7].every((i) => !sceneMotion(i).emphasis));
-check("движение по-прежнему детерминировано", sceneMotion(1).entry === sceneMotion(7).entry);
+check("движение по-прежнему детерминировано", sceneMotion(1).entry === sceneMotion(1 + MOTION_CYCLE_LENGTH).entry);
 
 const { existsSync, statSync } = await import("node:fs");
 check("звук хука в репозитории", existsSync("public/sfx/hook.wav"));

@@ -2,7 +2,9 @@ import React from "react";
 import { AbsoluteFill, Audio, Sequence, staticFile } from "remotion";
 import type { CalculateMetadataFunction } from "remotion";
 import type { VideoData } from "../types";
+import { CutTransition } from "./CutTransition";
 import { Scene } from "./Scene";
+import { TransitionBlur } from "./TransitionBlur";
 import { MIX } from "./mix";
 import { sceneMotion } from "./transitions";
 
@@ -26,6 +28,8 @@ export const VideoComposition: React.FC<VideoData> = ({
   scenes,
   musicFileName,
   sfxEnabled = true,
+  motionBlurEnabled = true,
+  subtitlesEnabled = true,
 }) => {
   let startFrame = 0;
 
@@ -55,21 +59,53 @@ export const VideoComposition: React.FC<VideoData> = ({
           ? scene.durationInFrames
           : scene.durationInFrames + MIX.crossfadeFrames;
 
+        // Переходы из библиотеки задаются уходящей сценой: стык index→index+1
+        // описан в sceneMotion(index).library. Входящая сцена узнаёт о нём,
+        // чтобы не добавлять сверху своё движение и своё проявление.
+        const exitingLibrary = isLast
+          ? undefined
+          : sceneMotion(index).library;
+        const enteringLibrary =
+          index === 0 ? undefined : sceneMotion(index - 1).library;
+        const exitStartFrame = isLast
+          ? visualDuration
+          : scene.durationInFrames;
+
         return (
           <React.Fragment key={`${scene.audioFileName}-${index}`}>
             <Sequence from={from} durationInFrames={visualDuration}>
-              <Scene
-                caption={scene.caption}
-                imageFileName={scene.imageFileName}
-                imageWidth={scene.imageWidth}
-                imageHeight={scene.imageHeight}
-                sceneIndex={index}
-                fadeInFrames={index === 0 ? 0 : MIX.crossfadeFrames}
+              <CutTransition
+                entering={enteringLibrary}
+                exiting={exitingLibrary}
+                transitionFrames={MIX.crossfadeFrames}
+                exitStartFrame={exitStartFrame}
                 visualDuration={visualDuration}
-                exitStartFrame={
-                  isLast ? visualDuration : scene.durationInFrames
-                }
-              />
+              >
+                <TransitionBlur
+                  enterFrames={index === 0 ? 0 : MIX.crossfadeFrames}
+                  exitStartFrame={exitStartFrame}
+                  disabled={
+                    !motionBlurEnabled ||
+                    Boolean(enteringLibrary || exitingLibrary)
+                  }
+                >
+                  <Scene
+                    caption={scene.caption}
+                    words={subtitlesEnabled ? scene.words : undefined}
+                    imageFileName={scene.imageFileName}
+                    imageWidth={scene.imageWidth}
+                    imageHeight={scene.imageHeight}
+                    sceneIndex={index}
+                    fadeInFrames={
+                      index === 0 || enteringLibrary ? 0 : MIX.crossfadeFrames
+                    }
+                    visualDuration={visualDuration}
+                    exitStartFrame={exitStartFrame}
+                    plainEntry={Boolean(enteringLibrary)}
+                    plainExit={Boolean(exitingLibrary)}
+                  />
+                </TransitionBlur>
+              </CutTransition>
             </Sequence>
             {/* Аудио отдельной дорожкой: перекрытие картинки не должно
                 смещать или обрезать озвучку. */}

@@ -1,6 +1,8 @@
 import { writeFile } from "node:fs/promises";
+import type { Caption } from "@remotion/captions";
 import { config } from "./config";
 import { resolveVoiceId } from "./voices";
+import { charactersToWords, type AlignmentPayload } from "./wordTimings";
 
 // Прямой ElevenLabs — резервный путь на случай, когда прокси Kie.ai для
 // моделей ElevenLabs не работает. Синхронный: сразу отдаёт mp3, без задач и
@@ -67,7 +69,11 @@ export async function synthesizeSpeechDirect(
   text: string,
   outFile: string,
   voiceOverride?: string,
-): Promise<void> {
+  // Запросить выравнивание по символам вместе с аудио — из него собираются
+  // тайминги слов для субтитров. Отдельный эндпоинт, зато не нужно ничего
+  // распознавать: модель сама знает, когда произносит каждый символ.
+  withTimestamps = false,
+): Promise<{ words?: Caption[] }> {
   if (!config.elevenLabsApiKey) {
     throw new Error(
       "Резервная озвучка через ElevenLabs недоступна: в .env нет " +
@@ -76,12 +82,16 @@ export async function synthesizeSpeechDirect(
   }
 
   const voiceId = resolveVoiceId(voiceOverride ?? config.kieTtsVoice);
-  const response = await fetch(`${API_BASE}/${voiceId}`, {
+  const url = withTimestamps
+    ? `${API_BASE}/${voiceId}/with-timestamps`
+    : `${API_BASE}/${voiceId}`;
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "xi-api-key": config.elevenLabsApiKey,
       "Content-Type": "application/json",
-      Accept: "audio/mpeg",
+      // Эндпоинт с таймингами отвечает JSON, обычный — сразу mp3.
+      Accept: withTimestamps ? "application/json" : "audio/mpeg",
     },
     body: JSON.stringify({
       text,
@@ -127,5 +137,28 @@ export async function synthesizeSpeechDirect(
     );
   }
 
-  await writeFile(outFile, Buffer.from(await response.arrayBuffer()));
+  if (!withTimestamps) {
+    await writeFile(outFile, Buffer.from(await response.arrayBuffer()));
+    return {};
+  }
+
+  // Формат ответа с таймингами не проверен на живом API из этой песочницы
+  // (доступа наружу нет), поэтому читаем защитно: если структура другая —
+  // сохраняем звук, а слова посчитаются приблизительно выше по стеку.
+  const data = (await response.json()) as {
+    audio_base64?: string;
+    alignment?: AlignmentPayload;
+    normalized_alignment?: AlignmentPayload;
+  };
+  if (!data.audio_base64) {
+    throw new Error(
+      "ElevenLabs вернул ответ с таймингами без звука — попробуйте ещё раз " +
+        "или отключите субтитры по словам.",
+    );
+  }
+  await writeFile(outFile, Buffer.from(data.audio_base64, "base64"));
+
+  const alignment = data.alignment ?? data.normalized_alignment;
+  const words = alignment ? charactersToWords(alignment) : [];
+  return { words: words.length > 0 ? words : undefined };
 }

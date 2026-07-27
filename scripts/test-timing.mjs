@@ -4,7 +4,7 @@ process.env.KIE_API_KEY = "k";
 
 const { fitToBudget } = await import("../src/pipeline/assets.ts");
 const { config } = await import("../src/pipeline/config.ts");
-const { sceneMotion } = await import("../src/remotion/transitions.ts");
+const { sceneMotion, MOTION_CYCLE_LENGTH } = await import("../src/remotion/transitions.ts");
 
 let fails = 0;
 const check = (name, ok, extra = "") => {
@@ -70,7 +70,21 @@ check(
   motions.map((m) => m.sfx).join(" "),
 );
 check("подряд идущие сцены разные", motions.slice(0, 5).every((m, i, arr) => i === 0 || m.entry !== arr[i - 1].entry));
-check("выбор детерминирован", sceneMotion(3).entry === sceneMotion(3).entry && sceneMotion(9).entry === sceneMotion(3).entry);
+check(
+  "выбор детерминирован и повторяется по длине цикла",
+  sceneMotion(3).entry === sceneMotion(3).entry &&
+    sceneMotion(3 + MOTION_CYCLE_LENGTH).entry === sceneMotion(3).entry,
+  `цикл из ${MOTION_CYCLE_LENGTH} вариантов`,
+);
+// Библиотечные переходы (шторка, переворот, круговая развёртка) должны быть в
+// наборе, но не на каждом стыке: иначе теряются свои анимации карточки.
+const libraryCuts = motions.filter((m) => m.library);
+check("библиотечные переходы есть", libraryCuts.length >= 2, libraryCuts.map((m) => m.library).join(", "));
+check("но не на каждом стыке", libraryCuts.length < motions.length / 2, `${libraryCuts.length} из ${motions.length}`);
+check(
+  "на библиотечном стыке карточка не уезжает сама",
+  motions.every((m) => !m.library || m.exit === "none"),
+);
 
 console.log("\n=== звуки стыков: файлы есть и они резкие ===");
 // Звуки на стыке должны быть щелчками и хлопками, а не наплывами: атака в
