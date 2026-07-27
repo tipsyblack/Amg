@@ -9,12 +9,14 @@ import { buildSubtitlePages, pageAt } from "./subtitlePages";
 
 // Кегль и отступ снизу: на телефоне субтитры должны читаться с расстояния, а
 // нижние 8-10% кадра перекрывает интерфейс площадки (подписи, кнопки).
+// Отступ 13%, а не 10%: подписи под картинкой больше нет, и субтитры подняты
+// ближе к карточке — иначе между ними висит белая полоса.
 const FONT_SIZE = 60;
 const INK = "#0d0d0d";
 
 interface SubtitlesProps {
   words: { text: string; startMs: number; endMs: number }[];
-  // Гаснут вместе со сценой, как подпись: на стыке два текста не нужны.
+  // Гаснут вместе со сценой: на стыке два текста подряд не нужны.
   exitProgress: number;
 }
 
@@ -40,7 +42,7 @@ export const Subtitles: React.FC<SubtitlesProps> = ({
     <div
       style={{
         position: "absolute",
-        bottom: "10%",
+        bottom: "13%",
         left: 0,
         right: 0,
         display: "flex",

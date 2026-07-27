@@ -90,7 +90,6 @@ export const VideoComposition: React.FC<VideoData> = ({
                   }
                 >
                   <Scene
-                    caption={scene.caption}
                     words={subtitlesEnabled ? scene.words : undefined}
                     overlay={scene.overlay}
                     imageFileName={scene.imageFileName}

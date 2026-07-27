@@ -15,6 +15,8 @@ import { CAPTION_FONT_FAMILY, loadCaptionFont } from "./font";
 import { sceneMotion } from "./transitions";
 import type { Overlay as OverlayData } from "../types";
 
+// Шрифт грузим здесь же: им набраны субтитры, а в самой сцене остался только
+// текст заглушки на случай отсутствия картинки.
 loadCaptionFont();
 const fontFamily = CAPTION_FONT_FAMILY;
 
@@ -25,21 +27,23 @@ const ENTRANCE_DAMPING = 26;
 // У хука пружина мягче — карточка чуть перелетает и садится на место.
 const HOOK_DAMPING = 14;
 const IMAGE_ZOOM = 0.13; // насколько картинка подъезжает за сцену
-const CAPTION_RISE = 72; // px, подъём подписи на входе
-const CAPTION_DELAY = 5; // кадров: подпись появляется чуть позже карточки
-// В хуке текст не ждёт: он и есть то, что цепляет.
-const HOOK_CAPTION_DELAY = 2;
-const HOOK_CAPTION_OVERSHOOT = 1.14;
 // Наезд хука начинается не с точки: первый кадр ролика — это ещё и обложка в
 // ленте, поэтому он должен быть непустым и читаемым сразу.
 const HOOK_PUNCH_FROM = 0.78;
 
 // Пропорции карточки, если размеры картинки неизвестны — как в референсе.
 const DEFAULT_CARD_ASPECT = 0.74;
-// Границы: слишком узкая карточка выдавила бы подпись за кадр, слишком
-// широкая перестала бы походить на референс.
+// Границы: слишком узкая карточка налезла бы на субтитры, слишком широкая
+// перестала бы походить на референс.
 const MIN_CARD_ASPECT = 0.66;
 const MAX_CARD_ASPECT = 1;
+
+// Ширина карточки и отступ сверху. Подписи под картинкой больше нет — весь
+// текст несут субтитры, — поэтому карточка стала крупнее: было 82% и 9%.
+// Ширину подбирал по рендеру: на 88% между карточкой и субтитрами оставалась
+// заметная белая пустота, на 92% кадр читается плотно.
+const CARD_WIDTH_PERCENT = 92;
+const CARD_TOP_PERCENT = 8;
 
 /**
  * Карточка повторяет пропорции самой картинки: модели иногда отдают квадрат
@@ -50,20 +54,7 @@ function cardAspect(width?: number, height?: number): number {
   return Math.min(Math.max(width / height, MIN_CARD_ASPECT), MAX_CARD_ASPECT);
 }
 
-/**
- * Подпись набирается в одну-две строки, поэтому длинным словам нужен меньший
- * кегль — иначе они вылезают за поля и каждая сцена смотрится по-своему.
- */
-function captionFontSize(caption: string): number {
-  const longestWord = Math.max(...caption.split(/\s+/).map((w) => w.length), 1);
-  if (longestWord > 13) return 62;
-  if (longestWord > 10) return 74;
-  if (caption.length > 26) return 78;
-  return 92;
-}
-
 interface SceneProps {
-  caption: string;
   // Слова озвучки с таймингами — для субтитров «по слову». Нет слов — нет и
   // субтитров, кадр остаётся как раньше.
   words?: { text: string; startMs: number; endMs: number }[];
@@ -88,7 +79,6 @@ interface SceneProps {
 }
 
 export const Scene: React.FC<SceneProps> = ({
-  caption,
   words,
   overlay,
   imageFileName,
@@ -107,11 +97,6 @@ export const Scene: React.FC<SceneProps> = ({
 
   const damping = motion.emphasis ? HOOK_DAMPING : ENTRANCE_DAMPING;
   const entrance = spring({ frame, fps, config: { damping } });
-  const captionEntrance = spring({
-    frame: frame - (motion.emphasis ? HOOK_CAPTION_DELAY : CAPTION_DELAY),
-    fps,
-    config: { damping },
-  });
 
   // 0 → 1 за всю сцену: по этому идёт медленный наплыв на картинку.
   const progress = interpolate(
@@ -217,28 +202,10 @@ export const Scene: React.FC<SceneProps> = ({
       ? interpolate(exit, [0, 1], [0, 10])
       : 0;
 
-  const captionShift = interpolate(captionEntrance, [0, 1], [CAPTION_RISE, 0]);
-  // Подпись хука приходит крупнее и садится в размер — короткий удар по глазу.
-  const captionScale = motion.emphasis
-    ? interpolate(captionEntrance, [0, 1], [HOOK_CAPTION_OVERSHOOT, 1])
-    : 1;
-  // Подпись уходит быстрее карточки и до конца: иначе на удлинённом стыке
-  // старый и новый текст видны одновременно и накладываются друг на друга.
-  const captionExitFade =
-    exit > 0 && !plainExit
-      ? interpolate(exit, [0, 0.4], [1, 0], { extrapolateRight: "clamp" })
-      : 1;
-  const captionOpacity =
-    (motion.emphasis
-      ? 1
-      : interpolate(captionEntrance, [0, 0.5], [0, 1], {
-          extrapolateRight: "clamp",
-        })) * captionExitFade;
-
   const card = (
       <div
         style={{
-          width: "82%",
+          width: `${CARD_WIDTH_PERCENT}%`,
           aspectRatio: String(cardAspect(imageWidth, imageHeight)),
           border: "10px solid #0d0d0d",
           borderRadius: 28,
@@ -293,7 +260,7 @@ export const Scene: React.FC<SceneProps> = ({
       style={{
         backgroundColor: "#ffffff",
         alignItems: "center",
-        paddingTop: "9%",
+        paddingTop: `${CARD_TOP_PERCENT}%`,
         opacity: sceneOpacity,
       }}
     >
@@ -301,25 +268,6 @@ export const Scene: React.FC<SceneProps> = ({
       <Accents sceneIndex={sceneIndex} exitProgress={plainExit ? 0 : exit} />
 
       {card}
-
-      <div
-        style={{
-          marginTop: "6%",
-          padding: "0 6%",
-          fontFamily,
-          fontWeight: 700,
-          fontSize: captionFontSize(caption),
-          lineHeight: 1.05,
-          letterSpacing: "-0.01em",
-          color: "#0d0d0d",
-          textTransform: "uppercase",
-          textAlign: "center",
-          opacity: captionOpacity,
-          transform: `translateY(${captionShift}px) scale(${captionScale})`,
-        }}
-      >
-        {caption}
-      </div>
 
       {words && words.length > 0 && (
         <Subtitles words={words} exitProgress={plainExit ? 0 : exit} />
