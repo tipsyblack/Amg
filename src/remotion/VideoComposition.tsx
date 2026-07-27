@@ -3,24 +3,8 @@ import { AbsoluteFill, Audio, Sequence, staticFile } from "remotion";
 import type { CalculateMetadataFunction } from "remotion";
 import type { VideoData } from "../types";
 import { Scene } from "./Scene";
+import { MIX } from "./mix";
 import { sceneMotion } from "./transitions";
-
-// Длина перекрытия сцен. Держим коротким и меньше запаса тишины в конце
-// озвучки, чтобы переход накладывался на паузу, а не на речь. Тайминг аудио
-// при этом не сдвигается: сцены остаются на своих кадрах.
-const CROSSFADE_FRAMES = 8;
-
-// Звук перехода играет на кадр раньше стыка: он резкий и короткий, поэтому
-// должен попасть точно в начало движения. Большее опережение слышалось бы как
-// отдельный звук «до» перехода.
-const SFX_LEAD_FRAMES = 1;
-// Щелчки и хлопки короткие, поэтому на слух тише длинных вушей — компенсируем
-// громкостью, оставаясь под озвучкой.
-const SFX_VOLUME = 0.5;
-
-// Звук хука на первом кадре: подъём и удар под наезд карточки. Громче
-// переходных — он должен остановить палец на пролистывании.
-const HOOK_SFX_VOLUME = 0.42;
 
 export const calculateVideoMetadata: CalculateMetadataFunction<
   VideoData
@@ -48,11 +32,15 @@ export const VideoComposition: React.FC<VideoData> = ({
   return (
     <AbsoluteFill style={{ backgroundColor: "#ffffff" }}>
       {musicFileName && (
-        <Audio src={staticFile(`music/${musicFileName}`)} volume={0.12} loop />
+        <Audio
+          src={staticFile(`music/${musicFileName}`)}
+          volume={MIX.music}
+          loop
+        />
       )}
       {sfxEnabled && (
         <Sequence from={0}>
-          <Audio src={staticFile("sfx/hook.wav")} volume={HOOK_SFX_VOLUME} />
+          <Audio src={staticFile("sfx/hook.wav")} volume={MIX.hookSfx} />
         </Sequence>
       )}
       {scenes.map((scene, index) => {
@@ -65,7 +53,7 @@ export const VideoComposition: React.FC<VideoData> = ({
         const isLast = index === scenes.length - 1;
         const visualDuration = isLast
           ? scene.durationInFrames
-          : scene.durationInFrames + CROSSFADE_FRAMES;
+          : scene.durationInFrames + MIX.crossfadeFrames;
 
         return (
           <React.Fragment key={`${scene.audioFileName}-${index}`}>
@@ -76,7 +64,7 @@ export const VideoComposition: React.FC<VideoData> = ({
                 imageWidth={scene.imageWidth}
                 imageHeight={scene.imageHeight}
                 sceneIndex={index}
-                fadeInFrames={index === 0 ? 0 : CROSSFADE_FRAMES}
+                fadeInFrames={index === 0 ? 0 : MIX.crossfadeFrames}
                 visualDuration={visualDuration}
                 exitStartFrame={
                   isLast ? visualDuration : scene.durationInFrames
@@ -92,13 +80,13 @@ export const VideoComposition: React.FC<VideoData> = ({
             {sfxEnabled && !isLast && (
               <Sequence
                 from={Math.max(
-                  from + scene.durationInFrames - SFX_LEAD_FRAMES,
+                  from + scene.durationInFrames - MIX.sfxLeadFrames,
                   0,
                 )}
               >
                 <Audio
                   src={staticFile(`sfx/${sceneMotion(index).sfx}.wav`)}
-                  volume={SFX_VOLUME}
+                  volume={MIX.sfx}
                 />
               </Sequence>
             )}

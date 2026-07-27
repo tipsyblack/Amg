@@ -14,11 +14,14 @@ import { sceneMotion } from "./transitions";
 loadCaptionFont();
 const fontFamily = CAPTION_FONT_FAMILY;
 
-const ENTRANCE_DAMPING = 200;
+// Пружина входа. 200 — это сильно передемпфированно: карточка подъезжала так
+// медленно и мелко, что движение почти не читалось. 26 даёт быстрый вход с
+// едва заметной посадкой на место, без болтанки.
+const ENTRANCE_DAMPING = 26;
 // У хука пружина мягче — карточка чуть перелетает и садится на место.
 const HOOK_DAMPING = 14;
-const IMAGE_ZOOM = 0.07; // насколько картинка подъезжает за сцену
-const CAPTION_RISE = 46; // px, подъём подписи на входе
+const IMAGE_ZOOM = 0.13; // насколько картинка подъезжает за сцену
+const CAPTION_RISE = 72; // px, подъём подписи на входе
 const CAPTION_DELAY = 5; // кадров: подпись появляется чуть позже карточки
 // В хуке текст не ждёт: он и есть то, что цепляет.
 const HOOK_CAPTION_DELAY = 2;
@@ -127,19 +130,19 @@ export const Scene: React.FC<SceneProps> = ({
       : 1 + IMAGE_ZOOM * progress;
   const panX =
     motion.pan === "left"
-      ? interpolate(progress, [0, 1], [14, -14])
+      ? interpolate(progress, [0, 1], [26, -26])
       : motion.pan === "right"
-        ? interpolate(progress, [0, 1], [-14, 14])
+        ? interpolate(progress, [0, 1], [-26, 26])
         : 0;
   const panY =
     motion.pan === "in" || motion.pan === "out"
-      ? interpolate(progress, [0, 1], motion.pan === "in" ? [0, -10] : [-10, 0])
+      ? interpolate(progress, [0, 1], motion.pan === "in" ? [0, -20] : [-20, 0])
       : 0;
 
   // ——— появление карточки ———
-  let cardScale = interpolate(entrance, [0, 1], [0.94, 1]);
+  let cardScale = interpolate(entrance, [0, 1], [0.88, 1]);
   let cardX = 0;
-  let cardY = interpolate(entrance, [0, 1], [14, 0]);
+  let cardY = interpolate(entrance, [0, 1], [34, 0]);
   let cardRotate = 0;
   // Хук не проявляется: он врубается на первом же кадре и только доезжает
   // масштабом. Проявление съело бы те самые полсекунды внимания.
@@ -149,10 +152,10 @@ export const Scene: React.FC<SceneProps> = ({
 
   if (motion.entry === "overlay") {
     // Наложение: карточка приходит крупнее и ложится поверх предыдущей.
-    cardScale = interpolate(entrance, [0, 1], [1.18, 1]);
-    cardY = interpolate(entrance, [0, 1], [-40, 0]);
+    cardScale = interpolate(entrance, [0, 1], [1.32, 1]);
+    cardY = interpolate(entrance, [0, 1], [-70, 0]);
   } else if (motion.entry === "slide") {
-    cardX = interpolate(entrance, [0, 1], [520, 0]);
+    cardX = interpolate(entrance, [0, 1], [780, 0]);
     cardY = 0;
   } else if (motion.entry === "punch") {
     cardScale = interpolate(
@@ -162,8 +165,8 @@ export const Scene: React.FC<SceneProps> = ({
     );
     cardY = 0;
   } else if (motion.entry === "swing") {
-    cardRotate = interpolate(entrance, [0, 1], [-7, 0]);
-    cardScale = interpolate(entrance, [0, 1], [0.9, 1]);
+    cardRotate = interpolate(entrance, [0, 1], [-13, 0]);
+    cardScale = interpolate(entrance, [0, 1], [0.84, 1]);
   }
 
   // ——— уход карточки (играет под проявляющейся следующей сценой) ———
@@ -171,34 +174,40 @@ export const Scene: React.FC<SceneProps> = ({
     if (motion.exit === "crumple") {
       // Смятие: карточка резко сжимается, кренится и слегка перекашивается —
       // как комкают лист бумаги.
-      cardScale *= interpolate(exit, [0, 1], [1, 0.45]);
-      cardRotate += interpolate(exit, [0, 1], [0, 13]);
-      cardY += interpolate(exit, [0, 1], [0, 70]);
-      cardOpacity *= interpolate(exit, [0, 1], [1, 0.2]);
+      cardScale *= interpolate(exit, [0, 1], [1, 0.32]);
+      cardRotate += interpolate(exit, [0, 1], [0, 21]);
+      cardY += interpolate(exit, [0, 1], [0, 130]);
+      cardOpacity *= interpolate(exit, [0, 1], [1, 0.15]);
     } else if (motion.exit === "shrink") {
-      cardScale *= interpolate(exit, [0, 1], [1, 0.88]);
-      cardOpacity *= interpolate(exit, [0, 1], [1, 0.4]);
+      cardScale *= interpolate(exit, [0, 1], [1, 0.76]);
+      cardOpacity *= interpolate(exit, [0, 1], [1, 0.25]);
     } else if (motion.exit === "driftUp") {
-      cardY += interpolate(exit, [0, 1], [0, -70]);
-      cardOpacity *= interpolate(exit, [0, 1], [1, 0.3]);
+      cardY += interpolate(exit, [0, 1], [0, -150]);
+      cardOpacity *= interpolate(exit, [0, 1], [1, 0.15]);
     }
   }
 
   // Перекос применяем отдельно: он нужен только смятию.
   const crumpleSkew =
-    motion.exit === "crumple" ? interpolate(exit, [0, 1], [0, 6]) : 0;
+    motion.exit === "crumple" ? interpolate(exit, [0, 1], [0, 10]) : 0;
 
   const captionShift = interpolate(captionEntrance, [0, 1], [CAPTION_RISE, 0]);
   // Подпись хука приходит крупнее и садится в размер — короткий удар по глазу.
   const captionScale = motion.emphasis
     ? interpolate(captionEntrance, [0, 1], [HOOK_CAPTION_OVERSHOOT, 1])
     : 1;
+  // Подпись уходит быстрее карточки и до конца: иначе на удлинённом стыке
+  // старый и новый текст видны одновременно и накладываются друг на друга.
+  const captionExitFade =
+    exit > 0
+      ? interpolate(exit, [0, 0.4], [1, 0], { extrapolateRight: "clamp" })
+      : 1;
   const captionOpacity =
     (motion.emphasis
       ? 1
       : interpolate(captionEntrance, [0, 0.5], [0, 1], {
           extrapolateRight: "clamp",
-        })) * (exit > 0 ? interpolate(exit, [0, 1], [1, 0.15]) : 1);
+        })) * captionExitFade;
 
   return (
     <AbsoluteFill

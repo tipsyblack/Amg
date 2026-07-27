@@ -103,11 +103,25 @@ for (const name of sfx) {
   let di = env.length - 1;
   for (let i = pi; i < env.length; i++) if (env[i] < peak * 0.1) { di = i; break; }
   const attackMs = pi * 5, decayMs = (di - pi) * 5, lengthMs = Math.round((n / sr) * 1000);
+  // Атака мгновенная (это и есть «резко»), но хвост слышимый: с совсем
+  // коротким спадом звук проскакивал под озвучкой незаметно.
   check(
-    `${name}: резкий (атака ${attackMs} мс, спад ${decayMs} мс, длит ${lengthMs} мс)`,
-    attackMs <= 15 && decayMs <= 130 && lengthMs <= 300,
+    `${name}: атака ${attackMs} мс, спад ${decayMs} мс, длит ${lengthMs} мс`,
+    attackMs <= 15 && decayMs >= 60 && decayMs <= 320 && lengthMs >= 200 && lengthMs <= 700,
   );
 }
+
+console.log("\n=== уровни слоёв в миксе ===");
+const { MIX } = await import("../src/remotion/mix.ts");
+check("музыка тише всего", MIX.music < MIX.hookSfx && MIX.music < MIX.sfx, `музыка ${MIX.music}`);
+check("музыка не глушит речь", MIX.music <= 0.1, String(MIX.music));
+check("стык слышен поверх озвучки", MIX.sfx >= 0.6, String(MIX.sfx));
+check("но не перебивает её совсем", MIX.sfx <= 0.85, String(MIX.sfx));
+check("звук хука не громче стыка", MIX.hookSfx <= MIX.sfx, `${MIX.hookSfx} vs ${MIX.sfx}`);
+// Перекрытие — это и есть длительность анимации ухода. Оно должно оставаться
+// в пределах запаса тишины после реплики (0.4 с = 12 кадров при 30 fps).
+check("перекрытие заметное", MIX.crossfadeFrames >= 10, String(MIX.crossfadeFrames));
+check("перекрытие укладывается в паузу", MIX.crossfadeFrames <= 12, String(MIX.crossfadeFrames));
 
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);
