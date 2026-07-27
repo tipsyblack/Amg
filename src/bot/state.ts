@@ -82,6 +82,9 @@ export interface Session {
   // файлам). Копятся между сообщениями, пока не придёт /done.
   cloneName?: string;
   cloneSamples?: string[];
+  // Если задан — собранный материал добавляется к этому голосу, а не создаёт
+  // новый клон (команда /clonemore).
+  cloneTargetVoiceId?: string;
   // Профиль в процессе создания.
   draftProfile?: {
     name?: string;

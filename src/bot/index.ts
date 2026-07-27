@@ -27,6 +27,9 @@ import {
 import { overlayStartMs } from "../pipeline/wordTimings";
 import {
   createInstantVoiceClone,
+  downloadVoiceSample,
+  editInstantVoiceClone,
+  getVoiceSamples,
   isolateVoice,
 } from "../pipeline/voiceClone";
 import {
@@ -594,6 +597,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека и генерация\n" +
       "/clone — клонировать голос из своих роликов\n" +
+      "/clonemore — добавить материал в уже созданный клон\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
@@ -943,7 +947,102 @@ bot.command("done", async (ctx) => {
     );
     return;
   }
+  if (getSession(chatId).cloneTargetVoiceId) {
+    await runAddSamplesStep(ctx, chatId);
+    return;
+  }
   await runCloneStep(ctx, chatId);
+});
+
+// Добавление материала в уже существующий клон. Отдельная команда, потому что
+// это принципиально другой сценарий: не «сделать новый голос», а «улучшить тот,
+// который уже выбран для роликов».
+bot.command("clonemore", async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (!isElevenLabsAvailable()) {
+    await ctx.reply(
+      "Нужен ELEVENLABS_API_KEY в .env на сервере: изменение клона идёт " +
+        "напрямую через ElevenLabs.",
+    );
+    return;
+  }
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+
+  let clones;
+  try {
+    clones = (await listVoices()).filter((v) => v.category !== "premade");
+  } catch (error) {
+    await ctx.reply(
+      `Не смог получить список голосов: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return;
+  }
+  if (clones.length === 0) {
+    await ctx.reply(
+      "В аккаунте нет клонированных голосов — сначала создайте: /clone",
+    );
+    return;
+  }
+
+  const keyboard = new InlineKeyboard();
+  const active = resolveVoiceId(getSession(chatId).voice ?? config.kieTtsVoice);
+  for (const clone of clones.slice(0, 10)) {
+    keyboard
+      .text(
+        `${clone.voiceId === active ? "▶️ " : ""}${clone.name}`,
+        `clonemore_${clone.voiceId}`,
+      )
+      .row();
+  }
+  await ctx.reply(
+    "В какой голос добавить материал?\n\n" +
+      "Важно понимать, что произойдёт: мгновенный клон не «дообучается» — " +
+      "ElevenLabs заново считает отпечаток голоса по всему набору сэмплов. " +
+      "Старые сэмплы я скачаю и отправлю обратно вместе с новыми, так что " +
+      "материал только добавится.",
+    { reply_markup: keyboard },
+  );
+});
+
+bot.callbackQuery(/^clonemore_(.+)$/, async (ctx) => {
+  const voiceId = ctx.match[1];
+  const chatId = ctx.chat?.id;
+  await ctx.answerCallbackQuery();
+  if (!chatId) return;
+
+  let details;
+  try {
+    details = await getVoiceSamples(voiceId);
+  } catch (error) {
+    await ctx.reply(
+      `Не смог посмотреть состав голоса: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return;
+  }
+
+  const seconds = details.samples.reduce(
+    (sum, sample) => sum + (sample.durationSeconds ?? 0),
+    0,
+  );
+  updateSession(chatId, {
+    step: "awaiting_clone_links",
+    cloneName: details.name,
+    cloneTargetVoiceId: voiceId,
+    cloneSamples: undefined,
+  });
+  await ctx.reply(
+    `Голос «${details.name}»: сейчас в нём ${details.samples.length} сэмпл(ов)` +
+      (seconds > 0 ? `, примерно ${Math.round(seconds)} с материала` : "") +
+      ".\n\nПрисылайте новые файлы или ссылки на Google Drive — по одному, " +
+      "можно вперемешку. Когда всё — /done. Отменить — /cancel.",
+  );
 });
 
 bot.command("clone", async (ctx) => {
@@ -964,6 +1063,127 @@ bot.command("clone", async (ctx) => {
       "«Шамиль» — под этим именем он появится в ElevenLabs.",
   );
 });
+
+/**
+ * Добавление материала в существующий клон. Старые сэмплы скачиваем и
+ * отправляем обратно вместе с новым: у ElevenLabs не описано, дополняет ли
+ * edit набор сэмплов или заменяет его, и терять исходный материал нельзя.
+ */
+async function runAddSamplesStep(ctx: Context, chatId: number): Promise<void> {
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      const session = getSession(chatId);
+      const voiceId = session.cloneTargetVoiceId;
+      const parts = session.cloneSamples ?? [];
+      if (!voiceId) throw new Error("Не выбран голос — начните заново: /clonemore");
+      if (parts.length === 0) {
+        throw new Error("Нет ни одного нового файла. Пришлите их, потом /done.");
+      }
+
+      const before = await getVoiceSamples(voiceId);
+      const workDir = await mkdtemp(path.join(tmpdir(), "amg-clonemore-"));
+      try {
+        let newSeconds = 0;
+        for (const file of parts) newSeconds += await audioDurationSeconds(file);
+
+        const merged = path.join(workDir, "new.mp3");
+        await concatAudio(parts, merged);
+        await ctx.reply(
+          `Нового материала: ${Math.round(newSeconds)} с из ${parts.length} файл(ов).`,
+        );
+
+        await ctx.reply("🧹 Убираю музыку с фона…");
+        const cleaned = path.join(workDir, "new-clean.mp3");
+        await isolateVoice(merged, cleaned);
+        await ctx.replyWithAudio(new InputFile(cleaned), {
+          title: `${before.name} — новый материал без музыки`,
+          caption: "Это добавляется к голосу.",
+        });
+
+        // Старые сэмплы забираем обратно. Если не получилось — честно
+        // предупреждаем: тогда набор может замениться новым материалом.
+        const existing: string[] = [];
+        let missed = 0;
+        for (const sample of before.samples) {
+          const file = path.join(workDir, `old-${sample.sampleId}.mp3`);
+          try {
+            await downloadVoiceSample(voiceId, sample.sampleId, file);
+            existing.push(file);
+          } catch {
+            missed++;
+          }
+        }
+        if (missed > 0) {
+          await ctx.reply(
+            `⚠️ Не удалось скачать ${missed} из ${before.samples.length} ` +
+              "прежних сэмплов. Отправлю то, что есть: возможно, старый " +
+              "материал в голосе заменится новым.",
+          );
+        }
+
+        await ctx.reply("🧬 Обновляю голос…");
+        await editInstantVoiceClone({
+          voiceId,
+          name: before.name,
+          files: [...existing, cleaned],
+        });
+
+        // Проверяем результат по составу голоса — это то, что можно увидеть
+        // глазами, а не поверить на слово.
+        const after = await getVoiceSamples(voiceId);
+        const secondsBefore = before.samples.reduce(
+          (sum, s) => sum + (s.durationSeconds ?? 0),
+          0,
+        );
+        const secondsAfter = after.samples.reduce(
+          (sum, s) => sum + (s.durationSeconds ?? 0),
+          0,
+        );
+
+        updateSession(chatId, {
+          voice: voiceId,
+          step: "idle",
+          cloneName: undefined,
+          cloneSamples: undefined,
+          cloneTargetVoiceId: undefined,
+        });
+        await rm(cloneDir(chatId), { recursive: true, force: true });
+
+        await ctx.reply(
+          `Готово. Голос «${after.name}»:\n` +
+            `сэмплов было ${before.samples.length}, стало ${after.samples.length}` +
+            (secondsAfter > 0
+              ? `\nматериала было ${Math.round(secondsBefore)} с, стало ${Math.round(secondsAfter)} с`
+              : "") +
+            `\nVoice ID: ${voiceId}`,
+        );
+
+        const samplePath = path.resolve("out/voice-sample.mp3");
+        await mkdir(path.dirname(samplePath), { recursive: true });
+        await synthesizeSpeech(
+          VOICE_SAMPLE_TEXT,
+          samplePath,
+          voiceId,
+          undefined,
+          "elevenlabs",
+        );
+        await ctx.replyWithVoice(new InputFile(samplePath), {
+          caption:
+            "Так голос звучит после добавления. Ещё материал — /clonemore, " +
+            "новый голос с нуля — /clone.",
+        });
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    },
+    {
+      errorStep: "awaiting_clone_links",
+      errorHint: "Присланные файлы сохранены — повторите /done или /cancel.",
+    },
+  );
+}
 
 async function runCloneStep(ctx: Context, chatId: number): Promise<void> {
   await withGeneration(
@@ -1461,6 +1681,10 @@ bot.on("message:text", async (ctx) => {
 
     case "awaiting_clone_links": {
       if (text === "/done") {
+        if (getSession(chatId).cloneTargetVoiceId) {
+          await runAddSamplesStep(ctx, chatId);
+          return;
+        }
         await runCloneStep(ctx, chatId);
         return;
       }

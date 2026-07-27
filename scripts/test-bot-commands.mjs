@@ -29,6 +29,7 @@ bot.use(async (ctx, next) => {
 
 const hits = [];
 bot.command('tts', (ctx) => { hits.push(['tts', ctx.match]); });
+bot.command('clonemore', (ctx) => { hits.push(['clonemore', ctx.match]); });
 bot.command('start', (ctx) => { hits.push(['start', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
@@ -64,5 +65,11 @@ check('обычный текст не считается командой', hits
 // 5) команда с @упоминанием бота
 await bot.handleUpdate(upd('/tts@testbot elevenlabs'));
 check('команда с @username распознана', hits.at(-1)?.[0] === 'tts' && hits.at(-1)?.[1] === 'elevenlabs', JSON.stringify(hits.at(-1)));
+
+// 6) /clonemore — команда с похожим префиксом не должна путаться с /clone
+await bot.handleUpdate(upd('/clonemore', [{ type: 'bot_command', offset: 0, length: 10 }]));
+check('/clonemore распознана как своя команда', hits.at(-1)?.[0] === 'clonemore', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/clonemore'));
+check('/clonemore без сущностей тоже', hits.at(-1)?.[0] === 'clonemore');
 
 process.exit(fails === 0 ? 0 : 1);
