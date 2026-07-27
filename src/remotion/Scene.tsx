@@ -31,19 +31,23 @@ const IMAGE_ZOOM = 0.13; // насколько картинка подъезжа
 // ленте, поэтому он должен быть непустым и читаемым сразу.
 const HOOK_PUNCH_FROM = 0.78;
 
-// Пропорции карточки, если размеры картинки неизвестны — как в референсе.
-const DEFAULT_CARD_ASPECT = 0.74;
+// Геометрия карточки снята с кадров референса (1440×2560): картинка
+// 1086×1435 px — это 75.4% ширины кадра, отношение сторон 0.757, верх на 10.9%
+// высоты. Числа ниже — те же пропорции, они не подгонялись «на глаз».
+const DEFAULT_CARD_ASPECT = 0.757;
 // Границы: слишком узкая карточка налезла бы на субтитры, слишком широкая
 // перестала бы походить на референс.
 const MIN_CARD_ASPECT = 0.66;
 const MAX_CARD_ASPECT = 1;
 
-// Ширина карточки и отступ сверху. Подписи под картинкой больше нет — весь
-// текст несут субтитры, — поэтому карточка стала крупнее: было 82% и 9%.
-// Ширину подбирал по рендеру: на 88% между карточкой и субтитрами оставалась
-// заметная белая пустота, на 92% кадр читается плотно.
-const CARD_WIDTH_PERCENT = 92;
-const CARD_TOP_PERCENT = 8;
+const CARD_WIDTH_PERCENT = 75.4;
+const CARD_TOP_PERCENT = 10.9;
+// Рамка карточки. В референсе она 19 px на кадре 1440 — это 14 px на нашем
+// 1080; было 10, и рамка выглядела заметно тоньше. Радиус скругления снят с
+// увеличенного угла референса. Оба числа заданы для 1080 и масштабируются.
+const REF_WIDTH = 1080;
+const CARD_BORDER_PX = 14;
+const CARD_RADIUS_PX = 26;
 
 /**
  * Карточка повторяет пропорции самой картинки: модели иногда отдают квадрат
@@ -92,7 +96,8 @@ export const Scene: React.FC<SceneProps> = ({
   plainExit = false,
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
+  const scale = width / REF_WIDTH;
   const motion = sceneMotion(sceneIndex);
 
   const damping = motion.emphasis ? HOOK_DAMPING : ENTRANCE_DAMPING;
@@ -207,8 +212,8 @@ export const Scene: React.FC<SceneProps> = ({
         style={{
           width: `${CARD_WIDTH_PERCENT}%`,
           aspectRatio: String(cardAspect(imageWidth, imageHeight)),
-          border: "10px solid #0d0d0d",
-          borderRadius: 28,
+          border: `${CARD_BORDER_PX * scale}px solid #0d0d0d`,
+          borderRadius: CARD_RADIUS_PX * scale,
           overflow: "hidden",
           backgroundColor: "#ececeb",
           display: "flex",
@@ -260,7 +265,10 @@ export const Scene: React.FC<SceneProps> = ({
       style={{
         backgroundColor: "#ffffff",
         alignItems: "center",
-        paddingTop: `${CARD_TOP_PERCENT}%`,
+        // Отступ считаем в пикселях от высоты кадра. Процентный padding в CSS
+        // отмеряется от ШИРИНЫ контейнера — на вертикальном кадре это давало
+        // почти вдвое меньший отступ, и карточка стояла выше, чем в референсе.
+        paddingTop: (CARD_TOP_PERCENT / 100) * height,
         opacity: sceneOpacity,
       }}
     >

@@ -1,5 +1,5 @@
 // Проверка субтитров «по слову»: сборка слов из выравнивания ElevenLabs,
-// приблизительный расчёт без выравнивания и разбивка на страницы.
+// приблизительный расчёт без выравнивания и выбор слова для кадра.
 process.env.OPENROUTER_API_KEY = "k";
 process.env.KIE_API_KEY = "k";
 
@@ -75,48 +75,32 @@ check("тайминги провайдера в приоритете", wordsForS
 check("без них считаем сами", wordsForScene(text, 4, []).length > 1);
 check("undefined тоже приводит к расчёту", wordsForScene(text, 4, undefined).length > 1);
 
-console.log("\n=== разбивка на страницы ===");
-const { buildSubtitlePages, pageAt } = await import("../src/remotion/subtitlePages.ts");
+console.log("\n=== выбор слова в кадре ===");
+// В референсе в кадре ровно одно слово: страниц из нескольких слов с
+// подсветкой текущего там нет, поэтому и разбивки на страницы у нас больше нет.
+const { wordAt } = await import("../src/remotion/subtitleWord.ts");
 const line = "Илон Маск строит дата-центры для своего ИИ в космосе, ему чё, мало места";
-const pages = buildSubtitlePages(estimateWordTimings(line, 6));
-check("страниц несколько", pages.length >= 3, String(pages.length));
+const timed = estimateWordTimings(line, 6);
+check("до начала речи слова нет", wordAt(timed, -10) === undefined);
+check("в начале — первое", wordAt(timed, 0) === timed[0]);
+check("в конце — последнее", wordAt(timed, 999999) === timed[timed.length - 1]);
 check(
-  "в каждой странице не больше 26 символов",
-  pages.every((p) => p.tokens.reduce((n, t) => n + t.text.length + 1, 0) <= 27),
-  pages.map((p) => p.tokens.map((t) => t.text).join(" ")).join(" | "),
+  "на границе берётся уже начавшееся",
+  wordAt(timed, timed[1].startMs) === timed[1],
 );
+check("на пустом наборе не падает", wordAt([], 100) === undefined);
 check(
-  "все слова разошлись по страницам",
-  pages.reduce((sum, p) => sum + p.tokens.length, 0) === line.split(/\s+/).length,
+  "внутри слова показывается оно само",
+  timed.every((w) => wordAt(timed, (w.startMs + w.endMs) / 2) === w),
 );
-check(
-  "страницы идут по времени",
-  pages.every((p, i) => i === 0 || p.startMs >= pages[i - 1].startMs),
-);
-// Это и была причина выносить разбивку в свой модуль: createTikTokStyleCaptions
-// группирует по ПАУЗАМ, а у слитных таймингов пауз нет — библиотека сама по
-// себе отдаёт одну страницу на всю реплику.
-const { createTikTokStyleCaptions } = await import("@remotion/captions");
-const libraryOnly = createTikTokStyleCaptions({
-  captions: estimateWordTimings(line, 6),
-  combineTokensWithinMilliseconds: 1400,
-}).pages;
-check(
-  "без нашей разбивки библиотека даёт одну страницу",
-  libraryOnly.length === 1,
-  `страниц у библиотеки: ${libraryOnly.length}`,
-);
-
-console.log("\n=== выбор текущей страницы ===");
-check("до начала речи страницы нет", pageAt(pages, -10) === undefined);
-check("в начале — первая", pageAt(pages, 0) === pages[0]);
-check("в конце — последняя", pageAt(pages, 999999) === pages[pages.length - 1]);
-check(
-  "на границе берётся уже начавшаяся",
-  pageAt(pages, pages[1].startMs) === pages[1],
-);
-check("на пустом наборе не падает", pageAt([], 100) === undefined);
-check("пустые слова не дают страниц", buildSubtitlePages([]).length === 0);
+// Паузы между словами бывают при тайминге от провайдера: кадр в паузе не должен
+// оставаться пустым — слово висит до следующего.
+const withGaps = [
+  { text: "раз", startMs: 0, endMs: 300 },
+  { text: "два", startMs: 900, endMs: 1200 },
+];
+check("в паузе держится предыдущее слово", wordAt(withGaps, 600) === withGaps[0]);
+check("после конца речи держится последнее", wordAt(withGaps, 5000) === withGaps[1]);
 
 console.log("\n=== сцена несёт слова дальше в рендер ===");
 const { sceneSchema } = await import("../src/types.ts");

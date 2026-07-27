@@ -1,17 +1,34 @@
 import React from "react";
 import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { CAPTION_FONT_FAMILY } from "./font";
-import { buildSubtitlePages, pageAt } from "./subtitlePages";
+import { wordAt } from "./subtitleWord";
 
-// Субтитры «по слову»: слова появляются в такт речи, произносимое — в чёрной
-// плашке. Это то, что держит внимание в Reels: глаз цепляется за движение
-// текста, даже если звук выключен. Разбивка на страницы — в subtitlePages.ts.
+// Субтитры как в референсе: в кадре одно слово, крупно, чёрным по белому, без
+// плашки и без анимации. Слово меняется в такт речи — это и есть весь эффект.
+//
+// Геометрия снята с кадров референса (1440×2560) и приведена к 1080×1920:
+// высота заглавных букв 77 px, базовая линия на 23% высоты от нижнего края
+// кадра, текст по центру. От этой пары чисел всё и считается.
+const REF_WIDTH = 1080;
+const CAP_HEIGHT_PX = 77;
+const BASELINE_PERCENT = 23;
 
-// Кегль и отступ снизу: на телефоне субтитры должны читаться с расстояния, а
-// нижние 8-10% кадра перекрывает интерфейс площадки (подписи, кнопки).
-// Отступ 13%, а не 10%: подписи под картинкой больше нет, и субтитры подняты
-// ближе к карточке — иначе между ними висит белая полоса.
-const FONT_SIZE = 60;
+// Пересчёт кегля из высоты заглавной буквы. Коэффициент измерен на рендере
+// (Oswald 700: кегль 112 дал заглавные 94 px), а не взят из таблиц шрифта:
+// таблицы дают 0.69, и по ним текст выходил на пятую часть мельче нужного.
+const CAP_PER_EM = 0.839;
+const FONT_SIZE = Math.round(CAP_HEIGHT_PX / CAP_PER_EM);
+// При line-height: 1 базовая линия стоит чуть выше нижнего края блока, а CSS
+// отмеряет через bottom именно край блока. Зазор тоже измерен на рендере.
+const BASELINE_GAP_EM = 0.035;
+
+// Референс кегль под длину слова не меняет: «ВАШ» и «ЭЛЕКТРОЭНЕРГИЯ» одной
+// высоты, и у нас так же — при 77 px даже 14 букв занимают 64% ширины кадра.
+// Ниже только страховка от слова, которое всё-таки не влезет в поля: ширину
+// оцениваем по числу букв с запасом на широкие (Ш, Ю, М, Ф).
+const SIDE_PADDING_PERCENT = 6;
+const MAX_EM_PER_CHAR = 0.62;
+
 const INK = "#0d0d0d";
 
 interface SubtitlesProps {
@@ -25,11 +42,11 @@ export const Subtitles: React.FC<SubtitlesProps> = ({
   exitProgress,
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
   const timeMs = (frame / fps) * 1000;
 
-  const page = pageAt(buildSubtitlePages(words), timeMs);
-  if (!page) return null;
+  const word = wordAt(words, timeMs);
+  if (!word) return null;
 
   const opacity =
     exitProgress > 0
@@ -38,45 +55,41 @@ export const Subtitles: React.FC<SubtitlesProps> = ({
         })
       : 1;
 
+  // Числа выше сняты на 1080×1920 — на другом разрешении масштабируем, чтобы
+  // пропорции кадра не поехали.
+  const scale = width / REF_WIDTH;
+  const letters = word.text.replace(/[^\p{L}\p{N}]/gu, "").length;
+  const safeWidth = width * (1 - (SIDE_PADDING_PERCENT * 2) / 100);
+  let fontSize = FONT_SIZE * scale;
+  const estimated = letters * MAX_EM_PER_CHAR * fontSize;
+  if (estimated > safeWidth) fontSize *= safeWidth / estimated;
+
+  // Базовую линию ставим на 23% высоты, а bottom отмеряет край блока — отсюда
+  // поправка на зазор под базовой линией.
+  const bottom = (BASELINE_PERCENT / 100) * height - fontSize * BASELINE_GAP_EM;
+
   return (
     <div
       style={{
         position: "absolute",
-        bottom: "13%",
+        bottom,
         left: 0,
         right: 0,
-        display: "flex",
-        flexWrap: "wrap",
-        justifyContent: "center",
-        alignItems: "center",
-        gap: "0.25em",
-        padding: "0 8%",
+        textAlign: "center",
+        padding: `0 ${SIDE_PADDING_PERCENT}%`,
         fontFamily: CAPTION_FONT_FAMILY,
         fontWeight: 700,
-        fontSize: FONT_SIZE,
-        lineHeight: 1.15,
+        fontSize,
+        lineHeight: 1,
+        letterSpacing: "-0.01em",
+        color: INK,
         textTransform: "uppercase",
+        // Слово не переносим: в референсе строка всегда одна.
+        whiteSpace: "nowrap",
         opacity,
       }}
     >
-      {page.tokens.map((token, index) => {
-        const active = timeMs >= token.fromMs && timeMs < token.toMs;
-        return (
-          <span
-            key={`${token.fromMs}-${index}`}
-            style={{
-              color: active ? "#ffffff" : INK,
-              backgroundColor: active ? INK : "transparent",
-              borderRadius: 10,
-              padding: active ? "0.05em 0.22em" : "0.05em 0",
-              // Произносимое слово чуть крупнее — движение видно и без цвета.
-              transform: active ? "scale(1.06)" : "scale(1)",
-            }}
-          >
-            {token.text}
-          </span>
-        );
-      })}
+      {word.text}
     </div>
   );
 };
