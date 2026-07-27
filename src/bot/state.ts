@@ -61,6 +61,9 @@ export interface Session {
   ttsModel?: string;
   ttsProvider?: "kie" | "elevenlabs";
   imageModel?: string;
+  // Лимит длины ролика в секундах (команда /length). Тоже настройка: сценарист
+  // получает из него бюджет слов, а сборка — предел для подгонки паузами.
+  maxVideoSeconds?: number;
   // Профиль, из которого собирается текущий ролик.
   profileId?: string;
   // Имя будущего клонированного голоса и уже собранные сэмплы (пути к
@@ -119,13 +122,15 @@ export function updateSession(chatId: number, patch: Partial<Session>): Session 
 
 export function resetSession(chatId: number): void {
   // Настройки озвучки и картинок — не часть диалога, переживают сброс.
-  const { voice, ttsModel, ttsProvider, imageModel } = getSession(chatId);
+  const { voice, ttsModel, ttsProvider, imageModel, maxVideoSeconds } =
+    getSession(chatId);
   store.sessions[String(chatId)] = {
     step: "idle",
     voice,
     ttsModel,
     ttsProvider,
     imageModel,
+    maxVideoSeconds,
   };
   persist();
 }

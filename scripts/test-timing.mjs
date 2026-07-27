@@ -46,6 +46,15 @@ check("паузы всё равно сжаты", longFit.scenes[0].durationInFra
 check("сцены не выброшены", longFit.scenes.length === 15);
 check("ни одна сцена не обнулилась", longFit.scenes.every((s) => s.durationInFrames > 0));
 
+console.log("\n=== лимит длины можно задать на чат ===");
+// /length в боте кладёт секунды в сессию, и подгонка должна считаться по ним,
+// а не по .env: иначе плотный сценарий вечно «длиннее лимита».
+const dense = Array.from({ length: 5 }, () => scene(420)); // 70 с
+check("по умолчанию 70 с не влезают", fitToBudget(dense).overBudgetSeconds > 5, `${Math.round(fitToBudget(dense).overBudgetSeconds)} с сверх`);
+const withLimit = fitToBudget(dense, 75);
+check("с лимитом 75 с — влезают", withLimit.overBudgetSeconds === 0, String(withLimit.overBudgetSeconds));
+check("паузы при этом не режутся зря", withLimit.scenes[0].durationInFrames === 420, String(withLimit.scenes[0].durationInFrames));
+
 console.log("\n=== варианты анимации ===");
 const motions = Array.from({ length: 15 }, (_, i) => sceneMotion(i));
 const entries = new Set(motions.map((m) => m.entry));

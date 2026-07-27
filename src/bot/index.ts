@@ -230,6 +230,7 @@ async function runScriptStep(
         feedback && session.script
           ? { previousScript: session.script, feedback }
           : undefined,
+        session.maxVideoSeconds,
       );
       // Новый сценарий делает старые картинки и озвучки неактуальными.
       updateSession(chatId, {
@@ -381,7 +382,8 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       });
     }
 
-    const fitted = fitToBudget(scenes);
+    const limitSeconds = session.maxVideoSeconds ?? config.maxVideoSeconds;
+    const fitted = fitToBudget(scenes, limitSeconds);
     const videoData: VideoData = {
       title: script.title,
       fps: config.fps,
@@ -396,9 +398,10 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     if (fitted.overBudgetSeconds > 0.5) {
       await ctx.reply(
         `Внимание: ролик выходит на ${Math.round(fitted.totalSeconds)} с — ` +
-          `дольше лимита ${config.maxVideoSeconds} с. Паузы уже сжаты до ` +
+          `дольше лимита ${limitSeconds} с. Паузы уже сжаты до ` +
           "предела, дальше сокращать можно только текст: нажмите «✏️ Правки» " +
-          "у сценария и попросите короче.",
+          "у сценария и попросите короче — либо поднимите лимит: " +
+          `/length ${Math.ceil(fitted.totalSeconds)}`,
       );
     }
 
@@ -448,6 +451,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/voice — посмотреть или сменить голос озвучки\n" +
       "/voices — список голосов, доступных вашему ключу ElevenLabs\n" +
       "/model — модель озвучки\n" +
+      "/length — лимит длины ролика в секундах\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека и генерация\n" +
       "/clone — клонировать голос из своих роликов\n" +
@@ -604,6 +608,44 @@ bot.command("voiceforce", async (ctx) => {
       caption: `Голос ${requested} сохранён.`,
     });
   });
+});
+
+// Длина ролика. Живёт в настройках чата, потому что от неё зависит и бюджет
+// слов у сценариста, и подгонка при сборке — а лезть в .env на сервере ради
+// одной цифры неудобно.
+const MIN_LENGTH_SECONDS = 15;
+const MAX_LENGTH_SECONDS = 120;
+
+bot.command("length", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const current = getSession(chatId).maxVideoSeconds ?? config.maxVideoSeconds;
+  const requested = Number(ctx.match.trim().replace(",", "."));
+
+  if (!ctx.match.trim()) {
+    await ctx.reply(
+      `Лимит длины ролика: ${current} с.\n\n` +
+        `Сменить: /length <секунды> (${MIN_LENGTH_SECONDS}-${MAX_LENGTH_SECONDS}).\n` +
+        "От этого зависит и объём сценария (сценарист считает бюджет слов), и " +
+        "подгонка при сборке. Reels, Shorts, TikTok и VK Клипы принимают и " +
+        "больше минуты, так что 70-80 с — нормальный вариант, если хочется " +
+        "плотных объяснений.",
+    );
+    return;
+  }
+
+  if (!Number.isFinite(requested) || requested < MIN_LENGTH_SECONDS || requested > MAX_LENGTH_SECONDS) {
+    await ctx.reply(
+      `Нужно число секунд от ${MIN_LENGTH_SECONDS} до ${MAX_LENGTH_SECONDS}. Например: /length 75`,
+    );
+    return;
+  }
+
+  const seconds = Math.round(requested);
+  updateSession(chatId, { maxVideoSeconds: seconds });
+  await ctx.reply(
+    `Лимит длины: ${seconds} с. Сценарист получит бюджет примерно ` +
+      `${Math.floor(seconds * 2.4)} слов озвучки.`,
+  );
 });
 
 // Список голосов, доступных вашему ключу ElevenLabs. Состав зависит от

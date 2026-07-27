@@ -157,12 +157,17 @@ export async function pickMusic(): Promise<string | undefined> {
  * незаметно, — и сообщает, сколько осталось лишнего, если пауз не хватило.
  * Сцены не выбрасываем: в последней призыв к действию, а в остальных сюжет.
  */
-export function fitToBudget(scenes: Scene[]): {
+export function fitToBudget(
+  scenes: Scene[],
+  // Лимит длины можно задать на чат командой /length — тогда он приходит сюда,
+  // а не берётся из .env.
+  maxVideoSeconds: number = config.maxVideoSeconds,
+): {
   scenes: Scene[];
   totalSeconds: number;
   overBudgetSeconds: number;
 } {
-  const budgetFrames = Math.round(config.maxVideoSeconds * config.fps);
+  const budgetFrames = Math.round(maxVideoSeconds * config.fps);
   const totalFrames = scenes.reduce((sum, s) => sum + s.durationInFrames, 0);
 
   if (totalFrames <= budgetFrames) {
