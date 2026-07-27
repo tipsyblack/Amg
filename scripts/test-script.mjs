@@ -11,9 +11,15 @@ process.env.OPENROUTER_API_KEY ??= "test-key";
 process.env.KIE_API_KEY ??= "test-key";
 process.env.TELEGRAM_BOT_TOKEN ??= "test-token";
 
-const { hookProblem, promoProblem, generateCheckedScript } = await import(
-  "../src/pipeline/generateScript.ts"
-);
+const {
+  hookProblem,
+  promoProblem,
+  toolListProblem,
+  fillerProblem,
+  scriptProblems,
+  stripSources,
+  generateCheckedScript,
+} = await import("../src/pipeline/generateScript.ts");
 
 console.log("=== валидатор хука ===");
 const good = { caption: "ХВАТИТ ПЛАТИТЬ ЗА ПОДПИСКИ", voiceoverText: "Ты платишь за пять нейросетей отдельно. Зря." };
@@ -83,6 +89,76 @@ for (const [what, scene] of [
 }
 const promoCase = { title: "t", scenes: [cleanScript.scenes[0], { caption: "П", voiceoverText: "Наш бот умеет всё." }, cta] };
 check("в причине указан номер сцены", promoProblem(promoCase)?.includes("сцена 2") === true, promoProblem(promoCase));
+
+console.log("\n=== перечисление инструментов вместо пользы ===");
+// Это ровно тот сценарий, который забраковал заказчик: каждая сцена — название
+// сервиса плюс восторг, применить нечего.
+const toolList = {
+  title: "Видео нейросетями",
+  scenes: [
+    { caption: "Тратишь часы на видео?", voiceoverText: "Хватит монтировать часами." },
+    { caption: "GPT-5.4: сценарий за 15 минут", voiceoverText: "Потом GPT-5.4 или Claude сценарий напишут." },
+    { caption: "Midjourney: кадры-референсы", voiceoverText: "Midjourney или Imagen 4 сделают раскадровку." },
+    { caption: "ElevenLabs: озвучка", voiceoverText: "ElevenLabs озвучит любым голосом." },
+    { caption: "Suno AI: музыка", voiceoverText: "Музыку напишет Suno." },
+    cta,
+  ],
+};
+check("список сервисов поймали", toolListProblem(toolList) !== undefined, String(toolListProblem(toolList)));
+check("в причине названо, сколько сцен", /4 из 4/.test(String(toolListProblem(toolList))), String(toolListProblem(toolList)));
+check("полезная середина не считается списком", toolListProblem(cleanScript) === undefined);
+// Одно-два названия вместе с приёмом — нормально, это не список.
+const twoNames = {
+  title: "t",
+  scenes: [
+    cleanScript.scenes[0],
+    { caption: "ОДНОЙ ФРАЗОЙ", voiceoverText: "Опиши кадр одной фразой и добавь стиль — так кадры не разъедутся." },
+    { caption: "Midjourney: три варианта", voiceoverText: "Проси сразу четыре кадра и выбирай, первый обычно скучный." },
+    { caption: "ПРОВЕРЬ ЛИЦА", voiceoverText: "Смотри на руки и лица — там ошибки заметнее всего." },
+    cta,
+  ],
+};
+check("одно название среди приёмов допустимо", toolListProblem(twoNames) === undefined, String(toolListProblem(twoNames)));
+// Короткий ролик из трёх сцен проверять нечем — не придираемся.
+check("на коротком ролике проверка молчит", toolListProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "Suno AI", voiceoverText: "x" }, cta] }) === undefined);
+
+console.log("\n=== вода и выдуманные цифры ===");
+for (const [what, scene] of [
+  ["пустой восторг", { caption: "КРАСОТА", voiceoverText: "Сделает раскадровку. Красота!" }],
+  ["чистый кайф", { caption: "МУЗЫКА", voiceoverText: "Музыку напишет за секунды. Чистый кайф!" }],
+  ["штамп", { caption: "ЛЕГКО", voiceoverText: "Всё легко и просто, без навыков." }],
+  ["меняет дело", { caption: "НОВОЕ", voiceoverText: "Нейросети меняют дело." }],
+  ["связка ни о чём", { caption: "ИДЕЯ", voiceoverText: "Сначала мы идею в текст заносим, да?" }],
+  ["как говорится", { caption: "СТАРТ", voiceoverText: "Как говорится, начинаем работу." }],
+  ["процент", { caption: "ЭКОНОМИЯ", voiceoverText: "Экономия бюджета до 90%." }],
+  ["в N раз", { caption: "БЫСТРЕЕ", voiceoverText: "Получается в пять раз быстрее." }],
+  ["за N минут", { caption: "БЫСТРО", voiceoverText: "Сценарий готов за 15 минут." }],
+]) {
+  const script = { title: "t", scenes: [cleanScript.scenes[0], scene, cta] };
+  check(`поймано: ${what}`, fillerProblem(script) !== undefined, String(fillerProblem(script)));
+}
+check("полезные сцены проходят", fillerProblem(cleanScript) === undefined, String(fillerProblem(cleanScript)));
+// Цифры-указания («три тона», «четыре кадра») — это польза, а не статистика.
+check(
+  "числа словами не считаются статистикой",
+  fillerProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "ТРИ ТОНА", voiceoverText: "Проси три варианта и выбирай." }, cta] }) === undefined,
+);
+
+console.log("\n=== ссылки из веб-поиска не попадают в озвучку ===");
+// Именно это модель дописывала к фразам при включённом поиске, и синтезатор
+// читал адрес вслух.
+const cited = "Потом GPT-5.4 напишет сценарий. [mashagpt.ru](https://mashagpt.ru/blog/kak-sdelat-rolik)";
+check("ссылка-сноска убрана", stripSources(cited) === "Потом GPT-5.4 напишет сценарий.", stripSources(cited));
+check("голый адрес убран", stripSources("Смотри https://example.com/blog там всё есть") === "Смотри там всё есть", stripSources("Смотри https://example.com/blog там всё есть"));
+check("домен без схемы убран", stripSources("Подробнее на mashagpt.ru") === "Подробнее на", stripSources("Подробнее на mashagpt.ru"));
+check("сноска [1] убрана", stripSources("Это факт [1] проверенный") === "Это факт проверенный");
+check("двойная точка не остаётся", !stripSources("Готово. (https://a.ru)").includes(".."), stripSources("Готово. (https://a.ru)"));
+check("обычный текст не портится", stripSources("Проси три тона: строгий, дружеский, короткий.") === "Проси три тона: строгий, дружеский, короткий.");
+check("название модели с точкой цело", stripSources("GPT-5.4 и Sora 2 умеют это") === "GPT-5.4 и Sora 2 умеют это", stripSources("GPT-5.4 и Sora 2 умеют это"));
+
+console.log("\n=== проверки на присланном сценарии находят обе беды ===");
+const realProblems = scriptProblems(toolList);
+check("названо и про список, и про воду", realProblems.length >= 1 && realProblems.some((p) => p.includes("названия инструментов")), realProblems.join(" | "));
 
 console.log("\n=== автоматические правки ===");
 const weakScript = {
@@ -170,8 +246,12 @@ check("приветствия запрещены прямо в промпте", 
 check("лимит слов назван", /не больше 12 слов/i.test(prompt), prompt.match(/не больше 12 слов.{0,24}/i)?.[0]);
 check("сказано, что ролик не рекламный", prompt.includes("ЭТО НЕ РЕКЛАМНЫЙ РОЛИК"));
 check("продукт разрешён только в финале", prompt.includes("кроме последней"));
-check("требуется конкретика, а не общие слова", prompt.includes("Пиши конкретно"));
-check("запрещено выдумывать цифры", prompt.includes("не выдумывай"));
+check("середина — приёмы, а не список сервисов", prompt.includes("СЕРЕДИНА — ЭТО ПРИЁМЫ"));
+check("в промпте есть примеры плохо/хорошо", prompt.includes("ПЛОХО:") && prompt.includes("ХОРОШО:"));
+check("запрещён пустой восторг", prompt.includes("пустого восторга"));
+check("запрещены проценты и «за N минут»", prompt.includes("Никаких процентов"));
+check("запрещено вставлять ссылки в текст", prompt.includes("Ссылки, адреса сайтов"));
+check("рекомендовано 5-8 сцен", prompt.includes("оптимально 5-8"));
 
 console.log("\n=== визуальный акцент на первой сцене ===");
 const { sceneMotion } = await import("../src/remotion/transitions.ts");
