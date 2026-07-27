@@ -7,6 +7,7 @@ deploy.log
 # Сгенерированные пайплайном файлы (создаются заново через npm run generate)
 public/audio/*.mp3
 public/images/*.png
+public/overlays/*.png
 public/music/*
 data/video-data.json
 

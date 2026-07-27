@@ -10,6 +10,12 @@ import {
 } from "./assets";
 import { config } from "./config";
 import { generateCheckedScript } from "./generateScript";
+import {
+  generateSceneOverlay,
+  overlayAnchor,
+  OVERLAY_WIDTH_PERCENT,
+} from "./generateOverlay";
+import { overlayStartMs } from "./wordTimings";
 
 export async function buildVideoData(brief: string): Promise<VideoData> {
   await ensureDirs();
@@ -42,6 +48,34 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     );
     previousSceneUrl = illustration.resultUrl;
 
+    // Появляющийся объект: рисуется отдельно и ложится поверх этой же
+    // картинки. Не получился — сцена собирается без него, ролик не страдает.
+    let overlay;
+    if (scriptScene.overlay?.object) {
+      try {
+        const { fileName } = await generateSceneOverlay(
+          i,
+          scriptScene.overlay.object,
+        );
+        overlay = {
+          fileName,
+          anchor: overlayAnchor(i),
+          widthPercent: OVERLAY_WIDTH_PERCENT,
+          startMs: overlayStartMs(
+            words ?? [],
+            scriptScene.overlay.word,
+            (durationInFrames / config.fps) * 1000,
+          ),
+        };
+      } catch (error) {
+        console.warn(
+          `Объект для сцены ${i + 1} не получился: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
     scenes.push({
       caption: scriptScene.caption,
       voiceoverText: scriptScene.voiceoverText,
@@ -51,6 +85,7 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       imageHeight: illustration.imageHeight,
       durationInFrames,
       words,
+      overlay,
     });
   }
 

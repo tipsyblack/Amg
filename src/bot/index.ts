@@ -20,6 +20,12 @@ import {
 } from "../pipeline/assets";
 import { generateMusicTrack, MUSIC_PRESETS } from "../pipeline/generateMusic";
 import {
+  generateSceneOverlay,
+  overlayAnchor,
+  OVERLAY_WIDTH_PERCENT,
+} from "../pipeline/generateOverlay";
+import { overlayStartMs } from "../pipeline/wordTimings";
+import {
   createInstantVoiceClone,
   isolateVoice,
 } from "../pipeline/voiceClone";
@@ -271,6 +277,7 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
       if (!script) throw new Error("Сценарий потерялся — начните заново: /new");
 
       const images = [...(session.images ?? [])];
+      const overlays = [...(session.overlays ?? [])];
       let previousSceneUrl: string | undefined;
 
       for (let i = 0; i < script.scenes.length; i++) {
@@ -294,9 +301,47 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
           new InputFile(path.resolve("public/images", imageFileName)),
           { caption: `Сцена ${i + 1}: ${script.scenes[i].caption}` },
         );
+
+        // Появляющийся объект: отдельная картинка с прозрачным фоном, которая
+        // ляжет поверх этой же сцены, не заменяя её.
+        const wanted = script.scenes[i].overlay?.object;
+        if (wanted) {
+          await ctx.reply(`✨ Объект для сцены ${i + 1}: ${wanted}…`);
+          try {
+            const { fileName } = await generateSceneOverlay(
+              i,
+              wanted,
+              session.styleNotes,
+              session.imageModel,
+            );
+            overlays[i] = {
+              fileName,
+              anchor: overlayAnchor(i),
+              widthPercent: OVERLAY_WIDTH_PERCENT,
+            };
+            updateSession(chatId, { overlays });
+            await ctx.replyWithPhoto(
+              new InputFile(path.resolve("public/overlays", fileName)),
+              {
+                caption:
+                  `Объект сцены ${i + 1} (фон вырезан). Появится на слове ` +
+                  `«${script.scenes[i].overlay?.word ?? "—"}».`,
+              },
+            );
+          } catch (error) {
+            // Объект — украшение: если не получился, ролик собирается без него.
+            overlays[i] = undefined;
+            updateSession(chatId, { overlays });
+            await ctx.reply(
+              `Объект для сцены ${i + 1} не вышел (${
+                error instanceof Error ? error.message : String(error)
+              }). Собираю сцену без него.`,
+            );
+          }
+        }
       }
 
-      updateSession(chatId, { step: "idle", images });
+      updateSession(chatId, { step: "idle", images, overlays });
       await ctx.reply("Как картинки?", { reply_markup: imagesKeyboard });
     },
     { retryData: "retry_images" },
@@ -353,6 +398,23 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     }
 
     const audio = [...(session.audio ?? [])];
+    const overlays = session.overlays ?? [];
+    // Объект появляется на слове из озвучки, а слова известны только после
+    // синтеза — поэтому момент считается здесь, а не при генерации картинки.
+    const sceneOverlay = (i: number) => {
+      const ready = overlays[i];
+      if (!ready) return undefined;
+      return {
+        fileName: ready.fileName,
+        anchor: ready.anchor,
+        widthPercent: ready.widthPercent,
+        startMs: overlayStartMs(
+          audio[i]?.words ?? [],
+          script.scenes[i].overlay?.word,
+          ((audio[i]?.durationInFrames ?? 0) / config.fps) * 1000,
+        ),
+      };
+    };
     // Про сочетание «клон + прокси Kie.ai» лучше сказать до озвучки, а не
     // после того, как ролик собран чужим голосом.
     if (!audio.length) {
@@ -387,6 +449,9 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         durationInFrames: audio[i].durationInFrames,
         // Слова с таймингами — для субтитров «по слову».
         words: audio[i].words,
+        // Момент появления объекта известен только сейчас: он привязан к слову
+        // из озвучки, а озвучка появляется на этом шаге.
+        overlay: sceneOverlay(i),
       });
     }
 

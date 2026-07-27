@@ -21,7 +21,8 @@
     "test:drive": "tsx scripts/test-drive.mjs",
     "test:script": "tsx scripts/test-script.mjs",
     "test:size": "tsx scripts/test-video-size.mjs",
-    "test:subs": "tsx scripts/test-subtitles.mjs"
+    "test:subs": "tsx scripts/test-subtitles.mjs",
+    "test:overlays": "tsx scripts/test-overlays.mjs"
   },
   "dependencies": {
     "@remotion/captions": "4.0.499",

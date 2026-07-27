@@ -27,6 +27,12 @@ export interface SceneImage {
   imageHeight?: number;
 }
 
+export interface SceneOverlay {
+  fileName: string;
+  anchor: "topLeft" | "topRight" | "bottomLeft" | "bottomRight" | "center";
+  widthPercent: number;
+}
+
 export interface SceneAudio {
   audioFileName: string;
   durationInFrames: number;
@@ -55,6 +61,9 @@ export interface Session {
   styleNotes?: string;
   script?: GeneratedScript;
   images?: SceneImage[];
+  // Появляющиеся объекты: файл готов вместе с картинками, а момент появления
+  // считается при сборке — он привязан к слову из озвучки.
+  overlays?: (SceneOverlay | undefined)[];
   // Кэш готовых озвучек: при повторе сборки после сбоя уже озвученные
   // сцены не переозвучиваются (и не оплачиваются) заново.
   audio?: SceneAudio[];

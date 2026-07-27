@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+// Объект, который появляется поверх картинки сцены, не заменяя её: отдельно
+// сгенерированный PNG с прозрачным фоном. Смысл в том, чтобы кадр жил, а
+// зритель не терял контекст — фон остаётся тем же.
+export const overlaySchema = z.object({
+  // Файл в public/overlays/.
+  fileName: z.string(),
+  // Когда появляется — миллисекунды от начала сцены (обычно на слове, которое
+  // этот объект и называет).
+  startMs: z.number().nonnegative(),
+  // Куда ставить относительно карточки.
+  anchor: z.enum(["topLeft", "topRight", "bottomLeft", "bottomRight", "center"]),
+  // Ширина в процентах от ширины карточки.
+  widthPercent: z.number().positive().max(100),
+});
+
 export const sceneSchema = z.object({
   caption: z.string(),
   voiceoverText: z.string(),
@@ -12,6 +27,8 @@ export const sceneSchema = z.object({
   imageWidth: z.number().int().positive().optional(),
   imageHeight: z.number().int().positive().optional(),
   durationInFrames: z.number().int().positive(),
+  // Объект поверх картинки (не заменяет её).
+  overlay: overlaySchema.optional(),
   // Слова озвучки с таймингами от начала сцены — для субтитров «по слову».
   // Необязательно: без них субтитров просто не будет.
   words: z
@@ -43,6 +60,7 @@ export const videoDataSchema = z.object({
   scenes: z.array(sceneSchema).min(1),
 });
 
+export type Overlay = z.infer<typeof overlaySchema>;
 export type Scene = z.infer<typeof sceneSchema>;
 export type VideoData = z.infer<typeof videoDataSchema>;
 

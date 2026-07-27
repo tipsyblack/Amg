@@ -9,9 +9,11 @@ import {
   useVideoConfig,
 } from "remotion";
 import { Accents } from "./Accents";
+import { Overlay } from "./Overlay";
 import { Subtitles } from "./Subtitles";
 import { CAPTION_FONT_FAMILY, loadCaptionFont } from "./font";
 import { sceneMotion } from "./transitions";
+import type { Overlay as OverlayData } from "../types";
 
 loadCaptionFont();
 const fontFamily = CAPTION_FONT_FAMILY;
@@ -65,6 +67,8 @@ interface SceneProps {
   // Слова озвучки с таймингами — для субтитров «по слову». Нет слов — нет и
   // субтитров, кадр остаётся как раньше.
   words?: { text: string; startMs: number; endMs: number }[];
+  // Объект, который появляется поверх картинки, не заменяя её.
+  overlay?: OverlayData;
   imageFileName?: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -86,6 +90,7 @@ interface SceneProps {
 export const Scene: React.FC<SceneProps> = ({
   caption,
   words,
+  overlay,
   imageFileName,
   imageWidth,
   imageHeight,
@@ -272,6 +277,13 @@ export const Scene: React.FC<SceneProps> = ({
           >
             изображение сцены
           </div>
+        )}
+
+        {/* Появляющийся объект лежит внутри карточки, поверх картинки: так он
+            обрезается её рамкой и выглядит частью кадра, а не наклейкой на
+            белом фоне. */}
+        {overlay && (
+          <Overlay overlay={overlay} exitProgress={plainExit ? 0 : exit} />
         )}
       </div>
   );

@@ -100,3 +100,30 @@ export function wordsForScene(
   if (fromProvider && fromProvider.length > 0) return fromProvider;
   return estimateWordTimings(text, durationSeconds);
 }
+
+/**
+ * Когда в сцене появляется наложенный объект: на слове, которое назвал
+ * сценарист. Слово ищем без учёта регистра и окончания — модель пишет его в
+ * начальной форме («радиатор»), а в реплике оно склоняется («радиатором»).
+ * Не нашли — показываем в первой трети сцены: объект должен успеть сыграть.
+ */
+export function overlayStartMs(
+  words: { text: string; startMs: number; endMs: number }[],
+  word: string | undefined,
+  sceneDurationMs: number,
+): number {
+  const fallback = Math.round(sceneDurationMs * 0.3);
+  if (!word || words.length === 0) return fallback;
+
+  const needle = word.trim().toLowerCase().replace(/[.,!?…:;»«"]/g, "");
+  if (!needle) return fallback;
+  // Сравниваем по корню: отрезаем два последних символа у более длинного из
+  // двух слов, чтобы «радиатор» нашёлся в «радиатором».
+  const stem = needle.length > 5 ? needle.slice(0, needle.length - 2) : needle;
+
+  const hit = words.find((w) => {
+    const text = w.text.toLowerCase().replace(/[.,!?…:;»«"]/g, "");
+    return text === needle || text.startsWith(stem);
+  });
+  return hit ? hit.startMs : fallback;
+}
