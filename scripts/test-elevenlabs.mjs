@@ -32,8 +32,12 @@ const server = createServer(async (req, res) => {
     res.end(body);
     return;
   }
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  lastTtsBody = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
   res.writeHead(200); res.end(Buffer.from('AUDIO'));
 });
+let lastTtsBody;
 await new Promise(r => server.listen(PORT, '127.0.0.1', r));
 
 process.env.OPENROUTER_API_KEY = 'k';
@@ -81,5 +85,37 @@ for (const [m, expect] of [
   }
 }
 
+console.log('=== настройки похожести голоса ===');
+// Клон звучит ближе к исходнику при высоком similarity_boost, нулевом style и
+// включённом speaker boost — поэтому эти поля обязаны уходить в запрос.
+mode = 'ok';
+const { config } = await import('../src/pipeline/config.ts');
+await el.synthesizeSpeechDirect('тест', '/tmp/x.mp3', 'Aria');
+const vs = lastTtsBody?.voice_settings ?? {};
+check('similarity_boost из конфига', vs.similarity_boost === config.ttsSimilarityBoost, JSON.stringify(vs));
+check('similarity высокий по умолчанию', config.ttsSimilarityBoost >= 0.85, String(config.ttsSimilarityBoost));
+check('speaker boost включён', vs.use_speaker_boost === true);
+check('style нулевой (не искажает тембр)', vs.style === 0);
+check('stability оставляет живую интонацию', vs.stability === config.ttsStability && config.ttsStability < 0.5, String(vs.stability));
+check('модель многоязычная (нужна для русского)', lastTtsBody?.model_id === 'eleven_multilingual_v2', String(lastTtsBody?.model_id));
+
+console.log('=== предупреждение про клон через прокси Kie.ai ===');
+// Клон живёт в аккаунте пользователя, а Kie.ai ходит в ElevenLabs со своего —
+// на этом сочетании ролик озвучивается чужим голосом.
+const { cloneViaProxyWarning } = await import('../src/pipeline/generateVoiceover.ts');
+const cloneId = '21m00Tcm4TlvDq8ikWAM'; // в моке помечен как professional
+const premadeId = '9BWtsMINqrJLrRacOk9x'; // Aria, premade
+const warn = await cloneViaProxyWarning(cloneId, 'kie');
+check('клон + kie: предупреждаем', typeof warn === 'string', String(warn).slice(0, 60));
+check('в предупреждении есть имя голоса', warn?.includes('Rachel'));
+check('подсказано переключение', warn?.includes('/tts elevenlabs'));
+check('базовый голос + kie: молчим', (await cloneViaProxyWarning(premadeId, 'kie')) === undefined);
+check('клон + elevenlabs: молчим', (await cloneViaProxyWarning(cloneId, 'elevenlabs')) === undefined);
+check('неизвестный аккаунту голос: молчим', (await cloneViaProxyWarning('QQQQQQQQQQQQQQQQQQQQ', 'kie')) === undefined);
+voicesMode = 'no-permission';
+check('нет прав на список голосов — не мешаем работать', (await cloneViaProxyWarning(cloneId, 'kie')) === undefined);
+voicesMode = 'ok';
+
 server.close();
+console.log(fails === 0 ? '\nВсе проверки пройдены\n' : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

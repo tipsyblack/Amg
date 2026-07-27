@@ -32,4 +32,20 @@ check('gpt2: слаг', byKey.gpt2.model === 'gpt-image-2-image-to-image');
 check('неизвестный ключ -> дефолт', getImageModel('чушь').key === DEFAULT_IMAGE_MODEL_KEY);
 check('пустой ключ -> дефолт', getImageModel(undefined).key === 'nb');
 
+// Текст на картинке дублировал подпись, которую рисует Remotion, поэтому
+// надписи запрещены — и подпись сцены в промпт больше не попадает: увидев
+// готовую фразу, модель норовит её нарисовать.
+console.log('\n=== промпт картинки: без текста в кадре ===');
+const { buildImagePrompt } = await import('../src/pipeline/assets.ts');
+const scene = { caption: 'ХВАТИТ ПЛАТИТЬ ПЯТЬ РАЗ', voiceoverText: 'Джин разводит руками возле пяти счетов.' };
+const prompt = buildImagePrompt(scene);
+check('подписи сцены в промпте нет', !prompt.includes(scene.caption), prompt.slice(-80));
+check('контекст озвучки передан', prompt.includes(scene.voiceoverText));
+check('запрет текста есть', prompt.includes('НИКАКОГО текста'));
+check('перечислены типовые места надписей', ['речевые пузыри', 'вывески', 'логотипы'].every(w => prompt.includes(w)));
+check('запрет идёт последним', prompt.trimEnd().endsWith('без букв.'), prompt.trimEnd().slice(-40));
+
+const withNotes = buildImagePrompt(scene, 'в референсе есть подписи на английском');
+check('заметки из референса не перебивают запрет', withNotes.indexOf('НИКАКОГО текста') > withNotes.indexOf('референсе есть подписи'));
+
 process.exit(fails === 0 ? 0 : 1);

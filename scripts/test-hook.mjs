@@ -126,8 +126,8 @@ check("у остальных сцен акцента нет", [1, 2, 3, 4, 5, 6,
 check("движение по-прежнему детерминировано", sceneMotion(1).entry === sceneMotion(7).entry);
 
 const { existsSync, statSync } = await import("node:fs");
-check("звук хука в репозитории", existsSync("public/sfx/hook.mp3"));
-check("звук хука не пустой", existsSync("public/sfx/hook.mp3") && statSync("public/sfx/hook.mp3").size > 1000);
+check("звук хука в репозитории", existsSync("public/sfx/hook.wav"));
+check("звук хука не пустой", existsSync("public/sfx/hook.wav") && statSync("public/sfx/hook.wav").size > 1000);
 
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

@@ -55,8 +55,50 @@ check("несколько видов появления", entries.size >= 4, [..
 check("есть смятие на уходе", exits.has("crumple"));
 check("есть наложение на входе", entries.has("overlay"));
 check("несколько разных звуков", sfx.size >= 3, [...sfx].join(", "));
+check(
+  "на соседних стыках звук не повторяется",
+  motions.every((m, i, arr) => i === 0 || m.sfx !== arr[i - 1].sfx),
+  motions.map((m) => m.sfx).join(" "),
+);
 check("подряд идущие сцены разные", motions.slice(0, 5).every((m, i, arr) => i === 0 || m.entry !== arr[i - 1].entry));
 check("выбор детерминирован", sceneMotion(3).entry === sceneMotion(3).entry && sceneMotion(9).entry === sceneMotion(3).entry);
+
+console.log("\n=== звуки стыков: файлы есть и они резкие ===");
+// Звуки на стыке должны быть щелчками и хлопками, а не наплывами: атака в
+// единицы миллисекунд и короткий спад. Проверяем по самим файлам, потому что
+// заменить их легко, а услышать разницу в тесте — нет.
+const { existsSync, readFileSync } = await import("node:fs");
+const { execFileSync } = await import("node:child_process");
+const { tmpdir } = await import("node:os");
+const pathMod = await import("node:path");
+for (const name of sfx) {
+  const file = `public/sfx/${name}.wav`;
+  if (!existsSync(file)) {
+    check(`${name}: файл на месте`, false, file);
+    continue;
+  }
+  const wav = pathMod.join(tmpdir(), `amg-sfx-${name}.wav`);
+  execFileSync("ffmpeg", ["-y", "-v", "error", "-i", file, "-ac", "1", "-ar", "44100", "-f", "wav", wav]);
+  const b = readFileSync(wav);
+  let off = 12;
+  while (b.toString("latin1", off, off + 4) !== "data") off += 8 + b.readUInt32LE(off + 4);
+  const start = off + 8, sr = 44100, n = (b.length - start) / 2;
+  const win = Math.round(sr * 0.005);
+  const env = [];
+  for (let i = 0; i + win < n; i += win) {
+    let s = 0;
+    for (let j = 0; j < win; j++) { const v = b.readInt16LE(start + 2 * (i + j)) / 32768; s += v * v; }
+    env.push(Math.sqrt(s / win));
+  }
+  const peak = Math.max(...env), pi = env.indexOf(peak);
+  let di = env.length - 1;
+  for (let i = pi; i < env.length; i++) if (env[i] < peak * 0.1) { di = i; break; }
+  const attackMs = pi * 5, decayMs = (di - pi) * 5, lengthMs = Math.round((n / sr) * 1000);
+  check(
+    `${name}: резкий (атака ${attackMs} мс, спад ${decayMs} мс, длит ${lengthMs} мс)`,
+    attackMs <= 15 && decayMs <= 130 && lengthMs <= 300,
+  );
+}
 
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

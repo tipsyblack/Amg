@@ -39,6 +39,16 @@ export const config = {
   // падает с "internal error". По умолчанию — ID голоса Rachel.
   kieTtsVoice: env("KIE_TTS_VOICE") ?? "21m00Tcm4TlvDq8ikWAM",
   kieTtsSpeed: Number(env("KIE_TTS_SPEED") ?? 1),
+
+  // Настройки голоса ElevenLabs (действуют для оба провайдера). Значения
+  // подобраны под клонированный голос: чем выше similarity_boost и чем ниже
+  // style, тем ближе результат к исходной записи; speaker boost добавляет
+  // сходства с оригинальным тембром. Стабильность ниже 0.5 оставляет живую
+  // интонацию — на 1.0 речь становится ровной и «диктором».
+  ttsStability: Number(env("TTS_STABILITY") ?? 0.4),
+  ttsSimilarityBoost: Number(env("TTS_SIMILARITY_BOOST") ?? 0.9),
+  ttsStyle: Number(env("TTS_STYLE") ?? 0),
+  ttsSpeakerBoost: (env("TTS_SPEAKER_BOOST") ?? "1") !== "0",
   // Пусто = модель определяет язык сама.
   kieTtsLanguageCode: env("KIE_TTS_LANGUAGE_CODE") ?? "",
 

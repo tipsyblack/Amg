@@ -10,9 +10,13 @@ import { sceneMotion } from "./transitions";
 // при этом не сдвигается: сцены остаются на своих кадрах.
 const CROSSFADE_FRAMES = 8;
 
-// Звук перехода играет чуть раньше стыка — так он попадает на начало движения.
-const SFX_LEAD_FRAMES = 4;
-const SFX_VOLUME = 0.32;
+// Звук перехода играет на кадр раньше стыка: он резкий и короткий, поэтому
+// должен попасть точно в начало движения. Большее опережение слышалось бы как
+// отдельный звук «до» перехода.
+const SFX_LEAD_FRAMES = 1;
+// Щелчки и хлопки короткие, поэтому на слух тише длинных вушей — компенсируем
+// громкостью, оставаясь под озвучкой.
+const SFX_VOLUME = 0.5;
 
 // Звук хука на первом кадре: подъём и удар под наезд карточки. Громче
 // переходных — он должен остановить палец на пролистывании.
@@ -48,7 +52,7 @@ export const VideoComposition: React.FC<VideoData> = ({
       )}
       {sfxEnabled && (
         <Sequence from={0}>
-          <Audio src={staticFile("sfx/hook.mp3")} volume={HOOK_SFX_VOLUME} />
+          <Audio src={staticFile("sfx/hook.wav")} volume={HOOK_SFX_VOLUME} />
         </Sequence>
       )}
       {scenes.map((scene, index) => {
@@ -93,7 +97,7 @@ export const VideoComposition: React.FC<VideoData> = ({
                 )}
               >
                 <Audio
-                  src={staticFile(`sfx/${sceneMotion(index).sfx}.mp3`)}
+                  src={staticFile(`sfx/${sceneMotion(index).sfx}.wav`)}
                   volume={SFX_VOLUME}
                 />
               </Sequence>

@@ -32,6 +32,7 @@ import { config } from "../pipeline/config";
 import { generateScriptWithHook } from "../pipeline/generateScript";
 import {
   buildTtsInput,
+  cloneViaProxyWarning,
   synthesizeSpeech,
   TTS_MODEL_CANDIDATES,
 } from "../pipeline/generateVoiceover";
@@ -339,6 +340,16 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     }
 
     const audio = [...(session.audio ?? [])];
+    // Про сочетание «клон + прокси Kie.ai» лучше сказать до озвучки, а не
+    // после того, как ролик собран чужим голосом.
+    if (!audio.length) {
+      const warning = await cloneViaProxyWarning(
+        session.voice ?? config.kieTtsVoice,
+        session.ttsProvider,
+      );
+      if (warning) await ctx.reply(`⚠️ ${warning}`);
+    }
+
     const scenes: Scene[] = [];
     for (let i = 0; i < script.scenes.length; i++) {
       // Озвученные при прошлой попытке сцены не переозвучиваем.
@@ -511,10 +522,18 @@ bot.command("voice", async (ctx) => {
       }
     }
 
+    const session = getSession(chatId);
+    const warning = await cloneViaProxyWarning(current, session.ttsProvider);
+
     await ctx.reply(
       `Текущий голос: ${resolved}` +
         (resolved === current ? "" : ` (имя «${current}» → ID)`) +
         named +
+        `\nПровайдер: ${session.ttsProvider ?? config.ttsProvider}` +
+        `\nПохожесть: similarity ${config.ttsSimilarityBoost}, stability ` +
+        `${config.ttsStability}, style ${config.ttsStyle}` +
+        (config.ttsSpeakerBoost ? ", speaker boost вкл" : "") +
+        (warning ? `\n\n⚠️ ${warning}` : "") +
         "\n\nСменить: /voice <voice_id>, список — /voices\n" +
         "Kie.ai понимает только ID голоса, не имя. Имена классических " +
         `голосов подставляются автоматически (${KNOWN_VOICE_NAMES.join(", ")}), ` +

@@ -1,5 +1,9 @@
 import { config } from "./config";
-import { synthesizeSpeechDirect } from "./elevenlabs";
+import {
+  isElevenLabsAvailable,
+  listVoices,
+  synthesizeSpeechDirect,
+} from "./elevenlabs";
 import { runKieTask } from "./kie";
 import { resolveVoiceId } from "./voices";
 
@@ -25,9 +29,9 @@ export function buildTtsInput(
   const input: Record<string, unknown> = {
     text,
     voice: resolveVoiceId(voice),
-    stability: 0.5,
-    similarity_boost: 0.75,
-    style: 0,
+    stability: config.ttsStability,
+    similarity_boost: config.ttsSimilarityBoost,
+    style: config.ttsStyle,
     speed: config.kieTtsSpeed,
     timestamps: false,
   };
@@ -35,6 +39,41 @@ export function buildTtsInput(
     input.language_code = config.kieTtsLanguageCode;
   }
   return input;
+}
+
+/**
+ * Предупреждение о сочетании «клонированный голос + прокси Kie.ai».
+ *
+ * Клон живёт в вашем аккаунте ElevenLabs, а Kie.ai обращается к ElevenLabs со
+ * своего — значит вашего клона он, скорее всего, не видит, и озвучка выйдет
+ * другим голосом. Проверить это со стороны кода нельзя (Kie.ai не сообщает,
+ * какой голос он в итоге взял), поэтому просто предупреждаем: голос из вашего
+ * аккаунта не из набора premade + провайдер kie — повод переключиться.
+ *
+ * Возвращает текст предупреждения или undefined, если сочетание безопасное
+ * либо проверить нечем (нет ключа ElevenLabs, список голосов не отдался).
+ */
+export async function cloneViaProxyWarning(
+  voice: string,
+  provider?: TtsProvider,
+): Promise<string | undefined> {
+  if ((provider ?? config.ttsProvider) !== "kie") return undefined;
+  if (!isElevenLabsAvailable()) return undefined;
+
+  const voiceId = resolveVoiceId(voice);
+  try {
+    const found = (await listVoices()).find((v) => v.voiceId === voiceId);
+    if (!found || found.category === "premade") return undefined;
+    return (
+      `Голос «${found.name}» — не базовый (${found.category}), он живёт в вашем ` +
+      "аккаунте ElevenLabs. Сейчас озвучка идёт через прокси Kie.ai, который " +
+      "обращается к ElevenLabs со своего аккаунта, поэтому ваш голос ему, " +
+      "скорее всего, недоступен — и ролик озвучит кто-то другой.\n\n" +
+      "Чтобы гарантированно звучал ваш голос: /tts elevenlabs"
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 /**

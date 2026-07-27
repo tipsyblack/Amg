@@ -5,7 +5,7 @@ import { getAudioDurationInSeconds } from "./audioDuration";
 import { config } from "./config";
 import {
   generateSceneImage,
-  RUSSIAN_TEXT_RULE,
+  NO_TEXT_RULE,
   STYLE_PROMPT,
 } from "./generateImage";
 import { synthesizeSpeech, type TtsProvider } from "./generateVoiceover";
@@ -38,13 +38,16 @@ export function buildImagePrompt(
   const styleAddition = styleNotes
     ? `\n\nДополнительные заметки о стиле из референса пользователя (учитывай их, не ломая описанный выше стиль и персонажа): ${styleNotes}`
     : "";
-  // Правило про язык надписей идёт после заметок из референса: те могут
-  // упоминать английский текст (в референсе он есть), и требование русского
-  // должно быть последним словом.
+  // Запрет надписей идёт последним, после заметок из референса: те могут
+  // упоминать текст в кадре (в референсе он есть), а запрет должен остаться
+  // последним словом.
+  //
+  // Сцена описывается только текстом озвучки: подпись — это готовая фраза для
+  // экрана, и, попав в промпт, она провоцирует модель эту фразу нарисовать.
   return (
     `${STYLE_PROMPT}${styleAddition}` +
-    `\n\nСцена: ${scene.caption}. Контекст: ${scene.voiceoverText}` +
-    `\n\n${RUSSIAN_TEXT_RULE}`
+    `\n\nЧто происходит в сцене: ${scene.voiceoverText}` +
+    `\n\n${NO_TEXT_RULE}`
   );
 }
 

@@ -86,7 +86,14 @@ export async function synthesizeSpeechDirect(
     body: JSON.stringify({
       text,
       model_id: config.elevenLabsModelId,
-      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      // use_speaker_boost работает только здесь, у прямого API: он заметно
+      // добавляет сходства с оригинальным тембром клона.
+      voice_settings: {
+        stability: config.ttsStability,
+        similarity_boost: config.ttsSimilarityBoost,
+        style: config.ttsStyle,
+        use_speaker_boost: config.ttsSpeakerBoost,
+      },
     }),
   });
 
