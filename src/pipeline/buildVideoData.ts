@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { Scene, VideoData } from "../types";
 import {
   buildImagePrompt,
@@ -9,6 +11,7 @@ import {
   writeVideoData,
 } from "./assets";
 import { config } from "./config";
+import { generateDescription } from "./generateDescription";
 import { generateCheckedScript } from "./generateScript";
 import {
   generateSceneOverlay,
@@ -16,6 +19,9 @@ import {
   OVERLAY_WIDTH_PERCENT,
 } from "./generateOverlay";
 import { overlayStartMs } from "./wordTimings";
+
+// Текст описания под пост — рядом с готовым роликом.
+const DESCRIPTION_FILE = path.resolve("out/description.txt");
 
 export async function buildVideoData(brief: string): Promise<VideoData> {
   await ensureDirs();
@@ -100,5 +106,21 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   };
 
   await writeVideoData(videoData);
+
+  // Текст под пост кладём рядом с данными ролика: после npm run render его
+  // можно взять из файла и вставить в описание публикации.
+  try {
+    const { description, fixed } = await generateDescription(script);
+    await writeFile(DESCRIPTION_FILE, description, "utf-8");
+    if (fixed) console.log(`Описание переписано: ${fixed}`);
+    console.log(`Описание (${description.length} символов): ${DESCRIPTION_FILE}`);
+  } catch (error) {
+    console.warn(
+      `Описание не получилось: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
   return videoData;
 }

@@ -87,3 +87,25 @@ export async function compressToLimit(
 
   return { bitrateKbps };
 }
+
+/**
+ * Обложка для документа. Телеграм не рисует превью у файла сам, и без обложки
+ * ролик выглядит в чате как безымянный вложенный файл. Требования площадки:
+ * JPEG, до 320 px по большей стороне, меньше 200 КБ.
+ */
+export async function makeThumbnail(
+  videoFile: string,
+  outFile: string,
+  atSeconds = 0.5,
+): Promise<void> {
+  await execFileAsync("ffmpeg", [
+    "-y", "-hide_banner", "-loglevel", "error",
+    "-ss", String(atSeconds),
+    "-i", videoFile,
+    "-frames:v", "1",
+    // Вписываем в 320 px, сохраняя пропорции вертикального кадра.
+    "-vf", "scale=-2:320",
+    "-q:v", "6",
+    outFile,
+  ]);
+}

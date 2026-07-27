@@ -34,6 +34,9 @@ export const config = {
   // то есть копейки на ролик. SCRIPT_WEB_SEARCH=0 отключает.
   scriptWebSearch: (env("SCRIPT_WEB_SEARCH") ?? "1") !== "0",
   scriptWebSearchResults: Number(env("SCRIPT_WEB_SEARCH_RESULTS") ?? 3),
+  // Длина текста описания под ролик (символов). 500 — рабочая середина: и
+  // поиску есть что читать, и площадки не обрезают.
+  descriptionChars: Number(env("DESCRIPTION_CHARS") ?? 500),
 
   // Озвучка и картинки — Kie.ai (один ключ на оба сервиса).
   kieApiKey: requireEnv("KIE_API_KEY"),

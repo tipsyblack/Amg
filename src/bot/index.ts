@@ -35,6 +35,7 @@ import {
   extractAudio,
 } from "./extractAudio";
 import { config } from "../pipeline/config";
+import { generateDescription } from "../pipeline/generateDescription";
 import { generateCheckedScript } from "../pipeline/generateScript";
 import {
   buildTtsInput,
@@ -60,6 +61,7 @@ import {
   compressToLimit,
   fileSizeBytes,
   formatMb,
+  makeThumbnail,
   SAFE_VIDEO_BYTES,
 } from "./videoSize";
 import { extractStyleNotes } from "./referenceStyle";
@@ -489,10 +491,11 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         "VideoComposition",
         "out/video.mp4",
         "--props=data/video-data.json",
-        // CRF 23 вместо стандартного 18: на 1080×1920 разница на глаз почти
-        // не видна, а файл выходит примерно вдвое легче — минутный ролик по
-        // умолчанию перерастал лимит Telegram в 50 МБ.
-        "--crf=23",
+        // CRF 20: компромисс между стандартным 18 и лёгким 23. Ролик уходит
+        // документом, то есть без перекодирования на стороне Telegram, поэтому
+        // качество исходника определяет то, что увидит зритель. Если файл не
+        // влезет в лимит бота, ниже он сжимается отдельно.
+        "--crf=20",
       ],
       { timeout: 20 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 },
     );
@@ -528,16 +531,49 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       );
     }
 
-    await ctx.replyWithVideo(new InputFile(videoFile), {
+    // Обложку делаем сами: у документа Telegram превью не рисует.
+    const thumbFile = path.resolve("out/thumb.jpg");
+    let thumbnail: InputFile | undefined;
+    try {
+      await makeThumbnail(videoFile, thumbFile);
+      thumbnail = new InputFile(thumbFile);
+    } catch {
+      // Без обложки файл всё равно уйдёт — это косметика.
+    }
+
+    // Отправляем документом, а не видео: sendVideo Telegram перекодирует под
+    // стриминг, и качество теряется. Документ доходит байт в байт.
+    await ctx.replyWithDocument(new InputFile(videoFile), {
+      thumbnail,
       caption:
-        `«${script.title}» готово (${videoData.width}×${videoData.height}, ` +
-        `${durationSeconds} с, ${formatMb(await fileSizeBytes(videoFile))}). ` +
-        "Новый ролик — /new",
-      width: videoData.width,
-      height: videoData.height,
-      duration: durationSeconds,
-      supports_streaming: true,
+        `«${script.title}» готово — файлом, без сжатия Telegram.\n` +
+        `${videoData.width}×${videoData.height}, ${durationSeconds} с, ` +
+        `${formatMb(await fileSizeBytes(videoFile))}`,
     });
+
+    // Текст под пост отдельным сообщением: так его удобно скопировать целиком,
+    // не выцепляя из подписи к файлу.
+    try {
+      const { description, fixed, fromFallback } =
+        await generateDescription(script);
+      await ctx.reply(description);
+      const notes = [
+        `📝 Описание под пост — ${description.length} символов.`,
+        fixed ? `Переписал: ${fixed}.` : undefined,
+        fromFallback
+          ? "Собрано из сценария: модель описание не вернула."
+          : undefined,
+        "Новый ролик — /new",
+      ].filter(Boolean);
+      await ctx.reply(notes.join(" "));
+    } catch (error) {
+      // Видео уже отправлено — из-за описания ролик терять нельзя.
+      await ctx.reply(
+        `Описание не получилось (${
+          error instanceof Error ? error.message : String(error)
+        }). Видео выше готово. Новый ролик — /new`,
+      );
+    }
     resetSession(chatId);
     },
     { retryData: "retry_assemble" },
