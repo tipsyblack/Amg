@@ -19,7 +19,8 @@
     "test:music": "tsx scripts/test-music.mjs",
     "test:clone": "tsx scripts/test-voice-clone.mjs",
     "test:drive": "tsx scripts/test-drive.mjs",
-    "test:script": "tsx scripts/test-script.mjs"
+    "test:script": "tsx scripts/test-script.mjs",
+    "test:size": "tsx scripts/test-video-size.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.499",

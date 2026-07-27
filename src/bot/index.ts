@@ -50,6 +50,12 @@ import {
 import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline/voices";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
+import {
+  compressToLimit,
+  fileSizeBytes,
+  formatMb,
+  SAFE_VIDEO_BYTES,
+} from "./videoSize";
 import { extractStyleNotes } from "./referenceStyle";
 import {
   deleteProfile,
@@ -416,6 +422,10 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         "VideoComposition",
         "out/video.mp4",
         "--props=data/video-data.json",
+        // CRF 23 вместо стандартного 18: на 1080×1920 разница на глаз почти
+        // не видна, а файл выходит примерно вдвое легче — минутный ролик по
+        // умолчанию перерастал лимит Telegram в 50 МБ.
+        "--crf=23",
       ],
       { timeout: 20 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 },
     );
@@ -426,13 +436,39 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       (sum, s) => sum + s.durationInFrames,
       0,
     );
-    await ctx.replyWithVideo(new InputFile(path.resolve("out/video.mp4")), {
+    const durationSeconds = Math.round(totalFrames / videoData.fps);
+
+    // Даже с CRF 23 длинный ролик может не влезть в лимит бота. Проверяем
+    // размер заранее: 413 от Telegram приходит уже после загрузки, и ролик,
+    // за который заплачены генерации, остаётся лежать на сервере.
+    let videoFile = path.resolve("out/video.mp4");
+    const renderedBytes = await fileSizeBytes(videoFile);
+    if (renderedBytes > SAFE_VIDEO_BYTES) {
+      await ctx.reply(
+        `Ролик получился ${formatMb(renderedBytes)} — для отправки ботом ` +
+          "(лимит 50 МБ) многовато, сжимаю…",
+      );
+      const compressed = path.resolve("out/video-tg.mp4");
+      const { bitrateKbps } = await compressToLimit(
+        videoFile,
+        compressed,
+        durationSeconds,
+      );
+      videoFile = compressed;
+      console.log(
+        `Сжатие под Telegram: ${bitrateKbps} кбит/с, ` +
+          `${formatMb(renderedBytes)} → ${formatMb(await fileSizeBytes(compressed))}`,
+      );
+    }
+
+    await ctx.replyWithVideo(new InputFile(videoFile), {
       caption:
-        `«${script.title}» готово (${videoData.width}×${videoData.height}). ` +
+        `«${script.title}» готово (${videoData.width}×${videoData.height}, ` +
+        `${durationSeconds} с, ${formatMb(await fileSizeBytes(videoFile))}). ` +
         "Новый ролик — /new",
       width: videoData.width,
       height: videoData.height,
-      duration: Math.round(totalFrames / videoData.fps),
+      duration: durationSeconds,
       supports_streaming: true,
     });
     resetSession(chatId);
