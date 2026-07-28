@@ -35,29 +35,40 @@ export interface ClipDefinition {
 // Перекос в сторону появлений намеренный — хук есть в каждом ролике, и если
 // вариант там будет один, все ролики начнут выглядеть одинаково.
 export const CLIP_LIBRARY: ClipDefinition[] = [
+  // Клипы хука. Первая версия была построена на появлении: джин выходил из
+  // лампы, проявлялся из дымки, влетал в кадр. Это ошибка замысла, а не
+  // исполнения — карточка хука в тот же момент сама приезжает упругим
+  // наездом, и появление внутри неё давало два появления подряд. Мы уже
+  // наступали на эти грабли со стыками: два движения на одном стыке гасят
+  // друг друга (см. coversFrame в transitions.ts).
+  //
+  // Поэтому теперь персонаж В КАДРЕ С ПЕРВОГО КАДРА и сразу что-то делает.
+  // Причина та же, по которой хук не проявляется, а врубается: первый кадр
+  // ролика — это ещё и обложка в ленте, и он должен быть непустым.
   {
-    id: "intro-lamp",
+    id: "intro-lean",
     role: "intro",
-    title: "Выходит из лампы",
+    title: "Подаётся к зрителю",
     action:
-      "джин вырывается из лампы клубящимся дымным шлейфом и распрямляется в " +
-      "кадре, дым завивается вокруг него",
+      "джин уже стоит в кадре и резко подаётся вперёд, к зрителю, будто " +
+      "собирается сказать что-то важное по секрету; брови приподняты, взгляд " +
+      "прямо в камеру",
   },
   {
-    id: "intro-wave",
+    id: "intro-snap",
     role: "intro",
-    title: "Появляется и машет",
+    title: "Щёлкает пальцами",
     action:
-      "джин появляется из дымки, скрещивает руки на груди и приветственно " +
-      "машет рукой, дружелюбно улыбаясь",
+      "джин уже стоит в кадре и щёлкает пальцами; над его ладонью вспыхивает " +
+      "искра и разлетается золотыми частицами",
   },
   {
-    id: "intro-point",
+    id: "intro-brows",
     role: "intro",
-    title: "Указывает вперёд",
+    title: "Хитрая улыбка",
     action:
-      "джин подаётся вперёд и уверенно указывает пальцем прямо на зрителя, " +
-      "будто зовёт послушать",
+      "джин уже стоит в кадре, склоняет голову набок, вскидывает бровь и " +
+      "хитро улыбается уголком рта, будто знает то, чего не знает зритель",
   },
   {
     id: "react-think",
@@ -150,20 +161,61 @@ export async function ensureLibraryDir(): Promise<void> {
   await mkdir(CLIP_LIBRARY_DIR, { recursive: true });
 }
 
+async function libraryFiles(): Promise<string[]> {
+  try {
+    return await readdir(CLIP_LIBRARY_DIR);
+  } catch {
+    return [];
+  }
+}
+
 /** Какие клипы уже сгенерированы и лежат в библиотеке. */
 export async function readyClipIds(): Promise<Set<string>> {
-  let files: string[];
-  try {
-    files = await readdir(CLIP_LIBRARY_DIR);
-  } catch {
-    return new Set();
-  }
-  const present = new Set(files);
+  const present = new Set(await libraryFiles());
   return new Set(
     CLIP_LIBRARY.filter((clip) => present.has(libraryFileName(clip.id))).map(
       (clip) => clip.id,
     ),
   );
+}
+
+/**
+ * Файлы клипов, которых больше нет в списке.
+ *
+ * Появляются, когда клип переписан под другим идентификатором: старый файл
+ * остаётся лежать, но никогда не будет подставлен. Сам их не удаляю — это
+ * оплаченные файлы, и решать должен человек; но показать обязан, иначе
+ * библиотека тихо обрастает мусором.
+ */
+export async function orphanClipFiles(): Promise<string[]> {
+  const known = new Set(CLIP_LIBRARY.map((clip) => libraryFileName(clip.id)));
+  return (await libraryFiles()).filter(
+    (file) => file.startsWith("lib-") && file.endsWith(".mp4") && !known.has(file),
+  );
+}
+
+/**
+ * Разбирает, что просили пересобрать: роль целиком («intro»), конкретные
+ * идентификаторы или ничего (тогда все недостающие). Возвращает undefined,
+ * если хоть одно слово непонятно — молча пересобрать не то, что просили,
+ * значит потратить чужие деньги.
+ */
+export function resolveClipSelection(
+  words: string[],
+): ClipDefinition[] | undefined {
+  if (words.length === 0) return CLIP_LIBRARY;
+  const roles = new Set<ClipRole>(["intro", "reaction", "handoff", "outro"]);
+  const picked: ClipDefinition[] = [];
+  for (const word of words) {
+    if (roles.has(word as ClipRole)) {
+      picked.push(...CLIP_LIBRARY.filter((clip) => clip.role === word));
+      continue;
+    }
+    const clip = getClipDefinition(word);
+    if (!clip) return undefined;
+    picked.push(clip);
+  }
+  return [...new Set(picked)];
 }
 
 /**

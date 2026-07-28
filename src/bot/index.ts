@@ -26,7 +26,9 @@ import {
   CLIP_LIBRARY_DIR,
   getClipDefinition,
   libraryFileName,
+  orphanClipFiles,
   readyClipIds,
+  resolveClipSelection,
 } from "../pipeline/clipLibrary";
 import {
   buildClipPrompt,
@@ -966,13 +968,30 @@ bot.command("library", async (ctx) => {
   const argument = ctx.match.trim();
   const ready = await readyClipIds();
 
-  if (argument === "build" || argument === "rebuild") {
+  const [verb, ...rest] = argument.split(/\s+/).filter(Boolean);
+
+  if (verb === "build" || verb === "rebuild") {
+    // Можно назвать роль («intro») или конкретные клипы — тогда трогаем
+    // только их. Пересобирать все десять ради трёх — это лишние деньги.
+    const selected = resolveClipSelection(rest);
+    if (!selected) {
+      await ctx.reply(
+        `Не понял, что пересобирать: «${rest.join(" ")}».\n\n` +
+          "Можно роль (intro, reaction, handoff, outro) или идентификаторы " +
+          "клипов через пробел. Список: /library",
+      );
+      return;
+    }
     const todo =
-      argument === "rebuild"
-        ? CLIP_LIBRARY
-        : CLIP_LIBRARY.filter((clip) => !ready.has(clip.id));
+      verb === "rebuild"
+        ? selected
+        : selected.filter((clip) => !ready.has(clip.id));
     if (todo.length === 0) {
-      await ctx.reply("Библиотека уже собрана целиком. Пересобрать: /library rebuild");
+      await ctx.reply(
+        rest.length
+          ? `Эти клипы уже готовы. Перегенерировать заново: /library rebuild ${rest.join(" ")}`
+          : "Библиотека уже собрана целиком. Пересобрать: /library rebuild",
+      );
       return;
     }
     const spec = getVideoModel(getSession(chatId).videoModel);
@@ -996,9 +1015,11 @@ bot.command("library", async (ctx) => {
         }
       }
       await ctx.reply(
-        `Готово ${done} из ${todo.length}.` +
+        `Готово ${done} из ${todo.length}: ` +
+          todo.map((clip) => clip.title).join(", ") +
+          "." +
           (failed.length ? `\n\nНе получились:\n${failed.join("\n")}` : "") +
-          "\n\nСостояние: /library",
+          "\n\nПосмотреть: /library <id>. Состояние: /library",
       );
     });
     return;
@@ -1025,14 +1046,25 @@ bot.command("library", async (ctx) => {
     return;
   }
 
+  // Файлы от переписанных клипов сами не удаляются: они оплачены, и решать
+  // должен человек. Но показать их надо — иначе библиотека тихо обрастает
+  // мусором, который никогда не подставится.
+  const orphans = await orphanClipFiles();
+
   await ctx.reply(
     `🎭 Библиотека клипов с маскотом: готово ${ready.size} из ${CLIP_LIBRARY.length}.\n\n` +
       libraryStatus(ready) +
+      (orphans.length
+        ? `\n\n🗑 Лежат от прошлых версий и уже не используются:\n` +
+          orphans.map((file) => `• \`${file}\``).join("\n") +
+          "\nМожно удалить руками из assets/clips."
+        : "") +
       "\n\nЭти клипы генерируются один раз и дальше подставляются в ролики " +
       "бесплатно — платить за оживление сцены приходится только там, где " +
       "готового клипа нет.\n\n" +
       "Собрать недостающие: /library build\n" +
-      "Пересобрать всё заново: /library rebuild\n" +
+      "Только одну роль: /library build intro\n" +
+      "Перегенерировать заново: /library rebuild intro-lean\n" +
       "Посмотреть один: /library <id>",
     { parse_mode: "Markdown" },
   );

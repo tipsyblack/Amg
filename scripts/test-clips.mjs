@@ -235,6 +235,7 @@ const {
   getClipDefinition,
   libraryFileName,
   pickLibraryClip,
+  resolveClipSelection,
 } = await import("../src/pipeline/clipLibrary.ts");
 
 check("в библиотеке ровно десять клипов", CLIP_LIBRARY.length === 10, String(CLIP_LIBRARY.length));
@@ -247,7 +248,29 @@ check(
   new Set(CLIP_LIBRARY.map((c) => libraryFileName(c.id))).size === 10 &&
     CLIP_LIBRARY.every((c) => libraryFileName(c.id).startsWith("lib-")),
 );
-check("поиск по id работает", getClipDefinition("intro-lamp")?.role === "intro");
+check("поиск по id работает", getClipDefinition("intro-lean")?.role === "intro");
+
+// Клипы хука переписаны: первая версия строилась на появлении персонажа, но
+// карточка хука в тот же момент сама приезжает наездом — получалось два
+// появления подряд. Теперь персонаж в кадре с первого кадра. Закрепляем: если
+// «появление» вернётся в текст, проверка упадёт.
+const intros = CLIP_LIBRARY.filter((c) => c.role === "intro");
+check(
+  "клипы хука не строятся на появлении персонажа",
+  intros.every(
+    (c) => !/появля|вырывается|материализ|влетает|проявляется/i.test(c.action),
+  ),
+  intros.map((c) => c.id).join(", "),
+);
+check(
+  "во всех трёх персонаж уже в кадре",
+  intros.every((c) => /уже (стоит )?в кадре/i.test(c.action)),
+  intros.map((c) => c.id).join(", "),
+);
+check(
+  "жесты хука разные, а не три вариации одного",
+  new Set(intros.map((c) => c.title)).size === intros.length,
+);
 check("неизвестный id — undefined", getClipDefinition("нет") === undefined);
 
 // Роли должны покрывать все места, куда клип может встать: иначе сцена
@@ -284,11 +307,11 @@ check(
 );
 check(
   "частично собранная библиотека: берётся только готовое",
-  pickLibraryClip("intro", new Set(["intro-wave"]))?.id === "intro-wave",
+  pickLibraryClip("intro", new Set(["intro-snap"]))?.id === "intro-snap",
 );
 check(
   "роли, которой нет в готовых, не выдумывается замена",
-  pickLibraryClip("outro", new Set(["intro-wave"])) === undefined,
+  pickLibraryClip("outro", new Set(["intro-snap"])) === undefined,
 );
 // Занятые в этом же ролике клипы пропускаются — иначе два соседних
 // оживления окажутся одним и тем же жестом.
@@ -312,8 +335,8 @@ for (let i = 0; i < 200; i++) seen.add(pickLibraryClip("intro", allReady)?.id);
 check("выбор перебирает варианты, а не залипает на первом", seen.size > 1, `${seen.size}`);
 
 console.log("\n--- промпт библиотечного клипа ---");
-const libPrompt = buildLibraryClipPrompt(getClipDefinition("intro-lamp"));
-check("действие попало в промпт", libPrompt.includes("вырывается из лампы"));
+const libPrompt = buildLibraryClipPrompt(getClipDefinition("intro-snap"));
+check("действие попало в промпт", libPrompt.includes("щёлкает пальцами"));
 check(
   "фон просится пустым: клип встаёт в карточку рядом с иллюстрациями",
   /фон/i.test(libPrompt) && /без окружения/i.test(libPrompt),
@@ -329,6 +352,35 @@ check(
   CLIP_LIBRARY.every((c) => buildLibraryClipPrompt(c).length > 200),
 );
 
+console.log("\n--- что пересобирать ---");
+// Пересобирать все десять клипов ради трёх — это лишние деньги, поэтому
+// выбор понимает и роль, и отдельные идентификаторы.
+check(
+  "пустой список — вся библиотека",
+  resolveClipSelection([])?.length === CLIP_LIBRARY.length,
+);
+check(
+  "роль разворачивается в свои клипы",
+  resolveClipSelection(["intro"])?.every((c) => c.role === "intro") &&
+    resolveClipSelection(["intro"])?.length === 3,
+  String(resolveClipSelection(["intro"])?.length),
+);
+check(
+  "конкретные идентификаторы",
+  JSON.stringify(resolveClipSelection(["intro-snap", "outro-lamp"])?.map((c) => c.id)) ===
+    '["intro-snap","outro-lamp"]',
+);
+check(
+  "роль и id вперемешку, без дублей",
+  resolveClipSelection(["intro", "intro-snap"])?.length === 3,
+  String(resolveClipSelection(["intro", "intro-snap"])?.length),
+);
+// Молча пересобрать не то, что просили, — значит потратить чужие деньги.
+check(
+  "непонятное слово отвергается целиком",
+  resolveClipSelection(["intro", "чепуха"]) === undefined,
+);
+
 console.log("\n=== библиотека предпочитается платной генерации ===");
 // Самое дорогое место во всей фиче: если порядок перепутать, каждый ролик
 // начнёт платить за то, что уже оплачено. Кладём в библиотеку настоящий файл
@@ -340,7 +392,7 @@ const { CLIP_LIBRARY_DIR, PUBLIC_CLIPS_DIR } = await import(
 );
 const libDir = CLIP_LIBRARY_DIR;
 const hadLibDir = existsSync(libDir);
-const fakeId = "intro-lamp";
+const fakeId = "intro-lean";
 const fakeFile = path.join(libDir, libraryFileName(fakeId));
 const hadFake = existsSync(fakeFile);
 try {

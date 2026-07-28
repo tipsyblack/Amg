@@ -3,15 +3,24 @@
 //
 //   npm run clips:build           — сгенерировать недостающие
 //   npm run clips:build -- --force — перегенерировать всё заново
-//   npm run clips:build -- intro-lamp react-nod  — только эти
+//   npm run clips:build -- intro          — только клипы этой роли
+//   npm run clips:build -- intro-lean react-nod  — только эти
 //
 // Идемпотентно: уже готовые клипы пропускаются, потому что каждый стоит денег.
 import "dotenv/config";
 
-const { CLIP_LIBRARY, libraryFileName, readyClipIds, ensureLibraryDir } =
-  await import("../src/pipeline/clipLibrary.ts");
+const {
+  CLIP_LIBRARY,
+  libraryFileName,
+  readyClipIds,
+  ensureLibraryDir,
+  orphanClipFiles,
+  resolveClipSelection,
+} = await import("../src/pipeline/clipLibrary.ts");
 const { generateLibraryClip } = await import("../src/pipeline/generateClip.ts");
-const { getVideoModel } = await import("../src/pipeline/videoModels.ts");
+const { getVideoModel, clampClipSeconds } = await import(
+  "../src/pipeline/videoModels.ts"
+);
 const { config } = await import("../src/pipeline/config.ts");
 
 const args = process.argv.slice(2);
@@ -21,13 +30,14 @@ const only = args.filter((a) => !a.startsWith("--"));
 await ensureLibraryDir();
 const ready = await readyClipIds();
 
-const wanted = only.length
-  ? CLIP_LIBRARY.filter((clip) => only.includes(clip.id))
-  : CLIP_LIBRARY;
-
-if (only.length && wanted.length !== only.length) {
+// Можно назвать роль («intro») или конкретные клипы.
+const wanted = resolveClipSelection(only);
+if (!wanted) {
   const known = CLIP_LIBRARY.map((clip) => clip.id).join(", ");
-  console.error(`Неизвестный клип. Доступны: ${known}`);
+  console.error(
+    `Неизвестный клип или роль. Роли: intro, reaction, handoff, outro.\n` +
+      `Клипы: ${known}`,
+  );
   process.exit(1);
 }
 
@@ -38,16 +48,28 @@ console.log(`Модель: ${spec.title} (${spec.model})`);
 console.log(
   `Готово ${ready.size} из ${CLIP_LIBRARY.length}, к генерации ${todo.length}.`,
 );
+
+// Файлы от переписанных клипов не удаляем — они оплачены; но молчать о них
+// нельзя, иначе библиотека тихо обрастает мусором.
+const orphans = await orphanClipFiles();
+if (orphans.length) {
+  console.log(
+    `\nЛежат от прошлых версий и уже не используются: ${orphans.join(", ")}`,
+  );
+}
 if (todo.length === 0) {
   console.log("Ничего делать не нужно.");
   process.exit(0);
 }
 
 // Цена — вслух и до начала: библиотека генерируется редко, и ошибиться в
-// количестве легко.
-const cost = todo.length * config.clipSeconds * 0.125;
+// количестве легко. Считаем по выбранной модели и по той длительности,
+// которую она реально примет: между Mini и полной 2.0 разница вдвое, а
+// просьбу о двух секундах Seedance 2 поднимет до своих четырёх.
+const seconds = clampClipSeconds(spec, config.clipSeconds);
+const cost = todo.length * seconds * spec.pricePerSecond;
 console.log(
-  `Примерная стоимость: ${todo.length} × ${config.clipSeconds} с ≈ $${cost.toFixed(2)}\n`,
+  `Примерная стоимость: ${todo.length} × ${seconds} с ≈ $${cost.toFixed(2)}\n`,
 );
 
 let done = 0;
