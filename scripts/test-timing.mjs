@@ -106,9 +106,18 @@ const outro = buildOutro();
 check("концовка собирается", outro !== undefined);
 check("название взято из настроек", outro?.title === config.brandName, String(outro?.title));
 check("длительность в кадрах, а не секундах", outro?.durationInFrames === Math.round(config.outroSeconds * config.fps), String(outro?.durationInFrames));
-// Файла логотипа в репозитории нет, и ссылаться на него нельзя: Remotion
-// уронит рендер на последнем кадре, когда всё дорогое уже посчитано.
-check("несуществующий логотип не подставляется", outro?.logoFileName === undefined, String(outro?.logoFileName));
+// Ссылаться на отсутствующий файл нельзя: Remotion уронит рендер на последнем
+// кадре, когда посчитаны уже и озвучка, и все картинки. Поэтому проверяем и
+// то, что логотип подставился, и то, что файл под ним реально существует —
+// настройка по умолчанию не должна указывать в пустоту.
+const fsMod = await import("node:fs");
+const pathMod2 = await import("node:path");
+check("логотип подставлен", outro?.logoFileName === config.brandLogoFile, String(outro?.logoFileName));
+check(
+  "файл логотипа лежит в public/brand",
+  fsMod.existsSync(pathMod2.resolve("public/brand", config.brandLogoFile)),
+  config.brandLogoFile,
+);
 // Длина ролика должна включать концовку, иначе последний кадр обрежется.
 const { videoDataSchema } = await import("../src/types.ts");
 const parsed = videoDataSchema.safeParse({

@@ -21,13 +21,31 @@ import type { Outro as OutroData } from "../types";
 // текста. Ставить <Img> на несуществующий файл нельзя — Remotion уронит рендер
 // на последнем кадре, то есть после всей дорогой работы.
 
-// Пропорции сняты с кадра референса и приведены к 1080×1920.
-const CARD_WIDTH_PERCENT = 62;
-const CARD_ASPECT = 1.42;
-const CARD_BG = "#1c2530";
-const TITLE_SIZE = 66;
-const TAGLINE_SIZE = 24;
-const LOGO_WIDTH_PERCENT = 46;
+// Всё снято с кадра референса (1440×2562) и приведено к 1080×1920 — как и
+// геометрия карточки в layout.ts, на глаз ничего не подбиралось.
+//
+// Плашка 1082×836 px, верх на 24% высоты кадра. Логотип — круг 398 px, то есть
+// 36.8% ширины плашки. Названия: высота заглавных 122 px, подпись 55 px;
+// просветы 54 px под кругом и 44 px между строками.
+const CARD_WIDTH_PERCENT = 75.1;
+const CARD_ASPECT = 1.294;
+const CARD_TOP_PERCENT = 24;
+// Цвет плашки взят пипеткой из того же кадра.
+const CARD_BG = "#212d3a";
+// Кегли считаем из высоты заглавных: у Oswald она занимает 0.839 em (это
+// измерено на нашем рендере, см. Subtitles.tsx).
+const TITLE_SIZE = Math.round((122 * 0.75) / 0.839);
+const TAGLINE_SIZE = Math.round((55 * 0.75) / 0.839);
+const LOGO_WIDTH_PERCENT = 36.8;
+const LOGO_GAP = 54 * 0.75;
+const TITLE_GAP = 44 * 0.75;
+
+// Поля внутри плашки и запас по ширине буквы. Наш Oswald шире шрифта из
+// референса (то же расхождение, что и в субтитрах), поэтому строка, которая там
+// умещалась в одну, у нас переносилась и обрезалась нижним краем плашки.
+// Поэтому не переносим вовсе, а ужимаем кегль под ширину.
+const SIDE_PADDING_PERCENT = 6;
+const MAX_EM_PER_CHAR = 0.55;
 
 const ZOOM_FROM_SCALE = 2.4;
 const BLUR_LAYERS = 6;
@@ -41,7 +59,7 @@ interface OutroProps {
 
 export const Outro: React.FC<OutroProps> = ({ outro, enterFrames }) => {
   const frame = useCurrentFrame();
-  const { fps, width } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
   const scale = width / REF_WIDTH;
 
   const entrance = spring({ frame, fps, config: { damping: 26 } });
@@ -57,6 +75,15 @@ export const Outro: React.FC<OutroProps> = ({ outro, enterFrames }) => {
   const cardWidth = (CARD_WIDTH_PERCENT / 100) * width;
   const logo = outro.logoFileName;
 
+  // Кегль, при котором строка гарантированно умещается в одну.
+  const safeWidth = cardWidth * (1 - (SIDE_PADDING_PERCENT * 2) / 100);
+  const fit = (text: string, size: number): number => {
+    const estimated = text.length * MAX_EM_PER_CHAR * size * scale;
+    return estimated > safeWidth ? size * (safeWidth / estimated) : size;
+  };
+  const titleSize = fit(outro.title, TITLE_SIZE);
+  const taglineSize = outro.tagline ? fit(outro.tagline, TAGLINE_SIZE) : 0;
+
   const content = (
     <>
       {logo && (
@@ -69,12 +96,13 @@ export const Outro: React.FC<OutroProps> = ({ outro, enterFrames }) => {
         style={{
           fontFamily: CAPTION_FONT_FAMILY,
           fontWeight: 700,
-          fontSize: TITLE_SIZE * scale,
+          fontSize: titleSize * scale,
           letterSpacing: "0.04em",
           color: "#ffffff",
           textTransform: "uppercase",
           textAlign: "center",
-          marginTop: logo ? 28 * scale : 0,
+          whiteSpace: "nowrap",
+          marginTop: logo ? LOGO_GAP * scale : 0,
         }}
       >
         {outro.title}
@@ -84,13 +112,15 @@ export const Outro: React.FC<OutroProps> = ({ outro, enterFrames }) => {
           style={{
             fontFamily: CAPTION_FONT_FAMILY,
             fontWeight: 700,
-            fontSize: TAGLINE_SIZE * scale,
+            fontSize: taglineSize * scale,
             letterSpacing: "0.06em",
-            color: "#c9d3e0",
+            // В референсе подпись такая же белая, как название, — только
+            // мельче. Серый читался как «неактивная» строка.
+            color: "#ffffff",
             textTransform: "uppercase",
             textAlign: "center",
-            marginTop: 10 * scale,
-            padding: "0 8%",
+            whiteSpace: "nowrap",
+            marginTop: TITLE_GAP * scale,
           }}
         >
           {outro.tagline}
@@ -104,12 +134,13 @@ export const Outro: React.FC<OutroProps> = ({ outro, enterFrames }) => {
       style={{
         backgroundColor: "#ffffff",
         alignItems: "center",
-        justifyContent: "center",
       }}
     >
       <div
         style={{
-          position: "relative",
+          position: "absolute",
+          // Плашка стоит выше центра кадра — как в референсе.
+          top: (CARD_TOP_PERCENT / 100) * height,
           width: cardWidth,
           height: cardWidth / CARD_ASPECT,
           transform: `scale(${cardScale})`,

@@ -105,7 +105,7 @@ export const config = {
   brandTagline: env("BRAND_TAGLINE") ?? "",
   // Файл в public/brand/. Пусто — кадр собирается из одного текста: ставить
   // <Img> на несуществующий файл нельзя, рендер упадёт на последнем кадре.
-  brandLogoFile: env("BRAND_LOGO_FILE") ?? "",
+  brandLogoFile: env("BRAND_LOGO_FILE") ?? "logo.png",
   outroSeconds: Number(env("OUTRO_SECONDS") ?? 2),
 
   // 60 кадров: резкие стыки длятся 0.3 с, и на 30 fps это всего 9 кадров —
