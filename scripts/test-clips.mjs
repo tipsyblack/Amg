@@ -2,9 +2,10 @@
 // собирает вход правильно, что длина клипа меряется у файла, и что Scene
 // подмораживает последний кадр вместо повтора.
 //
-// Реальных запросов в Kie.ai здесь нет: слаги моделей не подтверждены (см.
-// videoModels.ts), проверять их можно только на живом аккаунте командой
-// /vidmodel probe. Проверяем всё, что от аккаунта не зависит.
+// Реальных запросов в Kie.ai здесь нет — проверяем всё, что от аккаунта не
+// зависит. Живой прогон уже поймал две ошибки, которые здесь и закреплены:
+// выдуманные слаги вида bytedance/seedance-v2-mini-i2v (API ответил 422) и
+// длительность 2 с при минимуме 4 у Seedance 2.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,9 +23,13 @@ const check = (name, ok, extra = "") => {
 const { clipSceneIndexes, buildClipPrompt } = await import(
   "../src/pipeline/generateClip.ts"
 );
-const { VIDEO_MODELS, DEFAULT_VIDEO_MODEL_KEY, getVideoModel } = await import(
-  "../src/pipeline/videoModels.ts"
-);
+const {
+  VIDEO_MODELS,
+  DEFAULT_VIDEO_MODEL_KEY,
+  getVideoModel,
+  clampClipSeconds,
+} = await import("../src/pipeline/videoModels.ts");
+const { config } = await import("../src/pipeline/config.ts");
 const { getClipDurationInSeconds } = await import(
   "../src/pipeline/audioDuration.ts"
 );
@@ -102,33 +107,93 @@ check(
   "неизвестный ключ откатывается на модель по умолчанию",
   getVideoModel("нет-такой").key === DEFAULT_VIDEO_MODEL_KEY,
 );
-// Слаг по умолчанию — тот, что назвал владелец аккаунта. Он не проверен, но
-// зафиксирован тестом: если кто-то его молча поменяет, это должно всплыть.
+
+// Слаги сверены с документацией Kie.ai после того, как угаданные имена вида
+// bytedance/seedance-v2-mini-i2v получили от API 422 «model name is not
+// supported». Фиксируем именование, чтобы оно не уехало обратно.
 check(
-  "по умолчанию берётся bytedance/seedance-2-0-mini",
-  getVideoModel().model === "bytedance/seedance-2-0-mini",
+  "по умолчанию bytedance/seedance-2-mini",
+  getVideoModel().model === "bytedance/seedance-2-mini",
   getVideoModel().model,
 );
 check(
-  "все слаги — Seedance от bytedance",
-  VIDEO_MODELS.every((m) => m.model.startsWith("bytedance/seedance")),
+  "нигде не осталось выдуманного суффикса -i2v",
+  VIDEO_MODELS.every((m) => !m.model.includes("i2v") || m.model.includes("image-to-video")),
+  VIDEO_MODELS.map((m) => m.model).join(" "),
+);
+check(
+  "все слаги начинаются с bytedance/",
+  VIDEO_MODELS.every((m) => m.model.startsWith("bytedance/")),
 );
 
 for (const spec of VIDEO_MODELS) {
-  const input = spec.buildInput("движение", "https://example.com/a.png", 2);
+  const input = spec.buildInput("движение", "https://example.com/a.png", spec.minSeconds);
+  // Главная ошибка первой попытки: у Seedance 2.x входная картинка называется
+  // first_frame_url, а не image_url — с image_url запрос не прошёл бы даже с
+  // верным слагом. Проверяем, что поле есть под одним из двух имён и что
+  // ссылка действительно в нём.
+  const frame = input.first_frame_url ?? input.image_url;
   check(
-    `${spec.title}: вход содержит промпт, первый кадр и длительность`,
-    input.prompt === "движение" &&
-      input.image_url === "https://example.com/a.png" &&
-      input.duration === 2,
+    `${spec.title}: первый кадр передан`,
+    frame === "https://example.com/a.png",
     JSON.stringify(input),
   );
   check(
-    `${spec.title}: пропорции 3:4 — как у карточки`,
-    input.aspect_ratio === "3:4",
-    String(input.aspect_ratio),
+    `${spec.title}: промпт и длительность на месте`,
+    input.prompt === "движение" &&
+      (input.duration === spec.minSeconds || input.duration === String(spec.minSeconds)),
+    JSON.stringify(input),
   );
+  check(
+    `${spec.title}: разрешение из настройки, а не зашито`,
+    input.resolution === config.clipResolution,
+    String(input.resolution),
+  );
+  // Свою озвучку мы уже оплатили; звук от модели лёг бы поверх неё.
+  if ("generate_audio" in input) {
+    check(`${spec.title}: звук модели выключен`, input.generate_audio === false);
+  }
+  // У V1 есть прямой выключатель движения камеры — он ровно про нашу задачу.
+  if ("camera_fixed" in input) {
+    check(`${spec.title}: камера зафиксирована`, input.camera_fixed === true);
+  }
+  check(
+    `${spec.title}: диапазон длительности осмысленный`,
+    spec.minSeconds > 0 && spec.minSeconds <= spec.maxSeconds,
+    `${spec.minSeconds}-${spec.maxSeconds}`,
+  );
+  check(`${spec.title}: цена задана`, spec.pricePerSecond > 0);
 }
+
+console.log("\n--- длительность приводится к допустимой ---");
+const mini = getVideoModel("sd2mini");
+// Ровно та ошибка, которую поймал первый прогон на живом аккаунте: мы просили
+// две секунды, а Seedance 2 короче четырёх не делает вовсе.
+check(
+  "две секунды поднимаются до минимума модели",
+  clampClipSeconds(mini, 2) === mini.minSeconds,
+  String(clampClipSeconds(mini, 2)),
+);
+check(
+  "слишком длинный клип обрезается по максимуму",
+  clampClipSeconds(mini, 999) === mini.maxSeconds,
+  String(clampClipSeconds(mini, 999)),
+);
+check(
+  "допустимая длительность не трогается",
+  clampClipSeconds(mini, 6) === 6,
+);
+check(
+  "значение по умолчанию из .env уже допустимо для всех моделей",
+  VIDEO_MODELS.every((s) => clampClipSeconds(s, config.clipSeconds) === config.clipSeconds ||
+    config.clipSeconds < s.minSeconds),
+  String(config.clipSeconds),
+);
+check(
+  "CLIP_SECONDS по умолчанию — 4, а не 2",
+  config.clipSeconds === 4,
+  String(config.clipSeconds),
+);
 
 console.log("\n=== длительность клипа ===");
 const dir = mkdtempSync(path.join(tmpdir(), "amg-clip-"));

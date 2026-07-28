@@ -79,6 +79,7 @@ import {
   resolveScriptModel,
 } from "../pipeline/scriptModels";
 import {
+  clampClipSeconds,
   DEFAULT_VIDEO_MODEL_KEY,
   getVideoModel,
   VIDEO_MODELS,
@@ -886,23 +887,28 @@ bot.command("length", async (ctx) => {
 // заметно меняет стоимость ролика, поэтому цифру видно в чате и по умолчанию
 // она нулевая.
 const MAX_CLIP_SCENES = 5;
-// Порядок цены: 720p с референсом стоит примерно $0.125 за секунду.
-const CLIP_PRICE_PER_SECOND = 0.125;
 
-function clipCostNote(count: number): string {
-  const cost = count * config.clipSeconds * CLIP_PRICE_PER_SECOND;
-  return `${count} × ${config.clipSeconds} с ≈ $${cost.toFixed(2)} за ролик`;
+// Цену считаем по выбранной модели, а не по одной константе: между Mini и
+// полной 2.0 разница больше чем вдвое, а длительность модель может поднять до
+// своего минимума (Seedance 2 короче четырёх секунд не делает), и цифра «за
+// две секунды» врала бы в полтора раза.
+function clipCostNote(count: number, modelKey?: string): string {
+  const spec = getVideoModel(modelKey);
+  const seconds = clampClipSeconds(spec, config.clipSeconds);
+  const cost = count * seconds * spec.pricePerSecond;
+  return `${count} × ${seconds} с на ${spec.title} ≈ $${cost.toFixed(2)} за ролик`;
 }
 
 bot.command("clips", async (ctx) => {
   const chatId = ctx.chat.id;
   const current = getSession(chatId).clipScenes ?? config.clipScenes;
+  const modelKey = getSession(chatId).videoModel;
   const requested = Number(ctx.match.trim());
 
   if (!ctx.match.trim()) {
     await ctx.reply(
       `Оживлённых сцен в ролике: ${current}` +
-        (current > 0 ? ` (${clipCostNote(current)})` : "") +
+        (current > 0 ? ` (${clipCostNote(current, modelKey)})` : "") +
         ".\n\n" +
         `Сменить: /clips <число> (0-${MAX_CLIP_SCENES}).\n\n` +
         "Клип делается из уже согласованной картинки сцены — она идёт его " +
@@ -930,7 +936,7 @@ bot.command("clips", async (ctx) => {
   await ctx.reply(
     requested === 0
       ? "Клипов не будет — все сцены останутся картинками."
-      : `Оживляю ${requested} сцен(ы): ${clipCostNote(requested)}.`,
+      : `Оживляю ${requested} сцен(ы): ${clipCostNote(requested, modelKey)}.`,
   );
 });
 
@@ -969,11 +975,13 @@ bot.command("library", async (ctx) => {
       await ctx.reply("Библиотека уже собрана целиком. Пересобрать: /library rebuild");
       return;
     }
-    const cost = todo.length * config.clipSeconds * CLIP_PRICE_PER_SECOND;
+    const spec = getVideoModel(getSession(chatId).videoModel);
+    const seconds = clampClipSeconds(spec, config.clipSeconds);
+    const cost = todo.length * seconds * spec.pricePerSecond;
     await withGeneration(ctx, chatId, async () => {
       await ctx.reply(
-        `Генерирую ${todo.length} клип(ов), примерно $${cost.toFixed(2)}. ` +
-          "Это надолго — по паре минут на клип.",
+        `Генерирую ${todo.length} клип(ов) по ${seconds} с на ${spec.title}, ` +
+          `примерно $${cost.toFixed(2)}. Это надолго — по паре минут на клип.`,
       );
       let done = 0;
       const failed: string[] = [];
@@ -1030,36 +1038,59 @@ bot.command("library", async (ctx) => {
   );
 });
 
-// Модель оживления кадра. Отдельная команда, а не кнопка в диалоге: слаги
-// моделей Seedance в API Kie.ai я подтвердить не мог (из окружения, где
-// писался код, к api.kie.ai хода нет), поэтому здесь можно не просто выбрать
-// модель, а проверить пробным запросом, какой слаг аккаунт вообще принимает.
+// Модель оживления кадра. Отдельная команда, а не кнопка в диалоге: здесь
+// можно не просто выбрать модель, а проверить пробным запросом, что именно
+// принимает аккаунт.
+//
+// Проба устроена так, потому что цена ошибки несимметрична. Отказ ничего не
+// стоит: Kie.ai отвечает на createTask 422 сразу, задача не создаётся, денег
+// не списывается — поэтому перебирать кандидатов можно свободно. А вот успех
+// создаёт настоящую оплаченную генерацию, и перебирать после первого рабочего
+// слага незачем: цикл на нём останавливается.
+//
+// Длительность берём минимальную допустимую для модели, а не «1 секунду»:
+// Seedance 2 короче четырёх не делает, и проба на секунду отвергалась бы даже
+// у верного слага — то есть врала бы.
 async function probeVideoModels(ctx: Context): Promise<void> {
   await ctx.reply(
-    "Проверяю слаги моделей пробным запросом — это займёт до пары минут " +
-      "на модель. Успешная проверка стоит как один короткий клип.",
+    "Проверяю модели пробным запросом. Отказ ничего не стоит — Kie.ai " +
+      "отвергает неизвестную модель сразу, не создавая задачу. На первой " +
+      "рабочей перебор останавливается: успех — это уже настоящая " +
+      "оплаченная генерация.",
   );
   const lines: string[] = [];
+  let found: (typeof VIDEO_MODELS)[number] | undefined;
+
   for (const spec of VIDEO_MODELS) {
     const result = await probeKieTask({
       model: spec.model,
       input: spec.buildInput(
         buildClipPrompt("проверка связи"),
         config.characterReferenceUrl,
-        // Минимальная длина: проверяем слаг, а не качество.
-        1,
+        spec.minSeconds,
       ),
-      timeoutMs: 120_000,
+      timeoutMs: 180_000,
     });
     lines.push(
       `${result.ok ? "✅" : "❌"} ${spec.title} (\`${spec.model}\`) — ${result.detail}`,
     );
+    if (result.ok) {
+      found = spec;
+      break;
+    }
   }
-  const working = VIDEO_MODELS.length
-    ? "\n\nРабочий слаг впишите в KIE_VIDEO_MODEL в .env на сервере — тогда " +
-      "реестр вообще не понадобится."
-    : "";
-  await ctx.reply(lines.join("\n") + working, { parse_mode: "Markdown" });
+
+  const skipped = VIDEO_MODELS.length - lines.length;
+  const tail = found
+    ? `\n\nРабочая модель: *${found.title}*. Выбрать её для этого чата: ` +
+      `/vidmodel ${found.key}` +
+      (skipped > 0 ? `\nОстальные ${skipped} не проверял — незачем.` : "")
+    : "\n\nНи одна модель не принята. Сообщения выше от Kie.ai — в них " +
+      "обычно написано, что именно не так: неизвестная модель, недопустимая " +
+      "длительность или разрешение. Разрешение меняется без правки кода: " +
+      "`CLIP_RESOLUTION` в .env (пробовать 720P прописной).";
+
+  await ctx.reply(lines.join("\n") + tail, { parse_mode: "Markdown" });
 }
 
 bot.command("vidmodel", async (ctx) => {
@@ -1084,7 +1115,7 @@ bot.command("vidmodel", async (ctx) => {
     await ctx.reply(
       `Оживляю кадры моделью ${spec.title}.` +
         (config.kieVideoModel
-          ? `\n\n⚠️ Но выбор ни на что не влияет: KIE_VIDEO_MODEL в .env ` +
+          ? "\n\n⚠️ Но выбор ни на что не влияет: `KIE_VIDEO_MODEL` в .env " +
             `перебивает реестр и жёстко задаёт слаг \`${config.kieVideoModel}\`. ` +
             "Очистите переменную, если хотите переключать модель из чата."
           : ""),
@@ -1107,7 +1138,7 @@ bot.command("vidmodel", async (ctx) => {
     "Чем оживлять кадры?\n\n" +
       VIDEO_MODELS.map((spec) => `• ${spec.title} — ${spec.note}`).join("\n") +
       (config.kieVideoModel
-        ? `\n\nСейчас всё перебивает KIE_VIDEO_MODEL из .env: \`${config.kieVideoModel}\`.`
+        ? `\n\nСейчас всё перебивает \`KIE_VIDEO_MODEL\` из .env: \`${config.kieVideoModel}\`.`
         : "\n\nСлаги моделей не проверены на вашем аккаунте. Проверить " +
           "пробным запросом: /vidmodel probe"),
     { reply_markup: keyboard, parse_mode: "Markdown" },

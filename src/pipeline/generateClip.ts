@@ -9,7 +9,7 @@ import {
 } from "./clipLibrary";
 import { config } from "./config";
 import { runKieTask } from "./kie";
-import { getVideoModel } from "./videoModels";
+import { clampClipSeconds, getVideoModel } from "./videoModels";
 
 // Оживление кадра. В референсе не все сцены — статичные картинки: часть из них
 // живёт, и именно эти секунды удерживают внимание. Делаем так же, но не
@@ -62,13 +62,16 @@ export async function generateSceneClip(
   modelKey?: string,
 ): Promise<{ clipFileName: string } | undefined> {
   const spec = getVideoModel(modelKey);
+  // Длительность приводим к тому, что модель принимает: просьба о двух
+  // секундах у Seedance 2 отвергается — короче четырёх он не умеет.
+  const duration = clampClipSeconds(spec, seconds);
   const clipFileName = `scene-${index}.mp4`;
   const outFile = path.join(PUBLIC_CLIPS_DIR, clipFileName);
 
   try {
     await runKieTask({
       model: spec.model,
-      input: spec.buildInput(buildClipPrompt(voiceoverText), imageUrl, seconds),
+      input: spec.buildInput(buildClipPrompt(voiceoverText), imageUrl, duration),
       outFile,
       label: `клип для сцены ${index + 1}, модель ${spec.model}`,
     });
@@ -106,7 +109,7 @@ export async function generateLibraryClip(
     input: spec.buildInput(
       buildLibraryClipPrompt(clip),
       config.characterReferenceUrl,
-      seconds,
+      clampClipSeconds(spec, seconds),
     ),
     outFile: path.join(CLIP_LIBRARY_DIR, fileName),
     label: `клип библиотеки «${clip.title}», модель ${spec.model}`,
