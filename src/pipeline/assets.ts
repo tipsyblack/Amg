@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Scene, VideoData } from "../types";
+import type { Outro, Scene, VideoData } from "../types";
 import { getAudioDurationInSeconds } from "./audioDuration";
 import { config } from "./config";
 import {
@@ -50,6 +51,27 @@ export async function ensureDirs(): Promise<void> {
 export function sceneWithCharacter(index: number, total: number): boolean {
   if (config.characterEveryScene) return true;
   return index === 0 || index === total - 1;
+}
+
+/**
+ * Описание брендовой концовки для рендера. Логотип подключается, только если
+ * файл действительно лежит в public/brand: ссылка на отсутствующий файл роняет
+ * рендер на последнем кадре, когда всё дорогое уже посчитано.
+ */
+export function buildOutro(): Outro | undefined {
+  if (!config.brandName) return undefined;
+  const logo = config.brandLogoFile;
+  const logoExists =
+    Boolean(logo) && existsSync(path.resolve("public/brand", logo));
+  return {
+    title: config.brandName,
+    tagline: config.brandTagline || undefined,
+    logoFileName: logoExists ? logo : undefined,
+    durationInFrames: Math.max(
+      Math.round(config.outroSeconds * config.fps),
+      1,
+    ),
+  };
 }
 
 export function buildImagePrompt(

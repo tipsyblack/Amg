@@ -3,6 +3,7 @@ import { AbsoluteFill, Audio, Sequence, staticFile } from "remotion";
 import type { CalculateMetadataFunction } from "remotion";
 import type { VideoData } from "../types";
 import { CutTransition } from "./CutTransition";
+import { Outro } from "./Outro";
 import { PersistentOverlay } from "./PersistentOverlay";
 import { Scene } from "./Scene";
 import { TransitionBlur } from "./TransitionBlur";
@@ -19,7 +20,8 @@ export const calculateVideoMetadata: CalculateMetadataFunction<
   VideoData
 > = async ({ props }) => {
   const durationInFrames = Math.max(
-    props.scenes.reduce((sum, scene) => sum + scene.durationInFrames, 0),
+    props.scenes.reduce((sum, scene) => sum + scene.durationInFrames, 0) +
+      (props.outro?.durationInFrames ?? 0),
     1,
   );
 
@@ -34,6 +36,7 @@ export const calculateVideoMetadata: CalculateMetadataFunction<
 export const VideoComposition: React.FC<VideoData> = ({
   scenes,
   fps,
+  outro,
   musicFileName,
   sfxEnabled = true,
   motionBlurEnabled = true,
@@ -155,6 +158,19 @@ export const VideoComposition: React.FC<VideoData> = ({
           </React.Fragment>
         );
       })}
+
+      {/* Брендовая концовка идёт после последней сцены, отдельным кадром. */}
+      {outro && (
+        <Sequence
+          from={scenes.reduce((sum, scene) => sum + scene.durationInFrames, 0)}
+          durationInFrames={outro.durationInFrames}
+        >
+          <Outro
+            outro={outro}
+            enterFrames={Math.round(MIX.sharpTransitionSeconds * fps)}
+          />
+        </Sequence>
+      )}
 
       {/* Сквозные объекты — последними в дереве, то есть поверх всех сцен.
           Внутри карты сцен они не работали: следующая сцена — это Sequence

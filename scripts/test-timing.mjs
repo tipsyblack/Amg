@@ -100,6 +100,28 @@ check(
   motions.every((m) => !m.library || m.exit === "none"),
 );
 
+console.log("\n=== брендовая концовка ===");
+const { buildOutro } = await import("../src/pipeline/assets.ts");
+const outro = buildOutro();
+check("концовка собирается", outro !== undefined);
+check("название взято из настроек", outro?.title === config.brandName, String(outro?.title));
+check("длительность в кадрах, а не секундах", outro?.durationInFrames === Math.round(config.outroSeconds * config.fps), String(outro?.durationInFrames));
+// Файла логотипа в репозитории нет, и ссылаться на него нельзя: Remotion
+// уронит рендер на последнем кадре, когда всё дорогое уже посчитано.
+check("несуществующий логотип не подставляется", outro?.logoFileName === undefined, String(outro?.logoFileName));
+// Длина ролика должна включать концовку, иначе последний кадр обрежется.
+const { videoDataSchema } = await import("../src/types.ts");
+const parsed = videoDataSchema.safeParse({
+  title: "т", fps: config.fps, width: 1080, height: 1920,
+  scenes: [{ caption: "c", voiceoverText: "v", audioFileName: "a.mp3", durationInFrames: 60 }],
+  outro: { title: "БРЕНД", durationInFrames: 120 },
+});
+check("схема принимает концовку", parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues[0]));
+check("ролик без концовки тоже валиден", videoDataSchema.safeParse({
+  title: "т", fps: config.fps, width: 1080, height: 1920,
+  scenes: [{ caption: "c", voiceoverText: "v", audioFileName: "a.mp3", durationInFrames: 60 }],
+}).success);
+
 console.log("\n=== появления, закрывающие кадр ===");
 // Зум-блюр приходит во весь экран, рваная шторка вырезает сцену по краю —
 // таким входам не нужен ни кроссфейд, ни уход предыдущей сцены. Иначе в кадре

@@ -19,6 +19,19 @@ export const overlaySchema = z.object({
   acrossCut: z.boolean().optional(),
 });
 
+// Брендовая концовка: последний кадр ролика. В референсе он не сцена, а
+// отдельный экран с логотипом — поэтому и у нас лежит рядом со сценами, а не
+// среди них.
+export const outroSchema = z.object({
+  title: z.string(),
+  tagline: z.string().optional(),
+  // Файл в public/brand/. Нет файла — кадр собирается из одного текста.
+  logoFileName: z.string().optional(),
+  durationInFrames: z.number().int().positive(),
+});
+
+export type Outro = z.infer<typeof outroSchema>;
+
 export const sceneSchema = z.object({
   caption: z.string(),
   voiceoverText: z.string(),
@@ -49,6 +62,7 @@ export const sceneSchema = z.object({
 export const videoDataSchema = z.object({
   title: z.string(),
   fps: z.number().int().positive(),
+  outro: outroSchema.optional(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   // Необязательно: фоновая музыка из public/music/, играет тихо под озвучкой.

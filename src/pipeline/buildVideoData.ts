@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Scene, VideoData } from "../types";
 import {
   buildImagePrompt,
+  buildOutro,
   sceneWithCharacter,
   ensureDirs,
   generateSceneAudio,
@@ -102,6 +103,7 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   const videoData: VideoData = {
     title: script.title,
     fps: config.fps,
+    outro: buildOutro(),
     width: config.width,
     height: config.height,
     musicFileName: await pickMusic(),

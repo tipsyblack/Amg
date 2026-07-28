@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import {
   buildImagePrompt,
+  buildOutro,
   sceneWithCharacter,
   deleteMusicTrack,
   ensureDirs,
@@ -483,6 +484,7 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     const videoData: VideoData = {
       title: script.title,
       fps: config.fps,
+      outro: buildOutro(),
       width: config.width,
       height: config.height,
       musicFileName: await pickMusic(),
