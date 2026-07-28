@@ -39,9 +39,10 @@ export const config = {
   // то есть копейки на ролик. SCRIPT_WEB_SEARCH=0 отключает.
   scriptWebSearch: (env("SCRIPT_WEB_SEARCH") ?? "1") !== "0",
   scriptWebSearchResults: Number(env("SCRIPT_WEB_SEARCH_RESULTS") ?? 3),
-  // Длина текста описания под ролик (символов). 500 — рабочая середина: и
-  // поиску есть что читать, и площадки не обрезают.
-  descriptionChars: Number(env("DESCRIPTION_CHARS") ?? 500),
+  // Цель по длине описания под пост. Жёсткий предел — 500 символов
+  // (DESCRIPTION_MAX_CHARS), поэтому цель держим ниже: если просить ровно
+  // предел, модель через него перескакивает и текст приходится резать.
+  descriptionChars: Number(env("DESCRIPTION_CHARS") ?? 450),
 
   // Озвучка и картинки — Kie.ai (один ключ на оба сервиса).
   kieApiKey: requireEnv("KIE_API_KEY"),

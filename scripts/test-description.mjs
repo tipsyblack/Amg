@@ -78,7 +78,40 @@ const longScript = {
   ],
 };
 const cut = fallbackDescription(longScript);
-check("длинный сценарий обрезан по слову", cut.length <= DESCRIPTION_MAX_CHARS && cut.endsWith("…"), `${cut.length} символов`);
+check("длинный сценарий обрезан", cut.length <= DESCRIPTION_MAX_CHARS, `${cut.length} символов`);
+check("хештеги сохранены при обрезке", cut.trimEnd().endsWith("#автоматизация"), cut.slice(-40));
+check("тело обрезано по границе слова", /\S…/u.test(cut) && !/\s…/u.test(cut), cut.slice(0, 80));
+
+console.log("\n=== предел 500 символов гарантирован на выходе ===");
+// Это и есть правило: 500 — не пожелание модели, а то, что уходит в чат.
+// Промпт может быть проигнорирован дважды, сеть может отвалиться — предел
+// держится всё равно.
+const { enforceLimit, targetLength } = await import("../src/pipeline/generateDescription.ts");
+check("предел равен 500", DESCRIPTION_MAX_CHARS === 500, String(DESCRIPTION_MAX_CHARS));
+check("короткий текст не трогаем", enforceLimit(good) === good);
+const tags = "#нейросети #ии #космос";
+const huge = `🔥 ${"слово ".repeat(300)}\n\n${tags}`;
+const limited = enforceLimit(huge);
+check("длинный текст урезан до предела", limited.length <= DESCRIPTION_MAX_CHARS, `${limited.length} символов`);
+check("хештеги на месте", limited.endsWith(tags), limited.slice(-30));
+check("обрыв помечен многоточием", limited.includes("…"));
+// Источник — «слово » много раз, поэтому обрыв по границе слова обязан дать
+// целое «слово…», а не «сло…».
+check("слово не разорвано", limited.includes("слово…"), limited.slice(-60));
+// Текст без хештегов — резать нечего, кроме самого текста.
+const noTags = enforceLimit(`🔥 ${"слово ".repeat(300)}`);
+check("без хештегов тоже в пределе", noTags.length <= DESCRIPTION_MAX_CHARS, `${noTags.length} символов`);
+// Патологический случай: хештеги сами длиннее предела. Строка из одних решёток
+// бесполезна, поэтому режем всё подряд.
+const tagWall = enforceLimit(`🔥 текст\n\n${"#длинныйхештег ".repeat(60)}`);
+check("стена хештегов тоже в пределе", tagWall.length <= DESCRIPTION_MAX_CHARS, `${tagWall.length} символов`);
+check("осмысленное начало сохранено", tagWall.startsWith("🔥 текст"), tagWall.slice(0, 30));
+
+console.log("\n=== цель для промпта ниже предела ===");
+check("цель не равна пределу", targetLength(500) < DESCRIPTION_MAX_CHARS, String(targetLength(500)));
+check("слишком большое значение из .env прижато", targetLength(5000) < DESCRIPTION_MAX_CHARS);
+check("слишком маленькое поднято до минимума", targetLength(10) >= DESCRIPTION_MIN_CHARS, String(targetLength(10)));
+check("рабочее значение проходит", targetLength(450) === 450);
 
 console.log("\n=== генерация с подменой OpenRouter ===");
 let requests = [];
@@ -101,7 +134,8 @@ check("правок не потребовалось", first.fixed === undefined)
 check("один запрос", requests.length === 1, String(requests.length));
 check("в запрос ушёл сценарий целиком", requests[0].messages[1].content.includes("радиатор"));
 const prompt = requests[0].messages[0].content;
-check("в промпте названа длина", prompt.includes("500"));
+check("в промпте названа цель", prompt.includes("450"));
+check("в промпте назван жёсткий предел", prompt.includes("не больше 500"));
 check("требуются эмодзи", prompt.includes("Эмодзи обязательны"));
 check("требуются хештеги", prompt.includes("хештег"));
 check("ссылки запрещены", prompt.includes("Никаких ссылок"));
@@ -120,6 +154,18 @@ check(
   requests[1].messages.at(-1).content.includes("Перепиши описание"),
   requests[1].messages.at(-1).content.slice(0, 60),
 );
+
+// Модель проигнорировала предел дважды — обрезка обязана сработать, и бот
+// должен об этом сказать (флаг trimmed).
+queue.length = 0;
+const tooLong = `🔥 ${"длинное описание ".repeat(60)}\n\n#ии #нейросети`;
+queue.push(tooLong, tooLong);
+requests = [];
+const over = await generateDescription(script);
+check("в чат уходит не больше предела", over.description.length <= DESCRIPTION_MAX_CHARS, `${over.description.length} символов`);
+check("обрезка отмечена флагом", over.trimmed === true);
+check("причина переписки названа", over.fixed?.includes("длинное") === true, String(over.fixed));
+check("хештеги выжили", over.description.endsWith("#ии #нейросети"), over.description.slice(-20));
 
 // Модель недоступна — берём запасной вариант, а не падаем.
 queue.length = 0;

@@ -6,11 +6,22 @@ import { stripSources } from "./generateScript";
 // TikTok и VK Клипах. Пишется по готовому сценарию — описание должно обещать
 // ровно то, что в видео, иначе зритель уходит и алгоритмы это запоминают.
 
-// Целевая длина. Меньше 350 символов — описание не работает на поиск и не
-// объясняет, о чём ролик; больше 700 — площадки обрезают, и хвост с хештегами
-// не виден.
+// Длина описания. 500 символов — жёсткий предел, а не пожелание: он задан
+// требованием к посту, поэтому гарантируется не промптом, а обрезкой на выходе
+// (enforceLimit). Меньше 350 — описание не работает на поиск и не объясняет,
+// о чём ролик.
 export const DESCRIPTION_MIN_CHARS = 350;
-export const DESCRIPTION_MAX_CHARS = 700;
+export const DESCRIPTION_MAX_CHARS = 500;
+
+/**
+ * Цель для промпта. Просить ровно предел бессмысленно — модель регулярно
+ * перескакивает через него, и текст приходится резать. Держим цель ниже, а
+ * значение из .env заодно загоняем в допустимые границы.
+ */
+export function targetLength(requested: number): number {
+  const headroom = DESCRIPTION_MAX_CHARS - 50;
+  return Math.min(Math.max(requested, DESCRIPTION_MIN_CHARS), headroom);
+}
 
 function buildPrompt(targetChars: number): string {
   return `Ты пишешь текст описания под короткое вертикальное видео (Instagram Reels, YouTube Shorts, TikTok, VK Клипы).
@@ -18,7 +29,7 @@ function buildPrompt(targetChars: number): string {
 Отвечай СТРОГО валидным JSON без markdown-обёртки: {"description": string}
 
 Требования к описанию:
-- Длина примерно ${targetChars} символов (допустимо от ${DESCRIPTION_MIN_CHARS} до ${DESCRIPTION_MAX_CHARS}).
+- Длина примерно ${targetChars} символов, и ни в каком случае не больше ${DESCRIPTION_MAX_CHARS} — это жёсткий предел, текст длиннее будет обрезан. Минимум ${DESCRIPTION_MIN_CHARS}.
 - Структура: первая строка — зацепка из ролика (можно вопросом), затем 2-3
   коротких абзаца по сути видео, затем призыв к действию, затем 3-5 хештегов.
 - Эмодзи обязательны, но по делу: 1-2 на абзац, как маркеры, а не гирлянда.
@@ -36,6 +47,40 @@ function scriptForPrompt(script: GeneratedScript): string {
     .map((scene, i) => `${i + 1}. ${scene.caption} — ${scene.voiceoverText}`)
     .join("\n");
   return `Заголовок: ${script.title}\n\nСцены:\n${scenes}`;
+}
+
+/**
+ * Приводит описание к пределу длины. Это последняя линия: сколько бы модель ни
+ * написала, в чат уходит текст не длиннее DESCRIPTION_MAX_CHARS.
+ *
+ * Режем тело, а не хвост: хештеги стоят последней строкой и нужны для поиска,
+ * поэтому их сохраняем целиком, а сокращаем то, что выше. Обрыв — по границе
+ * слова, иначе текст кончается на половине слова.
+ */
+export function enforceLimit(
+  text: string,
+  max: number = DESCRIPTION_MAX_CHARS,
+): string {
+  const clean = text.trim();
+  if (clean.length <= max) return clean;
+
+  const lines = clean.split("\n");
+  const last = lines[lines.length - 1].trim();
+  const tagsOnly = /^#[^\s#]+(?:\s+#[^\s#]+)*$/.test(last);
+
+  let tail = tagsOnly ? `\n\n${last}` : "";
+  let body = tagsOnly ? lines.slice(0, -1).join("\n").trim() : clean;
+  // Если на тело почти ничего не остаётся, хештеги спасать нечем — режем всё
+  // подряд, иначе получится строка из одних решёток.
+  if (max - tail.length - 1 < 80) {
+    tail = "";
+    body = clean;
+  }
+
+  const cut = body.slice(0, max - tail.length - 1);
+  const boundary = cut.lastIndexOf(" ");
+  const kept = boundary > 0 ? cut.slice(0, boundary) : cut;
+  return `${kept.replace(/[\s,.;:!?…—-]+$/u, "")}…${tail}`;
 }
 
 /**
@@ -57,10 +102,7 @@ export function fallbackDescription(script: GeneratedScript): string {
   ]
     .filter((part) => part.length > 2)
     .join("\n\n");
-  // Обрезаем по границе слова, чтобы текст не заканчивался на половине слова.
-  if (text.length <= DESCRIPTION_MAX_CHARS) return text;
-  const cut = text.slice(0, DESCRIPTION_MAX_CHARS);
-  return `${cut.slice(0, cut.lastIndexOf(" "))}…`;
+  return enforceLimit(text);
 }
 
 const EMOJI =
@@ -94,21 +136,43 @@ export function descriptionProblem(text: string): string | undefined {
 export async function generateDescription(
   script: GeneratedScript,
   targetChars = config.descriptionChars,
-): Promise<{ description: string; fixed?: string; fromFallback?: boolean }> {
+): Promise<{
+  description: string;
+  fixed?: string;
+  fromFallback?: boolean;
+  // Текст пришлось урезать до предела: модель не уложилась даже со второй
+  // попытки. Показываем в чате — обрезанный хвост стоит перечитать глазами.
+  trimmed?: boolean;
+}> {
   const messages = [
-    { role: "system", content: buildPrompt(targetChars) },
+    { role: "system", content: buildPrompt(targetLength(targetChars)) },
     { role: "user", content: scriptForPrompt(script) },
   ];
+
+  // Предел длины гарантируем здесь, на выходе, а не надеемся на модель:
+  // «до 500 символов» — требование к посту, и нарушить его нельзя ни при
+  // сбое сети, ни когда модель проигнорировала промпт дважды.
+  const done = (
+    text: string,
+    rest: { fixed?: string; fromFallback?: boolean } = {},
+  ) => {
+    const description = enforceLimit(text);
+    return {
+      description,
+      ...rest,
+      ...(description === text.trim() ? {} : { trimmed: true }),
+    };
+  };
 
   let description: string;
   try {
     description = await request(messages);
   } catch {
-    return { description: fallbackDescription(script), fromFallback: true };
+    return done(fallbackDescription(script), { fromFallback: true });
   }
 
   const problem = descriptionProblem(description);
-  if (!problem) return { description };
+  if (!problem) return done(description);
 
   try {
     const retry = await request([
@@ -119,9 +183,9 @@ export async function generateDescription(
         content: `Перепиши описание: ${problem}. Формат ответа тот же.`,
       },
     ]);
-    return { description: retry, fixed: problem };
+    return done(retry, { fixed: problem });
   } catch {
-    return { description, fixed: problem };
+    return done(description, { fixed: problem });
   }
 }
 

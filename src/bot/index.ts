@@ -564,12 +564,15 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     // Текст под пост отдельным сообщением: так его удобно скопировать целиком,
     // не выцепляя из подписи к файлу.
     try {
-      const { description, fixed, fromFallback } =
+      const { description, fixed, fromFallback, trimmed } =
         await generateDescription(script);
       await ctx.reply(description);
       const notes = [
         `📝 Описание под пост — ${description.length} символов.`,
         fixed ? `Переписал: ${fixed}.` : undefined,
+        trimmed
+          ? "Не уложилось в предел — обрезал по границе слова, хештеги на месте."
+          : undefined,
         fromFallback
           ? "Собрано из сценария: модель описание не вернула."
           : undefined,
