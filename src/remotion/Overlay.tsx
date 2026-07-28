@@ -17,10 +17,14 @@ import type { Overlay as OverlayData } from "../types";
 // не проявиться — иначе его не замечают.
 const POP_DAMPING = 11;
 const POP_FROM_SCALE = 0.3;
-// Небольшое покачивание после появления — объект выглядит живым, а не
-// приклеенным.
+// После появления объект не замирает, а продолжает двигаться: в референсе
+// купюры не просто возникли над водой — они падают. Замерший объект читается
+// как наклейка, поэтому дальше идёт медленный снос вниз с покачиванием.
 const IDLE_TILT_DEG = 2.5;
-const IDLE_PERIOD_FRAMES = 40;
+const IDLE_PERIOD_SECONDS = 1.33;
+// Снос за секунду, в процентах от высоты кадра. Больше 2% — объект убегает из
+// кадра на длинной сцене, меньше 0.5% — движение не замечается.
+const DRIFT_PERCENT_PER_SECOND = 1.2;
 
 function anchorStyle(anchor: OverlayData["anchor"]): React.CSSProperties {
   const inset = "4%";
@@ -50,7 +54,7 @@ interface OverlayProps {
 
 export const Overlay: React.FC<OverlayProps> = ({ overlay, exitProgress }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, height } = useVideoConfig();
 
   const startFrame = (overlay.startMs / 1000) * fps;
   if (frame < startFrame) return null;
@@ -68,8 +72,13 @@ export const Overlay: React.FC<OverlayProps> = ({ overlay, exitProgress }) => {
           extrapolateRight: "clamp",
         })
       : 1);
+  const secondsAlive = (frame - startFrame) / fps;
   const tilt =
-    Math.sin((frame - startFrame) / IDLE_PERIOD_FRAMES) * IDLE_TILT_DEG;
+    Math.sin((secondsAlive / IDLE_PERIOD_SECONDS) * Math.PI * 2) *
+    IDLE_TILT_DEG;
+  // Снос считаем от высоты кадра, а не в пикселях: иначе на другом
+  // разрешении объект поедет с другой скоростью.
+  const driftY = (secondsAlive * DRIFT_PERCENT_PER_SECOND * height) / 100;
 
   const positioning = anchorStyle(overlay.anchor);
   const baseTransform =
@@ -82,7 +91,9 @@ export const Overlay: React.FC<OverlayProps> = ({ overlay, exitProgress }) => {
         ...positioning,
         width: `${overlay.widthPercent}%`,
         opacity,
-        transform: `${baseTransform}scale(${scale}) rotate(${tilt}deg)`,
+        transform:
+          `${baseTransform}translateY(${driftY}px) ` +
+          `scale(${scale}) rotate(${tilt}deg)`,
         // Тень отделяет объект от картинки под ним: без неё наложение
         // читается как часть иллюстрации.
         filter: "drop-shadow(0 10px 18px rgba(0, 0, 0, 0.28))",

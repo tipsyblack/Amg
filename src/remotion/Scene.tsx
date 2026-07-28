@@ -34,7 +34,21 @@ const fontFamily = CAPTION_FONT_FAMILY;
 const ENTRANCE_DAMPING = 26;
 // У хука пружина мягче — карточка чуть перелетает и садится на место.
 const HOOK_DAMPING = 14;
-const IMAGE_ZOOM = 0.13; // насколько картинка подъезжает за сцену
+// Влёт повёрнутой карточкой: приходит крупнее кадра и под углом.
+const SPIN_FROM_SCALE = 1.28;
+const SPIN_FROM_DEG = -9;
+// Тасовка: сколько карточек проходит перед основной, с каким шагом по времени
+// и сколько живёт каждая. Больше трёх копий — каша, меньше двух — не читается
+// как перебор. Время жизни задаём в долях секунды, а не пружиной: пружина к
+// единице только стремится, и копии оставались на экране еле заметными
+// контурами до конца сцены.
+const SHUFFLE_COPIES = 2;
+const SHUFFLE_STEP_SECONDS = 0.05;
+const SHUFFLE_LIFE_SECONDS = 0.22;
+// Наезда на картинку нет намеренно. В референсе иллюстрация стоит мёртво —
+// я мерил покадровую разницу внутри рамки, 0.00-0.15 из 255 на протяжении
+// полутора секунд. Вся жизнь кадра там в стыках и в маскоте, а не в ползающей
+// картинке; с нашим наездом мягкий стык переставал читаться как мягкий.
 // Наезд хука начинается не с точки: первый кадр ролика — это ещё и обложка в
 // ленте, поэтому он должен быть непустым и читаемым сразу.
 const HOOK_PUNCH_FROM = 0.78;
@@ -84,14 +98,6 @@ export const Scene: React.FC<SceneProps> = ({
   const damping = motion.emphasis ? HOOK_DAMPING : ENTRANCE_DAMPING;
   const entrance = spring({ frame, fps, config: { damping } });
 
-  // 0 → 1 за всю сцену: по этому идёт медленный наплыв на картинку.
-  const progress = interpolate(
-    frame,
-    [0, Math.max(visualDuration - 1, 1)],
-    [0, 1],
-    { extrapolateRight: "clamp" },
-  );
-
   // 0 → 1 на участке ухода сцены. У последней сцены участка нет (границы
   // совпадают) — тогда ухода не происходит вовсе.
   const exit =
@@ -111,27 +117,13 @@ export const Scene: React.FC<SceneProps> = ({
         })
       : 1;
 
-  // ——— движение картинки внутри карточки ———
-  const zoom =
-    motion.pan === "out"
-      ? 1 + IMAGE_ZOOM * (1 - progress)
-      : 1 + IMAGE_ZOOM * progress;
-  const panX =
-    motion.pan === "left"
-      ? interpolate(progress, [0, 1], [26, -26])
-      : motion.pan === "right"
-        ? interpolate(progress, [0, 1], [-26, 26])
-        : 0;
-  const panY =
-    motion.pan === "in" || motion.pan === "out"
-      ? interpolate(progress, [0, 1], motion.pan === "in" ? [0, -20] : [-20, 0])
-      : 0;
-
   // ——— появление карточки ———
   let cardScale = interpolate(entrance, [0, 1], [0.88, 1]);
   let cardX = 0;
   let cardY = interpolate(entrance, [0, 1], [34, 0]);
   let cardRotate = 0;
+  // Отдельный масштаб по горизонтали — только для схлопывания.
+  let squeezeX = 1;
   // Хук не проявляется: он врубается на первом же кадре и только доезжает
   // масштабом. Проявление съело бы те самые полсекунды внимания.
   let cardOpacity = motion.emphasis
@@ -162,6 +154,15 @@ export const Scene: React.FC<SceneProps> = ({
   } else if (motion.entry === "swing") {
     cardRotate = interpolate(entrance, [0, 1], [-13, 0]);
     cardScale = interpolate(entrance, [0, 1], [0.84, 1]);
+  } else if (motion.entry === "spin" || motion.entry === "shuffle") {
+    // Карточка влетает крупнее кадра и повёрнутой, с промахом мимо центра, и
+    // раскручивается на место — как брошенная на стол карта. У тасовки то же
+    // движение: она отличается копиями, которые проходят перед ней (ниже).
+    cardScale = interpolate(entrance, [0, 1], [SPIN_FROM_SCALE, 1]);
+    cardRotate = interpolate(entrance, [0, 1], [SPIN_FROM_DEG, 0]);
+    cardX = interpolate(entrance, [0, 1], [-90, 0]);
+    cardY = interpolate(entrance, [0, 1], [40, 0]);
+    cardOpacity = 1;
   }
 
   // ——— уход карточки (играет под проявляющейся следующей сценой) ———
@@ -176,6 +177,14 @@ export const Scene: React.FC<SceneProps> = ({
     } else if (motion.exit === "shrink") {
       cardScale *= interpolate(exit, [0, 1], [1, 0.76]);
       cardOpacity *= interpolate(exit, [0, 1], [1, 0.25]);
+    } else if (motion.exit === "squeeze") {
+      // Схлопывание по горизонтали: карточка сжимается в вертикальную полоску.
+      // Масштаб по X ведём отдельно от общего — иначе она просто уменьшится.
+      squeezeX = interpolate(exit, [0, 1], [1, 0.02]);
+      cardRotate += interpolate(exit, [0, 1], [0, -3]);
+      cardOpacity *= interpolate(exit, [0.7, 1], [1, 0], {
+        extrapolateLeft: "clamp",
+      });
     } else if (motion.exit === "driftUp") {
       cardY += interpolate(exit, [0, 1], [0, -150]);
       cardOpacity *= interpolate(exit, [0, 1], [1, 0.15]);
@@ -187,6 +196,52 @@ export const Scene: React.FC<SceneProps> = ({
     motion.exit === "crumple" && !plainExit
       ? interpolate(exit, [0, 1], [0, 10])
       : 0;
+
+  // Тасовка: перед основной карточкой проходят её копии — те же пропорции и
+  // рамка, но пустые и приглушённые. Каждая стартует на несколько кадров
+  // раньше, поэтому в кадре они оказываются внахлёст и читаются как перебор
+  // колоды. Копии рисуем только на входе: дальше они не нужны.
+  const shuffleGhosts =
+    motion.entry === "shuffle" && !plainEntry
+      ? Array.from({ length: SHUFFLE_COPIES }, (_, i) => {
+          // Копии стартуют раньше основной карточки: чем дальше копия, тем
+          // раньше она началась и тем дальше уже ушла.
+          const lead = (SHUFFLE_COPIES - i) * SHUFFLE_STEP_SECONDS * fps;
+          const ghost = (frame + lead) / (SHUFFLE_LIFE_SECONDS * fps);
+          if (ghost >= 1) return null;
+          return (
+            <div
+              key={`ghost-${i}`}
+              style={{
+                position: "absolute",
+                width: `${CARD_WIDTH_PERCENT}%`,
+                aspectRatio: String(cardAspect(imageWidth, imageHeight)),
+                border: `${CARD_BORDER_PX * scale}px solid #0d0d0d`,
+                borderRadius: CARD_RADIUS_PX * scale,
+                overflow: "hidden",
+                backgroundColor: "#ececeb",
+                opacity: interpolate(ghost, [0.55, 1], [1, 0], {
+                  extrapolateLeft: "clamp",
+                }),
+                transform:
+                  `translate(${interpolate(ghost, [0, 1], [-120, 90])}px, ` +
+                  `${interpolate(ghost, [0, 1], [50, -30])}px) ` +
+                  `rotate(${interpolate(ghost, [0, 1], [SPIN_FROM_DEG - 4, 8])}deg) ` +
+                  `scale(${interpolate(ghost, [0, 1], [SPIN_FROM_SCALE, 1])})`,
+              }}
+            >
+              {/* Внутри копии та же картинка: пустые листы читаются как брак
+                  вёрстки, а не как перебираемая колода. */}
+              {imageFileName && (
+                <Img
+                  src={staticFile(`images/${imageFileName}`)}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              )}
+            </div>
+          );
+        })
+      : null;
 
   const card = (
       <div
@@ -205,18 +260,13 @@ export const Scene: React.FC<SceneProps> = ({
           transform:
             `translate(${cardX}px, ${cardY}px) ` +
             `rotate(${cardRotate}deg) skewY(${crumpleSkew}deg) ` +
-            `scale(${cardScale})`,
+            `scale(${cardScale * squeezeX}, ${cardScale})`,
         }}
       >
         {imageFileName ? (
           <Img
             src={staticFile(`images/${imageFileName}`)}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,
-            }}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
         ) : (
           <div
@@ -256,6 +306,7 @@ export const Scene: React.FC<SceneProps> = ({
       {/* Акценты под карточкой: они украшение, а не содержание. */}
       <Accents sceneIndex={sceneIndex} exitProgress={plainExit ? 0 : exit} />
 
+      {shuffleGhosts}
       {card}
 
       {words && words.length > 0 && (

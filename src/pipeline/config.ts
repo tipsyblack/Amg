@@ -96,7 +96,10 @@ export const config = {
   characterReferenceUrl:
     env("CHARACTER_REFERENCE_URL") ?? DEFAULT_CHARACTER_REFERENCE_URL,
 
-  fps: 30,
+  // 60 кадров: резкие стыки длятся 0.3 с, и на 30 fps это всего 9 кадров —
+  // движение читается рвано. В референсе 60. Платим временем рендера: оно
+  // примерно удваивается. VIDEO_FPS=30 возвращает как было.
+  fps: Number(env("VIDEO_FPS") ?? 60),
   // Сколько сцен максимум и в какую длину должен уложиться ролик.
   maxScenes: Number(env("MAX_SCENES") ?? 15),
   maxVideoSeconds: Number(env("MAX_VIDEO_SECONDS") ?? 60),

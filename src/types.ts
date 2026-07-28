@@ -94,8 +94,11 @@ export const defaultVideoData: VideoData = {
  * включая стыки с библиотечными переходами. Картинок нет намеренно — видно
  * само движение, а не иллюстрации.
  */
-export function motionLabData(sceneCount = 8): VideoData {
-  const fps = 30;
+export function motionLabData(sceneCount = 10): VideoData {
+  // 10 сцен, а не 8: цикл движений длиной 8, и чтобы увидеть ВСЕ варианты
+  // входа и ухода, нужен один полный оборот плюс запас — хук занимает нулевую
+  // позицию и сдвигает цикл.
+  const fps = 60;
   return {
     title: "Стенд движения",
     fps,
@@ -106,7 +109,7 @@ export function motionLabData(sceneCount = 8): VideoData {
       caption: `Вариант ${index + 1}`,
       voiceoverText: `Сцена ${index + 1}`,
       audioFileName: "scene-0.wav",
-      durationInFrames: Math.round(fps * 1.8),
+      durationInFrames: Math.round(fps * 1.4),
     })),
   };
 }

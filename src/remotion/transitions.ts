@@ -1,9 +1,24 @@
+import { MIX } from "./mix";
+
 // Варианты появления и уход сцены. Смысл в разнообразии: подряд идущие сцены
 // не должны двигаться одинаково, иначе ролик усыпляет. Набор перебирается по
 // номеру сцены — детерминированно, чтобы рендер был повторяемым.
 
-export type EntryStyle = "fade" | "overlay" | "slide" | "punch" | "swing";
-export type ExitStyle = "none" | "crumple" | "shrink" | "driftUp";
+// Названия — по тому, что видно в кадре. spin и shuffle сняты с референса:
+// карточка влетает крупной и повёрнутой и раскручивается на место; либо
+// несколько карточек проходят внахлёст, как перебирают колоду.
+export type EntryStyle =
+  | "fade"
+  | "overlay"
+  | "slide"
+  | "punch"
+  | "swing"
+  | "spin"
+  | "shuffle";
+// squeeze — схлопывание по горизонтали: карточка сжимается в вертикальную
+// полоску и исчезает. В референсе из-за неё выходит маскот; маскота у нас
+// пока нет, но само схлопывание работает и само по себе.
+export type ExitStyle = "none" | "crumple" | "shrink" | "driftUp" | "squeeze";
 
 // Переходы всего кадра из @remotion/transitions — другой класс движения, чем
 // наши анимации карточки. Если у сцены задан library, то стык с СЛЕДУЮЩЕЙ
@@ -22,8 +37,10 @@ export interface SceneMotion {
   exit: ExitStyle;
   // Звук на стыке сцен из public/sfx. Подбирается под характер перехода.
   sfx: SfxName;
-  // Куда ведёт наплыв на картинку внутри сцены.
-  pan: "in" | "out" | "left" | "right";
+  // Мягкий стык: карточка не двигается вовсе, одна картинка растворяется в
+  // другой. В референсе такой стык длиннее резких и стоит там, где мысль
+  // продолжается, а не меняется.
+  soft?: boolean;
   // Усиленная подача: пружина мягче, подпись бьёт крупнее. Нужна хуку.
   emphasis?: boolean;
   // Переход из библиотеки на стыке со следующей сценой.
@@ -36,15 +53,18 @@ export interface SceneMotion {
 // Звуки в цикле подобраны ещё и так, чтобы на соседних стыках не повторяться
 // (первый стык — удар хука, поэтому у сцены 1 удара уже нет).
 const CYCLE: SceneMotion[] = [
-  { entry: "fade", exit: "shrink", sfx: "snap", pan: "in" },
-  { entry: "overlay", exit: "crumple", sfx: "clap", pan: "left" },
+  { entry: "spin", exit: "squeeze", sfx: "snap" },
+  { entry: "shuffle", exit: "shrink", sfx: "clap" },
   // Стык 2→3 — шторка: своего ухода у карточки нет, его делает переход.
-  { entry: "slide", exit: "none", sfx: "click", pan: "out", library: "wipe" },
-  { entry: "punch", exit: "shrink", sfx: "snap", pan: "right" },
-  { entry: "overlay", exit: "crumple", sfx: "impact", pan: "in" },
-  { entry: "swing", exit: "none", sfx: "click", pan: "out", library: "flip" },
-  { entry: "fade", exit: "none", sfx: "snap", pan: "left", library: "clockWipe" },
-  { entry: "punch", exit: "driftUp", sfx: "clap", pan: "right" },
+  { entry: "slide", exit: "none", sfx: "click", library: "wipe" },
+  // Мягкий стык: картинка меняется в неподвижной рамке. В референсе он один
+  // на несколько резких — так же и здесь. Звук берём самый лёгкий из четырёх:
+  // удар или хлопок на растворении звучали бы громче, чем выглядит движение.
+  { entry: "fade", exit: "none", sfx: "snap", soft: true },
+  { entry: "spin", exit: "crumple", sfx: "impact" },
+  { entry: "swing", exit: "none", sfx: "click", library: "flip" },
+  { entry: "shuffle", exit: "squeeze", sfx: "snap" },
+  { entry: "punch", exit: "driftUp", sfx: "clap" },
 ];
 
 // Первая сцена — хук. Зритель решает за 1-2 секунды, поэтому кадр должен
@@ -54,7 +74,6 @@ const HOOK_MOTION: SceneMotion = {
   entry: "punch",
   exit: "crumple",
   sfx: "impact",
-  pan: "in",
   emphasis: true,
 };
 
@@ -65,4 +84,15 @@ export const MOTION_CYCLE_LENGTH = CYCLE.length;
 export function sceneMotion(index: number): SceneMotion {
   if (index === 0) return HOOK_MOTION;
   return CYCLE[index % CYCLE.length];
+}
+
+/**
+ * Сколько кадров длится стык перед следующей сценой. Мягкий идёт дольше
+ * резкого — иначе он читается как обычная быстрая склейка и приём теряется.
+ */
+export function transitionFrames(motion: SceneMotion, fps: number): number {
+  const seconds = motion.soft
+    ? MIX.softTransitionSeconds
+    : MIX.sharpTransitionSeconds;
+  return Math.max(Math.round(seconds * fps), 1);
 }

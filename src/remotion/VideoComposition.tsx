@@ -6,7 +6,7 @@ import { CutTransition } from "./CutTransition";
 import { Scene } from "./Scene";
 import { TransitionBlur } from "./TransitionBlur";
 import { MIX } from "./mix";
-import { sceneMotion } from "./transitions";
+import { sceneMotion, transitionFrames } from "./transitions";
 
 export const calculateVideoMetadata: CalculateMetadataFunction<
   VideoData
@@ -26,6 +26,7 @@ export const calculateVideoMetadata: CalculateMetadataFunction<
 
 export const VideoComposition: React.FC<VideoData> = ({
   scenes,
+  fps,
   musicFileName,
   sfxEnabled = true,
   motionBlurEnabled = true,
@@ -55,9 +56,15 @@ export const VideoComposition: React.FC<VideoData> = ({
         // поверх неё: в Remotion следующая сцена рисуется выше и закрывает
         // предыдущую своим фоном, поэтому растворяться должна именно входящая.
         const isLast = index === scenes.length - 1;
+        // Длина стыка теперь своя у каждого перехода: мягкий идёт дольше
+        // резкого. Стык index→index+1 описан движением сцены index, поэтому
+        // перекрытие берём у неё, а проявление входящей — у предыдущей.
+        const exitFrames = transitionFrames(sceneMotion(index), fps);
+        const enterFrames =
+          index === 0 ? 0 : transitionFrames(sceneMotion(index - 1), fps);
         const visualDuration = isLast
           ? scene.durationInFrames
-          : scene.durationInFrames + MIX.crossfadeFrames;
+          : scene.durationInFrames + exitFrames;
 
         // Переходы из библиотеки задаются уходящей сценой: стык index→index+1
         // описан в sceneMotion(index).library. Входящая сцена узнаёт о нём,
@@ -77,12 +84,12 @@ export const VideoComposition: React.FC<VideoData> = ({
               <CutTransition
                 entering={enteringLibrary}
                 exiting={exitingLibrary}
-                transitionFrames={MIX.crossfadeFrames}
+                transitionFrames={enterFrames || exitFrames}
                 exitStartFrame={exitStartFrame}
                 visualDuration={visualDuration}
               >
                 <TransitionBlur
-                  enterFrames={index === 0 ? 0 : MIX.crossfadeFrames}
+                  enterFrames={enterFrames}
                   exitStartFrame={exitStartFrame}
                   disabled={
                     !motionBlurEnabled ||
@@ -96,9 +103,7 @@ export const VideoComposition: React.FC<VideoData> = ({
                     imageWidth={scene.imageWidth}
                     imageHeight={scene.imageHeight}
                     sceneIndex={index}
-                    fadeInFrames={
-                      index === 0 || enteringLibrary ? 0 : MIX.crossfadeFrames
-                    }
+                    fadeInFrames={enteringLibrary ? 0 : enterFrames}
                     visualDuration={visualDuration}
                     exitStartFrame={exitStartFrame}
                     plainEntry={Boolean(enteringLibrary)}
