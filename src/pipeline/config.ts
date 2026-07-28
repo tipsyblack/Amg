@@ -77,6 +77,17 @@ export const config = {
   elevenLabsApiKey: env("ELEVENLABS_API_KEY"),
   elevenLabsModelId: env("ELEVENLABS_MODEL_ID") ?? "eleven_multilingual_v2",
   kieImageModel: env("KIE_IMAGE_MODEL") ?? "google/nano-banana-edit",
+  // Оживление кадра (image-to-video, Seedance). Пусто — слаг берётся из
+  // реестра VIDEO_MODELS; заполненное значение перебивает реестр целиком.
+  // Проверить, какой слаг принимает аккаунт, можно командой /vidmodel.
+  kieVideoModel: env("KIE_VIDEO_MODEL") ?? "",
+  // Сколько сцен в ролике оживлять клипом. 0 — ни одной (по умолчанию): клип
+  // стоит примерно четверть доллара за пару секунд, это дороже всей остальной
+  // сцены вместе взятой, поэтому включается осознанно — командой /clips.
+  clipScenes: Number(env("CLIP_SCENES") ?? 0),
+  // Длина клипа. Дольше двух секунд смысла мало: сцена в среднем и длится
+  // около трёх, а платим мы посекундно.
+  clipSeconds: Number(env("CLIP_SECONDS") ?? 2),
   // Музыка (Suno через Kie.ai). Считается дольше картинок — свой лимит.
   kieMusicModel: env("KIE_MUSIC_MODEL") ?? "V5",
   // Suno у Kie.ai требует callBackUrl обязательно, но нам он не нужен: мы

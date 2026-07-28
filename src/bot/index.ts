@@ -13,6 +13,7 @@ import {
   ensureDirs,
   ensureMusicLibraryDir,
   fitToBudget,
+  generateSceneAnimation,
   generateSceneAudio,
   generateSceneIllustration,
   listMusicTracks,
@@ -20,6 +21,7 @@ import {
   pickMusic,
   writeVideoData,
 } from "../pipeline/assets";
+import { buildClipPrompt, clipSceneIndexes } from "../pipeline/generateClip";
 import { generateMusicTrack, MUSIC_PRESETS } from "../pipeline/generateMusic";
 import {
   generateSceneOverlay,
@@ -65,6 +67,11 @@ import {
   getScriptModel,
   resolveScriptModel,
 } from "../pipeline/scriptModels";
+import {
+  DEFAULT_VIDEO_MODEL_KEY,
+  getVideoModel,
+  VIDEO_MODELS,
+} from "../pipeline/videoModels";
 import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline/voices";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
@@ -422,7 +429,14 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     }
 
     const audio = [...(session.audio ?? [])];
+    const clips = [...(session.clips ?? [])];
     const overlays = session.overlays ?? [];
+    // Какие сцены оживляем клипом. Клип — самая дорогая часть сцены, поэтому
+    // по умолчанию их нет вовсе; включается командой /clips.
+    const clipCount = session.clipScenes ?? config.clipScenes;
+    const animated = new Set(
+      clipSceneIndexes(script.scenes.length, clipCount),
+    );
     // Объект появляется на слове из озвучки, а слова известны только после
     // синтеза — поэтому момент считается здесь, а не при генерации картинки.
     const sceneOverlay = (i: number) => {
@@ -463,6 +477,29 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         );
         updateSession(chatId, { audio });
       }
+
+      // Оживление кадра. Первым кадром идёт уже согласованная картинка сцены,
+      // поэтому подмена не видна на стыке. Готовые клипы кэшируем в сессии:
+      // повторная сборка после сбоя не должна оплачивать их заново.
+      if (animated.has(i) && !clips[i]) {
+        await ctx.reply(`🎞 Оживляю сцену ${i + 1}…`);
+        clips[i] = await generateSceneAnimation(
+          i,
+          script.scenes[i].voiceoverText,
+          images[i].resultUrl,
+          config.clipSeconds,
+          session.videoModel,
+        );
+        if (clips[i]) {
+          updateSession(chatId, { clips });
+        } else {
+          await ctx.reply(
+            `Клип для сцены ${i + 1} не получился — она останется картинкой. ` +
+              "Если это повторяется, проверьте слаг модели: /vidmodel",
+          );
+        }
+      }
+
       scenes.push({
         caption: script.scenes[i].caption,
         voiceoverText: script.scenes[i].voiceoverText,
@@ -470,6 +507,8 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         imageFileName: images[i].imageFileName,
         imageWidth: images[i].imageWidth,
         imageHeight: images[i].imageHeight,
+        clipFileName: clips[i]?.clipFileName,
+        clipDurationInFrames: clips[i]?.clipDurationInFrames,
         durationInFrames: audio[i].durationInFrames,
         // Слова с таймингами — для субтитров «по слову».
         words: audio[i].words,
@@ -618,6 +657,8 @@ bot.command(["start", "help"], async (ctx) => {
       "/model — модель, которая пишет сценарий\n" +
       "/ttsmodel — модель озвучки\n" +
       "/length — лимит длины ролика в секундах\n" +
+      "/clips — сколько сцен оживлять видео (по умолчанию ни одной)\n" +
+      "/vidmodel — модель оживления кадра\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека и генерация\n" +
       "/clone — клонировать голос из своих роликов\n" +
@@ -812,6 +853,134 @@ bot.command("length", async (ctx) => {
   await ctx.reply(
     `Лимит длины: ${seconds} с. Сценарист получит бюджет примерно ` +
       `${Math.floor(seconds * 2.4)} слов озвучки.`,
+  );
+});
+
+// Сколько сцен оживлять клипом. Это единственная настройка в проекте, которая
+// заметно меняет стоимость ролика, поэтому цифру видно в чате и по умолчанию
+// она нулевая.
+const MAX_CLIP_SCENES = 5;
+// Порядок цены: 720p с референсом стоит примерно $0.125 за секунду.
+const CLIP_PRICE_PER_SECOND = 0.125;
+
+function clipCostNote(count: number): string {
+  const cost = count * config.clipSeconds * CLIP_PRICE_PER_SECOND;
+  return `${count} × ${config.clipSeconds} с ≈ $${cost.toFixed(2)} за ролик`;
+}
+
+bot.command("clips", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const current = getSession(chatId).clipScenes ?? config.clipScenes;
+  const requested = Number(ctx.match.trim());
+
+  if (!ctx.match.trim()) {
+    await ctx.reply(
+      `Оживлённых сцен в ролике: ${current}` +
+        (current > 0 ? ` (${clipCostNote(current)})` : "") +
+        ".\n\n" +
+        `Сменить: /clips <число> (0-${MAX_CLIP_SCENES}).\n\n` +
+        "Клип делается из уже согласованной картинки сцены — она идёт его " +
+        "первым кадром, поэтому стиль не «уплывает». Оживляются в первую " +
+        "очередь хук и финал: там движение важнее всего. Клип — самая дорогая " +
+        "часть сцены, дороже картинки и озвучки вместе, поэтому по умолчанию " +
+        "их нет.\n\n" +
+        "Модель для этого выбирается отдельно: /vidmodel",
+    );
+    return;
+  }
+
+  if (
+    !Number.isInteger(requested) ||
+    requested < 0 ||
+    requested > MAX_CLIP_SCENES
+  ) {
+    await ctx.reply(
+      `Нужно целое число от 0 до ${MAX_CLIP_SCENES}. Например: /clips 2`,
+    );
+    return;
+  }
+
+  updateSession(chatId, { clipScenes: requested });
+  await ctx.reply(
+    requested === 0
+      ? "Клипов не будет — все сцены останутся картинками."
+      : `Оживляю ${requested} сцен(ы): ${clipCostNote(requested)}.`,
+  );
+});
+
+// Модель оживления кадра. Отдельная команда, а не кнопка в диалоге: слаги
+// моделей Seedance в API Kie.ai я подтвердить не мог (из окружения, где
+// писался код, к api.kie.ai хода нет), поэтому здесь можно не просто выбрать
+// модель, а проверить пробным запросом, какой слаг аккаунт вообще принимает.
+async function probeVideoModels(ctx: Context): Promise<void> {
+  await ctx.reply(
+    "Проверяю слаги моделей пробным запросом — это займёт до пары минут " +
+      "на модель. Успешная проверка стоит как один короткий клип.",
+  );
+  const lines: string[] = [];
+  for (const spec of VIDEO_MODELS) {
+    const result = await probeKieTask({
+      model: spec.model,
+      input: spec.buildInput(
+        buildClipPrompt("проверка связи"),
+        config.characterReferenceUrl,
+        // Минимальная длина: проверяем слаг, а не качество.
+        1,
+      ),
+      timeoutMs: 120_000,
+    });
+    lines.push(
+      `${result.ok ? "✅" : "❌"} ${spec.title} (\`${spec.model}\`) — ${result.detail}`,
+    );
+  }
+  const working = VIDEO_MODELS.length
+    ? "\n\nРабочий слаг впишите в KIE_VIDEO_MODEL в .env на сервере — тогда " +
+      "реестр вообще не понадобится."
+    : "";
+  await ctx.reply(lines.join("\n") + working, { parse_mode: "Markdown" });
+}
+
+bot.command("vidmodel", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const argument = ctx.match.trim();
+
+  if (argument === "probe") {
+    await withGeneration(ctx, chatId, () => probeVideoModels(ctx));
+    return;
+  }
+
+  if (argument) {
+    const spec = VIDEO_MODELS.find((item) => item.key === argument);
+    if (!spec) {
+      await ctx.reply(
+        `Не знаю ключ «${argument}». Доступны: ` +
+          VIDEO_MODELS.map((item) => item.key).join(", "),
+      );
+      return;
+    }
+    updateSession(chatId, { videoModel: spec.key });
+    await ctx.reply(`Оживляю кадры моделью ${spec.title}.`);
+    return;
+  }
+
+  const current = getSession(chatId).videoModel ?? DEFAULT_VIDEO_MODEL_KEY;
+  const keyboard = new InlineKeyboard();
+  for (const spec of VIDEO_MODELS) {
+    keyboard
+      .text(
+        `${spec.key === current ? "⭐ " : ""}${spec.title}`,
+        `vidmodel_${spec.key}`,
+      )
+      .row();
+  }
+  await ctx.reply(
+    "Чем оживлять кадры?\n\n" +
+      VIDEO_MODELS.map((spec) => `• ${spec.title} — ${spec.note}`).join("\n") +
+      (config.kieVideoModel
+        ? `\n\nСейчас всё перебивает KIE_VIDEO_MODEL из .env: \`${config.kieVideoModel}\`.`
+        : "\n\nСлаги моделей не проверены на вашем аккаунте. Проверить " +
+          "пробным запросом: /vidmodel probe"),
+    { reply_markup: keyboard, parse_mode: "Markdown" },
   );
 });
 
@@ -1628,6 +1797,13 @@ bot.callbackQuery(/^imgmodel_(.+)$/, async (ctx) => {
   updateSession(chatId, { imageModel: spec.key });
   await ctx.reply(`Рисую моделью ${spec.title}.`);
   await runImagesStep(ctx, chatId);
+});
+
+bot.callbackQuery(/^vidmodel_(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const spec = getVideoModel(ctx.match[1]);
+  updateSession(ctx.chat!.id, { videoModel: ctx.match[1] });
+  await ctx.reply(`Оживляю кадры моделью ${spec.title}.`);
 });
 
 bot.callbackQuery("script_edit", async (ctx) => {

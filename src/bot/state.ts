@@ -33,6 +33,11 @@ export interface SceneOverlay {
   widthPercent: number;
 }
 
+export interface SceneClip {
+  clipFileName: string;
+  clipDurationInFrames: number;
+}
+
 export interface SceneAudio {
   audioFileName: string;
   durationInFrames: number;
@@ -67,12 +72,18 @@ export interface Session {
   // Кэш готовых озвучек: при повторе сборки после сбоя уже озвученные
   // сцены не переозвучиваются (и не оплачиваются) заново.
   audio?: SceneAudio[];
+  // То же самое для клипов — они самая дорогая часть сцены.
+  clips?: (SceneClip | undefined)[];
   // Голос, модель озвучки и модель картинок — настройки, а не часть диалога:
   // переопределяют .env и живут между роликами (/new их не трёт).
   voice?: string;
   ttsModel?: string;
   ttsProvider?: "kie" | "elevenlabs";
   imageModel?: string;
+  // Модель оживления кадра (команда /vidmodel): ключ из VIDEO_MODELS.
+  videoModel?: string;
+  // Сколько сцен ролика оживлять клипом (команда /clips). 0 — ни одной.
+  clipScenes?: number;
   // Модель, которая пишет сценарий (команда /model): ключ из SCRIPT_MODELS
   // либо слаг OpenRouter, введённый руками.
   scriptModel?: string;
@@ -145,6 +156,8 @@ export function resetSession(chatId: number): void {
     ttsModel,
     ttsProvider,
     imageModel,
+    videoModel,
+    clipScenes,
     scriptModel,
     maxVideoSeconds,
   } = getSession(chatId);
@@ -154,6 +167,8 @@ export function resetSession(chatId: number): void {
     ttsModel,
     ttsProvider,
     imageModel,
+    videoModel,
+    clipScenes,
     scriptModel,
     maxVideoSeconds,
   };

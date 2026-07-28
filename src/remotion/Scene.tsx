@@ -1,7 +1,9 @@
 import React from "react";
 import {
   AbsoluteFill,
+  Freeze,
   Img,
+  OffthreadVideo,
   interpolate,
   spring,
   staticFile,
@@ -71,6 +73,11 @@ interface SceneProps {
   imageFileName?: string;
   imageWidth?: number;
   imageHeight?: number;
+  // Оживлённая версия картинки. Есть клип — в карточке играет он; картинка
+  // при этом всё равно нужна: она задаёт пропорции карточки и из неё собран
+  // зум-блюр на входе.
+  clipFileName?: string;
+  clipDurationInFrames?: number;
   sceneIndex: number;
   // Кроссфейд с предыдущей сценой: сколько кадров проявляется вся сцена
   // целиком, включая фон. У первой сцены — 0.
@@ -92,6 +99,8 @@ export const Scene: React.FC<SceneProps> = ({
   imageFileName,
   imageWidth,
   imageHeight,
+  clipFileName,
+  clipDurationInFrames,
   sceneIndex,
   fadeInFrames,
   visualDuration,
@@ -326,10 +335,31 @@ export const Scene: React.FC<SceneProps> = ({
       >
         {imageFileName ? (
           <>
-            <Img
-              src={staticFile(`images/${imageFileName}`)}
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
+            {clipFileName ? (
+              // Оживлённый кадр. Клип короче сцены (обычно 2 с против трёх), и
+              // остаток сцены мы подмораживаем на его последнем кадре, а не
+              // повторяем с начала: повтор виден как рывок, а замершая сцена
+              // читается как «движение улеглось». Звук клипа выключен — у нас
+              // своя озвучка.
+              //
+              // Первый кадр клипа — это ровно та картинка сцены, из которой он
+              // сделан, поэтому подмена картинки клипом не видна на стыке.
+              <Freeze
+                frame={Math.max((clipDurationInFrames ?? 1) - 1, 0)}
+                active={(f) => f >= (clipDurationInFrames ?? Infinity)}
+              >
+                <OffthreadVideo
+                  src={staticFile(`clips/${clipFileName}`)}
+                  muted
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              </Freeze>
+            ) : (
+              <Img
+                src={staticFile(`images/${imageFileName}`)}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            )}
             {/* Стопка копий с растущим масштабом поверх картинки — так
                 собирается зум-блюр. К концу входа копии гаснут, и остаётся
                 чистый кадр. */}

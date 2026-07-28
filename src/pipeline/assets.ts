@@ -2,8 +2,9 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Outro, Scene, VideoData } from "../types";
-import { getAudioDurationInSeconds } from "./audioDuration";
+import { getAudioDurationInSeconds, getClipDurationInSeconds } from "./audioDuration";
 import { config } from "./config";
+import { generateSceneClip } from "./generateClip";
 import {
   generateSceneImage,
   NO_TEXT_RULE,
@@ -18,6 +19,7 @@ import { wordsForScene } from "./wordTimings";
 export const PUBLIC_AUDIO_DIR = path.resolve("public/audio");
 export const PUBLIC_IMAGES_DIR = path.resolve("public/images");
 export const PUBLIC_OVERLAYS_DIR = path.resolve("public/overlays");
+export const PUBLIC_CLIPS_DIR = path.resolve("public/clips");
 export const PUBLIC_MUSIC_DIR = path.resolve("public/music");
 export const MUSIC_LIBRARY_DIR = path.resolve("assets/music");
 export const DATA_FILE = path.resolve("data/video-data.json");
@@ -33,6 +35,7 @@ export async function ensureDirs(): Promise<void> {
   await mkdir(PUBLIC_AUDIO_DIR, { recursive: true });
   await mkdir(PUBLIC_IMAGES_DIR, { recursive: true });
   await mkdir(PUBLIC_OVERLAYS_DIR, { recursive: true });
+  await mkdir(PUBLIC_CLIPS_DIR, { recursive: true });
   await mkdir(PUBLIC_MUSIC_DIR, { recursive: true });
   await mkdir(path.dirname(DATA_FILE), { recursive: true });
 }
@@ -159,6 +162,45 @@ export async function generateSceneIllustration(
     resultUrl,
     imageWidth: size?.width,
     imageHeight: size?.height,
+  };
+}
+
+/**
+ * Оживляет картинку сцены и возвращает поля для Scene. Ничего не бросает:
+ * генерация клипа умеет не удаваться (см. generateSceneClip), и тогда сцена
+ * просто остаётся картинкой.
+ */
+export async function generateSceneAnimation(
+  index: number,
+  voiceoverText: string,
+  imageUrl: string,
+  seconds: number = config.clipSeconds,
+  modelKey?: string,
+): Promise<
+  { clipFileName: string; clipDurationInFrames: number } | undefined
+> {
+  const clip = await generateSceneClip(
+    index,
+    voiceoverText,
+    imageUrl,
+    seconds,
+    modelKey,
+  );
+  if (!clip) return undefined;
+
+  // Длину меряем у файла, а не берём из запроса: модели округляют
+  // длительность по-своему, а по этому числу решается, с какого кадра
+  // подмораживать последний кадр клипа.
+  const actualSeconds = await getClipDurationInSeconds(
+    path.join(PUBLIC_CLIPS_DIR, clip.clipFileName),
+    seconds,
+  );
+  return {
+    clipFileName: clip.clipFileName,
+    clipDurationInFrames: Math.max(
+      Math.round(actualSeconds * config.fps),
+      1,
+    ),
   };
 }
 

@@ -8,6 +8,7 @@ deploy.log
 public/audio/*.mp3
 public/images/*.png
 public/overlays/*.png
+public/clips/*.mp4
 public/music/*
 data/video-data.json
 

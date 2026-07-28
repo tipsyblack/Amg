@@ -33,6 +33,9 @@ bot.command('clonemore', (ctx) => { hits.push(['clonemore', ctx.match]); });
 bot.command('start', (ctx) => { hits.push(['start', ctx.match]); });
 bot.command('model', (ctx) => { hits.push(['model', ctx.match]); });
 bot.command('ttsmodel', (ctx) => { hits.push(['ttsmodel', ctx.match]); });
+bot.command('vidmodel', (ctx) => { hits.push(['vidmodel', ctx.match]); });
+bot.command('clips', (ctx) => { hits.push(['clips', ctx.match]); });
+bot.command('clone', (ctx) => { hits.push(['clone', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -97,5 +100,34 @@ check(
 // 8) Слаг модели содержит слэш — middleware не должен принять его за команду.
 await bot.handleUpdate(upd('anthropic/claude-opus-5'));
 check('слаг без ведущего слэша — обычный текст', hits.at(-1)?.[0] === 'fallback');
+
+// 9) /vidmodel — третья команда на «model». Проверяем именно её, а не только
+// пару /model + /ttsmodel: суффикс, а не префикс, и перепутать их дороже
+// всего — это три разных счёта за генерацию.
+await bot.handleUpdate(upd('/vidmodel'));
+check('/vidmodel не путается с /model', hits.at(-1)?.[0] === 'vidmodel', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/vidmodel probe'));
+check(
+  '/vidmodel probe: аргумент разобран',
+  hits.at(-1)?.[0] === 'vidmodel' && hits.at(-1)?.[1] === 'probe',
+  JSON.stringify(hits.at(-1)),
+);
+await bot.handleUpdate(upd('/model'));
+check('/model после /vidmodel по-прежнему своя', hits.at(-1)?.[0] === 'model');
+
+// 10) /clips и /clone: общий префикс «cl», и /clips ещё и похожа на /clone
+// глазами. Проверяем все три команды семейства.
+await bot.handleUpdate(upd('/clips'));
+check('/clips распознана', hits.at(-1)?.[0] === 'clips', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/clips 2'));
+check(
+  '/clips с числом: аргумент разобран',
+  hits.at(-1)?.[0] === 'clips' && hits.at(-1)?.[1] === '2',
+  JSON.stringify(hits.at(-1)),
+);
+await bot.handleUpdate(upd('/clone'));
+check('/clone не путается с /clips', hits.at(-1)?.[0] === 'clone', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/clonemore'));
+check('/clonemore не путается с /clips', hits.at(-1)?.[0] === 'clonemore');
 
 process.exit(fails === 0 ? 0 : 1);

@@ -43,6 +43,14 @@ export const sceneSchema = z.object({
   // не обрезать изображение, если модель вернула не вертикаль.
   imageWidth: z.number().int().positive().optional(),
   imageHeight: z.number().int().positive().optional(),
+  // Оживлённая версия картинки — файл в public/clips/. Если он есть, карточка
+  // показывает клип вместо картинки. Картинку при этом не выбрасываем: клип
+  // сделан из неё, она задаёт пропорции карточки и остаётся запасным вариантом.
+  clipFileName: z.string().optional(),
+  // Сколько кадров длится сам клип. Сцена обычно длиннее его (клип 2 с,
+  // сцена около трёх), и по этому числу Scene.tsx понимает, с какого момента
+  // подморозить последний кадр вместо повтора с начала.
+  clipDurationInFrames: z.number().int().positive().optional(),
   durationInFrames: z.number().int().positive(),
   // Объект поверх картинки (не заменяет её).
   overlay: overlaySchema.optional(),

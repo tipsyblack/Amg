@@ -6,6 +6,7 @@ import {
   buildOutro,
   sceneWithCharacter,
   ensureDirs,
+  generateSceneAnimation,
   generateSceneAudio,
   generateSceneIllustration,
   fitToBudget,
@@ -14,6 +15,7 @@ import {
 } from "./assets";
 import { config } from "./config";
 import { generateDescription } from "./generateDescription";
+import { clipSceneIndexes } from "./generateClip";
 import { generateCheckedScript } from "./generateScript";
 import {
   generateSceneOverlay,
@@ -39,6 +41,11 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   // Ссылка на картинку предыдущей сцены передаётся следующей генерации как
   // референс — так окружение и палитра держатся из сцены в сцену.
   let previousSceneUrl: string | undefined;
+  // Какие сцены оживляем клипом. Считаем заранее: список зависит от общего
+  // числа сцен, а решение нужно уже внутри цикла.
+  const animated = new Set(
+    clipSceneIndexes(script.scenes.length, config.clipScenes),
+  );
 
   for (let i = 0; i < script.scenes.length; i++) {
     const scriptScene = script.scenes[i];
@@ -58,6 +65,20 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       withCharacter,
     );
     previousSceneUrl = illustration.resultUrl;
+
+    // Оживление кадра: клип делается из только что нарисованной картинки, она
+    // идёт его первым кадром. Ссылку берём ту, что вернул Kie.ai — вход он
+    // принимает только по URL, а локальный файл ему не отдать.
+    const clip = animated.has(i)
+      ? await generateSceneAnimation(
+          i,
+          scriptScene.voiceoverText,
+          illustration.resultUrl,
+        )
+      : undefined;
+    if (animated.has(i) && !clip) {
+      console.warn(`Сцена ${i + 1} осталась картинкой: клип не сгенерировался`);
+    }
 
     // Появляющийся объект: рисуется отдельно и ложится поверх этой же
     // картинки. Не получился — сцена собирается без него, ролик не страдает.
@@ -94,6 +115,8 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       imageFileName: illustration.imageFileName,
       imageWidth: illustration.imageWidth,
       imageHeight: illustration.imageHeight,
+      clipFileName: clip?.clipFileName,
+      clipDurationInFrames: clip?.clipDurationInFrames,
       durationInFrames,
       words,
       overlay,
