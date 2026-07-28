@@ -100,6 +100,19 @@ check(
   motions.every((m) => !m.library || m.exit === "none"),
 );
 
+console.log("\n=== появления, закрывающие кадр ===");
+// Зум-блюр приходит во весь экран, рваная шторка вырезает сцену по краю —
+// таким входам не нужен ни кроссфейд, ни уход предыдущей сцены. Иначе в кадре
+// одновременно идут два движения: на рендере уходящая карточка мялась прямо
+// под наползающим рваным краем.
+const { coversFrame } = await import("../src/remotion/transitions.ts");
+check("зум-блюр закрывает кадр", coversFrame({ entry: "zoomIn", exit: "none", sfx: "snap" }) === true);
+check("рваная шторка закрывает кадр", coversFrame({ entry: "tornWipe", exit: "none", sfx: "snap" }) === true);
+check("обычное появление — нет", coversFrame({ entry: "fade", exit: "none", sfx: "snap" }) === false);
+const covering = motions.filter((m) => coversFrame(m));
+check("такие появления есть в цикле", covering.length >= 2, `${covering.length} из ${motions.length}`);
+check("но не большинство", covering.length * 2 < motions.length, String(covering.length));
+
 console.log("\n=== звуки стыков: файлы есть и они резкие ===");
 // Звуки на стыке должны быть щелчками и хлопками, а не наплывами: атака в
 // единицы миллисекунд и короткий спад. Проверяем по самим файлам, потому что

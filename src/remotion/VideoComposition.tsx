@@ -3,10 +3,17 @@ import { AbsoluteFill, Audio, Sequence, staticFile } from "remotion";
 import type { CalculateMetadataFunction } from "remotion";
 import type { VideoData } from "../types";
 import { CutTransition } from "./CutTransition";
+import { PersistentOverlay } from "./PersistentOverlay";
 import { Scene } from "./Scene";
 import { TransitionBlur } from "./TransitionBlur";
 import { MIX } from "./mix";
-import { sceneMotion, transitionFrames } from "./transitions";
+import { coversFrame, sceneMotion, transitionFrames } from "./transitions";
+
+// Сколько сквозной объект держится уже на новой сцене и сколько гаснет.
+// Держать дольше секунды нельзя: предмет из прошлой сцены быстро перестаёт
+// быть уместным, а связка двух кадров читается почти сразу.
+const PERSIST_HOLD_SECONDS = 0.9;
+const PERSIST_FADE_SECONDS = 0.35;
 
 export const calculateVideoMetadata: CalculateMetadataFunction<
   VideoData
@@ -32,6 +39,13 @@ export const VideoComposition: React.FC<VideoData> = ({
   motionBlurEnabled = true,
   subtitlesEnabled = true,
 }) => {
+  // Начала сцен считаем заранее: они нужны и в самой раскладке, и в слое
+  // сквозных объектов, который рисуется отдельно и позже.
+  const starts: number[] = [];
+  scenes.reduce((acc, scene) => {
+    starts.push(acc);
+    return acc + scene.durationInFrames;
+  }, 0);
   let startFrame = 0;
 
   return (
@@ -72,6 +86,8 @@ export const VideoComposition: React.FC<VideoData> = ({
         const exitingLibrary = isLast
           ? undefined
           : sceneMotion(index).library;
+        // Следующая сцена сама закрывает кадр — своего ухода этой не нужно.
+        const nextCovers = !isLast && coversFrame(sceneMotion(index + 1));
         const enteringLibrary =
           index === 0 ? undefined : sceneMotion(index - 1).library;
         const exitStartFrame = isLast
@@ -98,7 +114,12 @@ export const VideoComposition: React.FC<VideoData> = ({
                 >
                   <Scene
                     words={subtitlesEnabled ? scene.words : undefined}
-                    overlay={scene.overlay}
+                    // Сквозной объект рисуется отдельным слоем поверх
+                    // обеих сцен, а не внутри этой — иначе он ушёл бы вместе
+                    // с ней ровно тогда, когда должен остаться.
+                    overlay={
+                      scene.overlay?.acrossCut ? undefined : scene.overlay
+                    }
                     imageFileName={scene.imageFileName}
                     imageWidth={scene.imageWidth}
                     imageHeight={scene.imageHeight}
@@ -107,7 +128,7 @@ export const VideoComposition: React.FC<VideoData> = ({
                     visualDuration={visualDuration}
                     exitStartFrame={exitStartFrame}
                     plainEntry={Boolean(enteringLibrary)}
-                    plainExit={Boolean(exitingLibrary)}
+                    plainExit={Boolean(exitingLibrary) || nextCovers}
                   />
                 </TransitionBlur>
               </CutTransition>
@@ -132,6 +153,36 @@ export const VideoComposition: React.FC<VideoData> = ({
               </Sequence>
             )}
           </React.Fragment>
+        );
+      })}
+
+      {/* Сквозные объекты — последними в дереве, то есть поверх всех сцен.
+          Внутри карты сцен они не работали: следующая сцена — это Sequence
+          ниже по дереву, она рисуется выше и закрывала объект ровно на том
+          стыке, который он должен пережить. */}
+      {scenes.map((scene, index) => {
+        const overlay = scene.overlay;
+        if (!overlay?.acrossCut || index === scenes.length - 1) return null;
+        const appearFrame = Math.round((overlay.startMs / 1000) * fps);
+        const total = Math.max(
+          scene.durationInFrames -
+            appearFrame +
+            transitionFrames(sceneMotion(index), fps) +
+            Math.round(PERSIST_HOLD_SECONDS * fps),
+          1,
+        );
+        return (
+          <Sequence
+            key={`persist-${index}`}
+            from={starts[index] + appearFrame}
+            durationInFrames={total}
+          >
+            <PersistentOverlay
+              overlay={overlay}
+              fadeOutFrames={Math.round(PERSIST_FADE_SECONDS * fps)}
+              totalFrames={total}
+            />
+          </Sequence>
         );
       })}
     </AbsoluteFill>

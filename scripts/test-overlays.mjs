@@ -151,4 +151,34 @@ check(
 
 rmSync(dir, { recursive: true, force: true });
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
+console.log("\n=== появляющийся объект доживает до сборки ===");
+// Баг, который это ловит: sanitizeScript пересобирал сцену поле за полем и
+// не переписывал overlay. Сценарист его предлагал, а в ролике объекта не было
+// никогда — и заметить это по коду сборки было нельзя, там всё правильно.
+const { generateCheckedScript } = await import("../src/pipeline/generateScript.ts");
+const scriptWithOverlay = {
+  title: "Тест",
+  scenes: [
+    { caption: "ХУК", voiceoverText: "Радиатор размером с полспутника сбрасывает тепло.", overlay: { object: "спутниковый радиатор", word: "радиатор", acrossCut: true } },
+    { caption: "СЕРЕДИНА", voiceoverText: "В вакууме тепло уносить нечем, остаётся излучение.", overlay: { object: "монета", word: "излучение" } },
+    { caption: "ФИНАЛ", voiceoverText: "Ещё больше такого — в профиле." },
+  ],
+};
+globalThis.fetch = async () => new Response(
+  JSON.stringify({ choices: [{ message: { content: JSON.stringify(scriptWithOverlay) } }] }),
+  { status: 200, headers: { "content-type": "application/json" } },
+);
+const { script: cleaned } = await generateCheckedScript("бриф");
+check("объект пережил чистку сценария", cleaned.scenes[0].overlay?.object === "спутниковый радиатор", JSON.stringify(cleaned.scenes[0].overlay));
+check("слово появления сохранено", cleaned.scenes[0].overlay?.word === "радиатор");
+check("признак сквозного объекта сохранён", cleaned.scenes[0].overlay?.acrossCut === true);
+check("объект второй сцены тоже на месте", cleaned.scenes[1].overlay?.object === "монета");
+check("сцена без объекта его и не получила", cleaned.scenes[2].overlay === undefined);
+
+console.log("\n=== схема принимает сквозной объект ===");
+const { overlaySchema: schema } = await import("../src/types.ts");
+const across = schema.safeParse({ fileName: "o.png", startMs: 500, anchor: "topRight", widthPercent: 30, acrossCut: true });
+check("acrossCut проходит валидацию", across.success, across.success ? "" : JSON.stringify(across.error.issues[0]));
+check("без него тоже валидно", schema.safeParse({ fileName: "o.png", startMs: 0, anchor: "center", widthPercent: 30 }).success);
+
 process.exit(fails === 0 ? 0 : 1);

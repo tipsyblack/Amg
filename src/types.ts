@@ -13,6 +13,10 @@ export const overlaySchema = z.object({
   anchor: z.enum(["topLeft", "topRight", "bottomLeft", "bottomRight", "center"]),
   // Ширина в процентах от ширины карточки.
   widthPercent: z.number().positive().max(100),
+  // Объект переживает стык: остаётся неподвижно висеть, пока картинка под ним
+  // меняется. В референсе так связаны две сцены — знак вопроса из воды стоит
+  // на месте, а фон под ним сменяется целиком.
+  acrossCut: z.boolean().optional(),
 });
 
 export const sceneSchema = z.object({

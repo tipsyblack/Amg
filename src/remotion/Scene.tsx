@@ -20,7 +20,7 @@ import {
   REF_WIDTH,
   cardAspect,
 } from "./layout";
-import { sceneMotion } from "./transitions";
+import { coversFrame, sceneMotion } from "./transitions";
 import type { Overlay as OverlayData } from "../types";
 
 // Шрифт грузим здесь же: им набраны субтитры, а в самой сцене остался только
@@ -45,6 +45,15 @@ const SPIN_FROM_DEG = -9;
 const SHUFFLE_COPIES = 2;
 const SHUFFLE_STEP_SECONDS = 0.05;
 const SHUFFLE_LIFE_SECONDS = 0.22;
+// Зум-блюр: с какого масштаба приходит карточка (2.2 — она перекрывает кадр
+// целиком, то есть картинка идёт «во весь экран», как в референсе) и из
+// скольких копий собирается смаз. Настоящий радиальный блюр в CSS взять
+// неоткуда: filter: blur() размывает равномерно и даёт мутное пятно вместо
+// полос от центра. Классический приём — стопка копий с растущим масштабом,
+// каждая с малой прозрачностью; шесть копий уже читаются как полосы.
+const ZOOM_FROM_SCALE = 2.2;
+const ZOOM_BLUR_LAYERS = 6;
+const ZOOM_BLUR_SPREAD = 0.16;
 // Наезда на картинку нет намеренно. В референсе иллюстрация стоит мёртво —
 // я мерил покадровую разницу внутри рамки, 0.00-0.15 из 255 на протяжении
 // полутора секунд. Вся жизнь кадра там в стыках и в маскоте, а не в ползающей
@@ -154,6 +163,14 @@ export const Scene: React.FC<SceneProps> = ({
   } else if (motion.entry === "swing") {
     cardRotate = interpolate(entrance, [0, 1], [-13, 0]);
     cardScale = interpolate(entrance, [0, 1], [0.84, 1]);
+  } else if (motion.entry === "zoomIn") {
+    // Приходит во весь кадр и садится в рамку. Рамку и скругление показываем
+    // только в конце: на большом масштабе они всё равно за краями кадра, а
+    // проявление их «собирает» рамку вокруг картинки, как в референсе.
+    cardScale = interpolate(entrance, [0, 1], [ZOOM_FROM_SCALE, 1]);
+    cardX = 0;
+    cardY = 0;
+    cardOpacity = 1;
   } else if (motion.entry === "spin" || motion.entry === "shuffle") {
     // Карточка влетает крупнее кадра и повёрнутой, с промахом мимо центра, и
     // раскручивается на место — как брошенная на стол карта. У тасовки то же
@@ -164,6 +181,13 @@ export const Scene: React.FC<SceneProps> = ({
     cardY = interpolate(entrance, [0, 1], [40, 0]);
     cardOpacity = 1;
   }
+
+  // Прогресс входа по времени, а не по пружине: у блюра и шторки должен быть
+  // ровный ход, пружина же в начале рвётся вперёд.
+  const entryProgress = interpolate(frame, [0, Math.max(fadeInFrames, 1)], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   // ——— уход карточки (играет под проявляющейся следующей сценой) ———
   if (exit > 0 && !plainExit) {
@@ -190,6 +214,43 @@ export const Scene: React.FC<SceneProps> = ({
       cardOpacity *= interpolate(exit, [0, 1], [1, 0.15]);
     }
   }
+
+  // Сила смаза: максимальна в начале входа и сходит на нет к посадке.
+  const zoomBlur =
+    motion.entry === "zoomIn" && !plainEntry
+      ? interpolate(entryProgress, [0, 0.75], [1, 0], {
+          extrapolateRight: "clamp",
+        })
+      : 0;
+
+  // Рваная шторка. Прямую границу дал бы обычный wipe из библиотеки, а нужна
+  // неровная — как надрыв бумаги. Собираем многоугольник, у которого граница
+  // едет вниз, а её точки смещены псевдослучайно: синус от индекса даёт
+  // повторяемый рисунок без Math.random, который в рендере дал бы разный кадр
+  // при каждом прогоне.
+  const tornClip =
+    motion.entry === "tornWipe" && !plainEntry && entryProgress < 1
+      ? (() => {
+          // Открываем снизу вверх, как в референсе: видимая часть — под
+          // границей, поэтому граница едет от 115% (ничего не видно) к -15%
+          // (видно всё), а точки по пути смещены.
+          // Мелкая неровность, а не пила: с крупной амплитудой край читался
+          // языками пламени. Три синуса разной частоты дают рваный,
+          // неповторяющийся на глаз профиль.
+          const steps = 40;
+          const points: string[] = [];
+          for (let i = 0; i <= steps; i++) {
+            const x = (i / steps) * 100;
+            const jitter =
+              Math.sin(i * 1.9) * 1.6 +
+              Math.sin(i * 5.3) * 1.1 +
+              Math.sin(i * 11.7) * 0.6;
+            const y = 108 - entryProgress * 116 + jitter;
+            points.push(`${x}% ${y}%`);
+          }
+          return `polygon(${points.join(", ")}, 100% 100%, 0% 100%)`;
+        })()
+      : undefined;
 
   // Перекос применяем отдельно: он нужен только смятию.
   const crumpleSkew =
@@ -264,10 +325,31 @@ export const Scene: React.FC<SceneProps> = ({
         }}
       >
         {imageFileName ? (
-          <Img
-            src={staticFile(`images/${imageFileName}`)}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
+          <>
+            <Img
+              src={staticFile(`images/${imageFileName}`)}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+            {/* Стопка копий с растущим масштабом поверх картинки — так
+                собирается зум-блюр. К концу входа копии гаснут, и остаётся
+                чистый кадр. */}
+            {zoomBlur > 0 &&
+              Array.from({ length: ZOOM_BLUR_LAYERS }, (_, i) => (
+                <Img
+                  key={`blur-${i}`}
+                  src={staticFile(`images/${imageFileName}`)}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    opacity: zoomBlur / ZOOM_BLUR_LAYERS,
+                    transform: `scale(${1 + ((i + 1) / ZOOM_BLUR_LAYERS) * ZOOM_BLUR_SPREAD * zoomBlur})`,
+                  }}
+                />
+              ))}
+          </>
         ) : (
           <div
             style={{
@@ -296,11 +378,18 @@ export const Scene: React.FC<SceneProps> = ({
       style={{
         backgroundColor: "#ffffff",
         alignItems: "center",
+        // Рваная шторка вырезает сцену по неровной границе. Прозрачностью при
+        // этом не играем: два растворяющихся кадра под рваным краем дали бы
+        // грязь вместо надрыва.
+        clipPath: tornClip,
         // Отступ считаем в пикселях от высоты кадра. Процентный padding в CSS
         // отмеряется от ШИРИНЫ контейнера — на вертикальном кадре это давало
         // почти вдвое меньший отступ, и карточка стояла выше, чем в референсе.
         paddingTop: (CARD_TOP_PERCENT / 100) * height,
-        opacity: sceneOpacity,
+        // Кроссфейд нужен только тем появлениям, которые не закрывают кадр
+        // сами. Зум-блюр приходит во весь экран, и проявление делало его
+        // полупрозрачным: под ним просвечивала уходящая сцена.
+        opacity: coversFrame(motion) && !plainEntry ? 1 : sceneOpacity,
       }}
     >
       {/* Акценты под карточкой: они украшение, а не содержание. */}

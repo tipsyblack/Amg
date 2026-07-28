@@ -14,7 +14,13 @@ export type EntryStyle =
   | "punch"
   | "swing"
   | "spin"
-  | "shuffle";
+  | "shuffle"
+  // Новая сцена приходит во весь кадр, размазанная зум-блюром, и садится в
+  // рамку. В референсе это рабочая лошадка — три стыка из девяти.
+  | "zoomIn"
+  // Рваная шторка: новая картинка наползает на старую неровным краем, как
+  // разлив чернил или надрыв бумаги.
+  | "tornWipe";
 // squeeze — схлопывание по горизонтали: карточка сжимается в вертикальную
 // полоску и исчезает. В референсе из-за неё выходит маскот; маскота у нас
 // пока нет, но само схлопывание работает и само по себе.
@@ -54,17 +60,20 @@ export interface SceneMotion {
 // (первый стык — удар хука, поэтому у сцены 1 удара уже нет).
 const CYCLE: SceneMotion[] = [
   { entry: "spin", exit: "squeeze", sfx: "snap" },
-  { entry: "shuffle", exit: "shrink", sfx: "clap" },
+  // Зум-блюр встречается в референсе чаще прочих, поэтому в цикле он дважды.
+  // Звук здесь хлопок, а не удар: первым стыком идёт хук с ударом, и два удара
+  // подряд слышатся как один смазанный.
+  { entry: "zoomIn", exit: "none", sfx: "clap" },
   // Стык 2→3 — шторка: своего ухода у карточки нет, его делает переход.
   { entry: "slide", exit: "none", sfx: "click", library: "wipe" },
   // Мягкий стык: картинка меняется в неподвижной рамке. В референсе он один
   // на несколько резких — так же и здесь. Звук берём самый лёгкий из четырёх:
   // удар или хлопок на растворении звучали бы громче, чем выглядит движение.
   { entry: "fade", exit: "none", sfx: "snap", soft: true },
-  { entry: "spin", exit: "crumple", sfx: "impact" },
-  { entry: "swing", exit: "none", sfx: "click", library: "flip" },
-  { entry: "shuffle", exit: "squeeze", sfx: "snap" },
-  { entry: "punch", exit: "driftUp", sfx: "clap" },
+  { entry: "shuffle", exit: "crumple", sfx: "clap" },
+  { entry: "tornWipe", exit: "none", sfx: "snap" },
+  { entry: "zoomIn", exit: "squeeze", sfx: "impact" },
+  { entry: "spin", exit: "driftUp", sfx: "clap" },
 ];
 
 // Первая сцена — хук. Зритель решает за 1-2 секунды, поэтому кадр должен
@@ -84,6 +93,18 @@ export const MOTION_CYCLE_LENGTH = CYCLE.length;
 export function sceneMotion(index: number): SceneMotion {
   if (index === 0) return HOOK_MOTION;
   return CYCLE[index % CYCLE.length];
+}
+
+/**
+ * Появление, которое само закрывает кадр целиком: зум-блюр приходит во весь
+ * экран, рваная шторка вырезает сцену по краю. Такому входу не нужно ни
+ * проявление поверх предыдущей сцены, ни её собственный уход — иначе в кадре
+ * одновременно идут два разных движения и получается каша. Ровно тем же
+ * свойством обладают переходы из библиотеки, поэтому обрабатываются они
+ * одинаково.
+ */
+export function coversFrame(motion: SceneMotion): boolean {
+  return motion.entry === "zoomIn" || motion.entry === "tornWipe";
 }
 
 /**

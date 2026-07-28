@@ -10,6 +10,8 @@ interface ScriptScene {
     object: string;
     // На каком слове реплики он должен появиться.
     word?: string;
+    // Объект остаётся в кадре и после смены картинки — связывает две сцены.
+    acrossCut?: boolean;
   };
 }
 
@@ -55,9 +57,21 @@ export function stripSources(text: string): string {
 function sanitizeScript(script: GeneratedScript): GeneratedScript {
   return {
     title: stripSources(script.title ?? ""),
+    // Сцена пересобирается поле за полем, и overlay здесь терялся: он просто
+    // не переписывался в новый объект, поэтому появляющиеся объекты не доходили
+    // до сборки вообще — сценарист их предлагал, а в ролике их не было.
     scenes: script.scenes.map((scene) => ({
       caption: stripSources(scene.caption ?? ""),
       voiceoverText: stripSources(scene.voiceoverText ?? ""),
+      ...(scene.overlay?.object
+        ? {
+            overlay: {
+              object: stripSources(scene.overlay.object),
+              word: scene.overlay.word,
+              acrossCut: scene.overlay.acrossCut,
+            },
+          }
+        : {}),
     })),
   };
 }
@@ -238,7 +252,7 @@ function buildSystemPrompt(maxVideoSeconds: number): string {
 
   return `Ты — сценарист коротких вертикальных видео для соцсетей (Instagram Reels, YouTube Shorts, TikTok, VK Клипы).
 Отвечай СТРОГО валидным JSON без markdown-обёртки и без пояснений, по схеме:
-{"title": string, "scenes": [{"caption": string, "voiceoverText": string, "overlay": {"object": string, "word": string} | null}]}
+{"title": string, "scenes": [{"caption": string, "voiceoverText": string, "overlay": {"object": string, "word": string, "acrossCut": boolean} | null}]}
 
 ЖАНР: не реклама и не инструкция, а «рассказываю интересное». Зритель должен
 узнать что-то, чего не знал, и дослушать из любопытства. Хорошая тема — свежая
@@ -280,6 +294,11 @@ function buildSystemPrompt(maxVideoSeconds: number): string {
   Пиши его так, как оно стоит в реплике.
 - overlay нужен не каждой сцене: ставь null там, где называть нечего. Хорошо,
   когда объект есть примерно в половине сцен.
+- acrossCut — редкий приём: объект остаётся висеть в кадре, пока картинка под
+  ним меняется на следующую сцену. Ставь true только когда предмет связывает
+  эту сцену со следующей и в следующей всё ещё уместен (речь продолжает ту же
+  мысль). В остальных случаях false: если объект висит там, где он уже ни при
+  чём, кадр выглядит сломанным. Не больше одного такого объекта на ролик.
 - Персонажа, фон и надписи в object не описывай — только предмет.
 
 ТОН: живой разговорный, на «ты», с риторическими вопросами и обращением к
