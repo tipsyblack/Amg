@@ -26,6 +26,7 @@ import {
   CLIP_LIBRARY_DIR,
   getClipDefinition,
   libraryFileName,
+  librarySceneIndexes,
   orphanClipFiles,
   readyClipIds,
   resolveClipSelection,
@@ -447,10 +448,12 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     const overlays = session.overlays ?? [];
     // Какие сцены оживляем клипом. Клип — самая дорогая часть сцены, поэтому
     // по умолчанию их нет вовсе; включается командой /clips.
+    // Платные генерации — по счётчику /clips. Библиотечные клипы уже оплачены
+    // и идут независимо от него: держать их за тем же счётчиком было ошибкой,
+    // из-за неё при /clips 0 собранная библиотека не подставлялась никогда.
     const clipCount = session.clipScenes ?? config.clipScenes;
-    const animated = new Set(
-      clipSceneIndexes(script.scenes.length, clipCount),
-    );
+    const paid = new Set(clipSceneIndexes(script.scenes.length, clipCount));
+    const fromLibrary = new Set(librarySceneIndexes(script.scenes.length));
     const libraryReady = await readyClipIds();
     // Один и тот же жест два раза подряд выглядит как заевшая плёнка.
     const usedLibraryClips = new Set(
@@ -500,8 +503,8 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       // Оживление кадра. Первым кадром идёт уже согласованная картинка сцены,
       // поэтому подмена не видна на стыке. Готовые клипы кэшируем в сессии:
       // повторная сборка после сбоя не должна оплачивать их заново.
-      if (animated.has(i) && !clips[i]) {
-        await ctx.reply(`🎞 Оживляю сцену ${i + 1}…`);
+      if ((paid.has(i) || fromLibrary.has(i)) && !clips[i]) {
+        if (paid.has(i)) await ctx.reply(`🎞 Оживляю сцену ${i + 1}…`);
         clips[i] = await sceneClip({
           index: i,
           total: script.scenes.length,
@@ -510,6 +513,9 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
           ready: libraryReady,
           used: usedLibraryClips,
           modelKey: session.videoModel,
+          // Сцена попала сюда только из-за библиотеки — платить за неё не
+          // договаривались.
+          source: paid.has(i) ? undefined : "library",
         });
         const chosen = clips[i];
         if (chosen) {
@@ -520,7 +526,7 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
               `Взял готовый клип из библиотеки — эта сцена бесплатна.`,
             );
           }
-        } else {
+        } else if (paid.has(i)) {
           await ctx.reply(
             `Клип для сцены ${i + 1} не получился — она останется картинкой. ` +
               "Если это повторяется, проверьте слаг модели: /vidmodel",

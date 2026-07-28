@@ -417,6 +417,32 @@ check(
     !("last_frame_url" in getVideoModel("v1pro").buildInput("x", "u", 5, "u")),
 );
 
+console.log("\n--- библиотека не заперта за счётчиком платных генераций ---");
+// Настоящая ошибка из ролика пользователя: библиотека собрана, а клипы в
+// ролик не попали. Причина — я запер бесплатные библиотечные клипы за тем же
+// счётчиком /clips, который управляет ПЛАТНЫМИ генерациями, а он по умолчанию
+// нулевой. Проверяем, что эти два множества независимы.
+const { librarySceneIndexes } = await import("../src/pipeline/clipLibrary.ts");
+check(
+  "при нулевом счётчике платных сцен нет",
+  clipSceneIndexes(10, 0).length === 0,
+);
+check(
+  "но библиотечные всё равно есть",
+  librarySceneIndexes(10).length > 0,
+  JSON.stringify(librarySceneIndexes(10)),
+);
+check(
+  "и стоят они там, где и так появляется маскот — хук и финал",
+  JSON.stringify(librarySceneIndexes(10)) === "[0,9]",
+  JSON.stringify(librarySceneIndexes(10)),
+);
+check(
+  "единственная сцена — только хук, без дубля",
+  JSON.stringify(librarySceneIndexes(1)) === "[0]",
+);
+check("пустой ролик не ломает выбор", librarySceneIndexes(0).length === 0);
+
 console.log("\n--- что пересобирать ---");
 // Пересобирать все десять клипов ради трёх — это лишние деньги, поэтому
 // выбор понимает и роль, и отдельные идентификаторы.

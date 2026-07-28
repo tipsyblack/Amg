@@ -15,7 +15,7 @@ import {
 } from "./assets";
 import { config } from "./config";
 import { generateDescription } from "./generateDescription";
-import { readyClipIds } from "./clipLibrary";
+import { librarySceneIndexes, readyClipIds } from "./clipLibrary";
 import { clipSceneIndexes } from "./generateClip";
 import { generateCheckedScript } from "./generateScript";
 import {
@@ -44,9 +44,12 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   let previousSceneUrl: string | undefined;
   // Какие сцены оживляем клипом. Считаем заранее: список зависит от общего
   // числа сцен, а решение нужно уже внутри цикла.
-  const animated = new Set(
+  // Платные генерации — по счётчику /clips. Библиотечные клипы бесплатны и
+  // идут независимо от него, туда же, где и так появляется маскот.
+  const paid = new Set(
     clipSceneIndexes(script.scenes.length, config.clipScenes),
   );
+  const fromLibrary = new Set(librarySceneIndexes(script.scenes.length));
   // Что уже готово в библиотеке маскота и что из него уже занято в этом
   // ролике: два раза подряд один и тот же жест выглядит как заевшая плёнка.
   const libraryReady = await readyClipIds();
@@ -74,7 +77,8 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     // Оживление кадра: клип делается из только что нарисованной картинки, она
     // идёт его первым кадром. Ссылку берём ту, что вернул Kie.ai — вход он
     // принимает только по URL, а локальный файл ему не отдать.
-    const clip = animated.has(i)
+    const wantsClip = paid.has(i) || fromLibrary.has(i);
+    const clip = wantsClip
       ? await sceneClip({
           index: i,
           total: script.scenes.length,
@@ -82,10 +86,13 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
           imageUrl: illustration.resultUrl,
           ready: libraryReady,
           used: usedLibraryClips,
+          // Сцена попала сюда только из-за библиотеки — платить за неё не
+          // договаривались.
+          source: paid.has(i) ? undefined : "library",
         })
       : undefined;
     if (clip?.libraryId) usedLibraryClips.add(clip.libraryId);
-    if (animated.has(i) && !clip) {
+    if (paid.has(i) && !clip) {
       console.warn(`Сцена ${i + 1} осталась картинкой: клип не сгенерировался`);
     } else if (clip) {
       console.log(
