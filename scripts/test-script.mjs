@@ -294,6 +294,39 @@ check(
 );
 check("текст без JSON возвращается как есть — падение будет осмысленным", extractJson("Не могу") === "Не могу");
 
+console.log("\n=== выбор модели сценария (/model) ===");
+const models = await import("../src/pipeline/scriptModels.ts");
+const { config } = await import("../src/pipeline/config.ts");
+check("список непустой", models.SCRIPT_MODELS.length >= 2);
+check("ключи уникальны", new Set(models.SCRIPT_MODELS.map((m) => m.key)).size === models.SCRIPT_MODELS.length);
+check("у каждой модели есть слаг и подпись", models.SCRIPT_MODELS.every((m) => m.model && m.title && m.note));
+check(
+  "дефолтный ключ есть в списке",
+  models.SCRIPT_MODELS.some((m) => m.key === models.DEFAULT_SCRIPT_MODEL_KEY),
+);
+// Модель по умолчанию берёт слаг из .env, иначе OPENROUTER_MODEL перестал бы
+// работать после появления кнопок.
+check(
+  "дефолтная модель = OPENROUTER_MODEL",
+  models.getScriptModel(models.DEFAULT_SCRIPT_MODEL_KEY).model === config.openRouterModel,
+);
+check("неизвестный ключ -> дефолт", models.getScriptModel("нет").key === models.DEFAULT_SCRIPT_MODEL_KEY);
+check("пустой ключ -> дефолт", models.getScriptModel().key === models.DEFAULT_SCRIPT_MODEL_KEY);
+
+console.log("\n=== слаг для запроса ===");
+check("ничего не выбрано -> из .env", models.resolveScriptModel() === config.openRouterModel);
+check("ключ из списка -> его слаг", models.resolveScriptModel("opus") === "anthropic/claude-opus-5");
+// Ручной слаг проходит как есть: ID моделей на OpenRouter меняются чаще, чем
+// наш список, и упереться в него нельзя.
+check(
+  "произвольный слаг проходит как есть",
+  models.resolveScriptModel("x-ai/grok-9") === "x-ai/grok-9",
+);
+check(
+  "слаг, совпавший с ключом, не превращается в другую модель",
+  models.resolveScriptModel("flash") === "google/gemini-2.5-flash",
+);
+
 console.log("\n=== визуальный акцент на первой сцене ===");
 const { sceneMotion, MOTION_CYCLE_LENGTH } = await import("../src/remotion/transitions.ts");
 check("у хука своё движение", sceneMotion(0).emphasis === true);

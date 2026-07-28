@@ -52,11 +52,21 @@ check("свои профили не затронуты", state.listProfiles(111)
 check("id могут повторяться в разных чатах", state.listProfiles(222)[0].id === "p1");
 
 console.log("\n=== профили переживают сброс сессии ===");
-state.updateSession(111, { step: "busy", brief: "черновик", voice: "abc" });
+state.updateSession(111, {
+  step: "busy",
+  brief: "черновик",
+  voice: "abc",
+  scriptModel: "opus",
+});
 state.resetSession(111);
 check("шаг сброшен", state.getSession(111).step === "idle");
 check("бриф очищен", state.getSession(111).brief === undefined);
 check("голос сохранён (это настройка)", state.getSession(111).voice === "abc");
+// Настройку /model выбирают один раз, а не под каждый ролик — /new её не трёт.
+check(
+  "модель сценария сохранена (это настройка)",
+  state.getSession(111).scriptModel === "opus",
+);
 check("профили на месте", state.listProfiles(111).length === 2);
 
 console.log("\n=== удаление ===");

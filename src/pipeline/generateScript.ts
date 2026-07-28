@@ -363,10 +363,11 @@ export function extractJson(content: string): string {
 async function requestScript(
   messages: { role: string; content: string }[],
   webSearch: boolean,
+  model: string,
   jsonMode: boolean = true,
 ): Promise<ScriptResult> {
   const body: Record<string, unknown> = {
-    model: config.openRouterModel,
+    model,
     messages,
   };
   if (jsonMode) body.response_format = { type: "json_object" };
@@ -389,14 +390,14 @@ async function requestScript(
     const text = await response.text();
     if (webSearch) {
       // Плагин мог не подойти модели или тарифу — повторяем без него.
-      const fallback = await requestScript(messages, false, jsonMode);
+      const fallback = await requestScript(messages, false, model, jsonMode);
       return { ...fallback, webSearchUnavailable: true };
     }
     if (jsonMode) {
       // Модель не принимает response_format — она не единственная такая.
       // Формат ответа описан в системном промпте, так что без параметра
       // сценарий получится тоже.
-      return requestScript(messages, false, false);
+      return requestScript(messages, false, model, false);
     }
     throw new Error(`OpenRouter вернул ошибку ${response.status}: ${text}`);
   }
@@ -414,7 +415,7 @@ async function requestScript(
     parsed = JSON.parse(extractJson(content)) as GeneratedScript;
   } catch {
     throw new Error(
-      `Модель ${config.openRouterModel} вернула не JSON: ${content.slice(0, 200)}`,
+      `Модель ${model} вернула не JSON: ${content.slice(0, 200)}`,
     );
   }
   if (!parsed.scenes?.length) {
@@ -435,6 +436,8 @@ export async function generateScript(
   brief: string,
   revision?: ScriptRevision,
   maxVideoSeconds: number = config.maxVideoSeconds,
+  // Модель выбирается в боте командой /model и переопределяет .env.
+  model: string = config.openRouterModel,
 ): Promise<ScriptResult> {
   const messages: { role: string; content: string }[] = [
     { role: "system", content: buildSystemPrompt(maxVideoSeconds) },
@@ -451,7 +454,7 @@ export async function generateScript(
   }
 
   // При правках свежие материалы уже не нужны: тема выбрана, идёт доводка.
-  return requestScript(messages, config.scriptWebSearch && !revision);
+  return requestScript(messages, config.scriptWebSearch && !revision, model);
 }
 
 export interface CheckedScript extends ScriptResult {
@@ -514,8 +517,9 @@ export async function generateCheckedScript(
   brief: string,
   revision?: ScriptRevision,
   maxVideoSeconds?: number,
+  model?: string,
 ): Promise<CheckedScript> {
-  const first = await generateScript(brief, revision, maxVideoSeconds);
+  const first = await generateScript(brief, revision, maxVideoSeconds, model);
 
   const problems = scriptProblems(first.script);
   if (problems.length === 0) return { ...first, fixes: [] };
@@ -532,6 +536,7 @@ export async function generateCheckedScript(
         "Остальные сцены оставь как есть.",
     },
     maxVideoSeconds,
+    model,
   );
 
   return {

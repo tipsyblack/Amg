@@ -57,6 +57,12 @@ import {
   getImageModel,
   IMAGE_MODELS,
 } from "../pipeline/imageModels";
+import {
+  DEFAULT_SCRIPT_MODEL_KEY,
+  SCRIPT_MODELS,
+  getScriptModel,
+  resolveScriptModel,
+} from "../pipeline/scriptModels";
 import { KNOWN_VOICE_NAMES, looksLikeVoiceId, resolveVoiceId } from "../pipeline/voices";
 import type { Scene, VideoData } from "../types";
 import { downloadDriveFile } from "./drive";
@@ -248,6 +254,7 @@ async function runScriptStep(
           ? { previousScript: session.script, feedback }
           : undefined,
         session.maxVideoSeconds,
+        resolveScriptModel(session.scriptModel),
       );
       // Новый сценарий делает старые картинки и озвучки неактуальными.
       updateSession(chatId, {
@@ -592,7 +599,8 @@ bot.command(["start", "help"], async (ctx) => {
       "/cancel — сбросить текущий диалог\n" +
       "/voice — посмотреть или сменить голос озвучки\n" +
       "/voices — список голосов, доступных вашему ключу ElevenLabs\n" +
-      "/model — модель озвучки\n" +
+      "/model — модель, которая пишет сценарий\n" +
+      "/ttsmodel — модель озвучки\n" +
       "/length — лимит длины ролика в секундах\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека и генерация\n" +
@@ -845,14 +853,67 @@ bot.command("voices", async (ctx) => {
   });
 });
 
+// Модель сценария. Раньше /model означало модель ОЗВУЧКИ — она переехала в
+// /ttsmodel: моделей стало две, и «модель» без уточнения теперь естественнее
+// читается как та, что пишет текст.
 bot.command("model", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const requested = ctx.match.trim();
+  const stored = getSession(chatId).scriptModel;
+
+  if (requested) {
+    // Аргументом принимаем и ключ из списка, и произвольный слаг: ID моделей
+    // на OpenRouter меняются чаще, чем наш список.
+    updateSession(chatId, { scriptModel: requested });
+    await ctx.reply(
+      `Сценарий будет писать: ${resolveScriptModel(requested)}\n\n` +
+        "Проверить — /new и обычный бриф. Модель озвучки — /ttsmodel.",
+    );
+    return;
+  }
+
+  const keyboard = new InlineKeyboard();
+  for (const spec of SCRIPT_MODELS) {
+    keyboard
+      .text(
+        `${spec.key === (stored ?? DEFAULT_SCRIPT_MODEL_KEY) ? "⭐ " : ""}${spec.title}`,
+        `scriptmodel_${spec.key}`,
+      )
+      .row();
+  }
+
+  await ctx.reply(
+    `Сценарий сейчас пишет: ${resolveScriptModel(stored)}\n\n` +
+      SCRIPT_MODELS.map((spec) => `• ${spec.title} — ${spec.note}`).join("\n") +
+      "\n\nЦены списочные, за один сценарий целиком. Для сравнения: 15 " +
+      "картинок стоят около $1.35, так что на модели сценария экономить " +
+      "почти нечего.\n\n" +
+      "Можно задать любой слаг руками: /model <слаг с openrouter.ai/models>\n" +
+      "Модель озвучки — /ttsmodel.",
+    { reply_markup: keyboard },
+  );
+});
+
+bot.callbackQuery(/^scriptmodel_(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = ctx.chat!.id;
+  const spec = getScriptModel(ctx.match[1]);
+  updateSession(chatId, { scriptModel: spec.key });
+  await ctx.reply(
+    `Сценарий будет писать ${spec.title} (${spec.model}).\n` +
+      "Дальше — /new и бриф.",
+  );
+});
+
+bot.command("ttsmodel", async (ctx) => {
   const chatId = ctx.chat.id;
   const requested = ctx.match.trim();
   if (!requested) {
     await ctx.reply(
       `Текущая модель озвучки: ${getSession(chatId).ttsModel ?? config.kieTtsModel}\n\n` +
-        "Сменить: /model <слаг модели>\n" +
-        "Найти рабочую автоматически: /diag",
+        "Сменить: /ttsmodel <слаг модели>\n" +
+        "Найти рабочую автоматически: /diag\n" +
+        "Модель сценария — /model.",
     );
     return;
   }

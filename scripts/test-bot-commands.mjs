@@ -31,6 +31,8 @@ const hits = [];
 bot.command('tts', (ctx) => { hits.push(['tts', ctx.match]); });
 bot.command('clonemore', (ctx) => { hits.push(['clonemore', ctx.match]); });
 bot.command('start', (ctx) => { hits.push(['start', ctx.match]); });
+bot.command('model', (ctx) => { hits.push(['model', ctx.match]); });
+bot.command('ttsmodel', (ctx) => { hits.push(['ttsmodel', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -71,5 +73,29 @@ await bot.handleUpdate(upd('/clonemore', [{ type: 'bot_command', offset: 0, leng
 check('/clonemore распознана как своя команда', hits.at(-1)?.[0] === 'clonemore', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/clonemore'));
 check('/clonemore без сущностей тоже', hits.at(-1)?.[0] === 'clonemore');
+
+// 7) /model и /ttsmodel — общий префикс, как у /clone и /clonemore.
+// Порядок регистрации обратный (model раньше ttsmodel), поэтому проверяем
+// обе: перепутать их нельзя, они означают разные модели.
+await bot.handleUpdate(upd('/model'));
+check('/model без аргумента распознана', hits.at(-1)?.[0] === 'model', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/model anthropic/claude-opus-5'));
+check(
+  '/model со слагом: аргумент разобран',
+  hits.at(-1)?.[0] === 'model' && hits.at(-1)?.[1] === 'anthropic/claude-opus-5',
+  JSON.stringify(hits.at(-1)),
+);
+await bot.handleUpdate(upd('/ttsmodel'));
+check('/ttsmodel не путается с /model', hits.at(-1)?.[0] === 'ttsmodel', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/ttsmodel eleven_multilingual_v2'));
+check(
+  '/ttsmodel со слагом',
+  hits.at(-1)?.[0] === 'ttsmodel' && hits.at(-1)?.[1] === 'eleven_multilingual_v2',
+  JSON.stringify(hits.at(-1)),
+);
+
+// 8) Слаг модели содержит слэш — middleware не должен принять его за команду.
+await bot.handleUpdate(upd('anthropic/claude-opus-5'));
+check('слаг без ведущего слэша — обычный текст', hits.at(-1)?.[0] === 'fallback');
 
 process.exit(fails === 0 ? 0 : 1);
