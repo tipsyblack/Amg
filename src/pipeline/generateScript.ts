@@ -335,20 +335,41 @@ export interface ScriptResult {
 }
 
 /**
+ * Достаёт JSON из ответа модели.
+ *
+ * `response_format` — параметр из мира OpenAI, и надёжных подтверждений, что
+ * OpenRouter переводит его в нативный `output_config` для моделей Claude, нет.
+ * Если он молча игнорируется, модель охотно оборачивает JSON в ```-блок или
+ * приписывает фразу до него — и голый `JSON.parse` на этом падает. Поэтому
+ * снимаем обёртку сами и берём текст от первой `{` до последней `}`.
+ */
+export function extractJson(content: string): string {
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const text = (fenced ? fenced[1] : content).trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return text;
+  return text.slice(start, end + 1);
+}
+
+/**
  * Один запрос к OpenRouter. Веб-поиск подключается плагином: с ним модель
  * опирается на свежие материалы, а не только на свои знания — это и делает
  * темы актуальными. Если плагин недоступен на аккаунте, запрос повторяется
- * без него: лучше сценарий по памяти, чем никакого.
+ * без него: лучше сценарий по памяти, чем никакого. Точно так же повторяем
+ * без `response_format`, если модель его не принимает — формат мы всё равно
+ * задаём в промпте, а JSON достаём разбором.
  */
 async function requestScript(
   messages: { role: string; content: string }[],
   webSearch: boolean,
+  jsonMode: boolean = true,
 ): Promise<ScriptResult> {
   const body: Record<string, unknown> = {
     model: config.openRouterModel,
     messages,
-    response_format: { type: "json_object" },
   };
+  if (jsonMode) body.response_format = { type: "json_object" };
   if (webSearch) {
     body.plugins = [
       { id: "web", max_results: config.scriptWebSearchResults },
@@ -368,8 +389,14 @@ async function requestScript(
     const text = await response.text();
     if (webSearch) {
       // Плагин мог не подойти модели или тарифу — повторяем без него.
-      const fallback = await requestScript(messages, false);
+      const fallback = await requestScript(messages, false, jsonMode);
       return { ...fallback, webSearchUnavailable: true };
+    }
+    if (jsonMode) {
+      // Модель не принимает response_format — она не единственная такая.
+      // Формат ответа описан в системном промпте, так что без параметра
+      // сценарий получится тоже.
+      return requestScript(messages, false, false);
     }
     throw new Error(`OpenRouter вернул ошибку ${response.status}: ${text}`);
   }
@@ -382,7 +409,14 @@ async function requestScript(
     throw new Error("OpenRouter не вернул содержимое ответа");
   }
 
-  const parsed = JSON.parse(content) as GeneratedScript;
+  let parsed: GeneratedScript;
+  try {
+    parsed = JSON.parse(extractJson(content)) as GeneratedScript;
+  } catch {
+    throw new Error(
+      `Модель ${config.openRouterModel} вернула не JSON: ${content.slice(0, 200)}`,
+    );
+  }
   if (!parsed.scenes?.length) {
     throw new Error("Сгенерированный сценарий не содержит сцен");
   }

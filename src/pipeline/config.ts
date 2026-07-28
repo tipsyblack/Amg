@@ -27,7 +27,12 @@ const DEFAULT_CHARACTER_REFERENCE_URL =
 export const config = {
   // Сценарий — OpenRouter.
   openRouterApiKey: requireEnv("OPENROUTER_API_KEY"),
-  openRouterModel: env("OPENROUTER_MODEL") ?? "google/gemini-2.5-flash",
+  // Sonnet 5 вместо gemini-2.5-flash: сценарий — единственный шаг, где
+  // решается, будет ли ролик смотрибельным, а стоит он копейки на фоне
+  // картинок (~$0.03 против ~$1.35 за 15 картинок). Модель точнее следует
+  // нашим жёстким правилам (хук, реклама только в финале, бюджет слов),
+  // поэтому реже срабатывает авто-переписывание.
+  openRouterModel: env("OPENROUTER_MODEL") ?? "anthropic/claude-sonnet-5",
   // Веб-поиск для сценария (плагин OpenRouter). Нужен, чтобы темы были
   // актуальными, а не пересказом знаний модели: без него «свежие модели и
   // тренды» опираются на дату обучения. Стоит порядка $4 за 1000 результатов,

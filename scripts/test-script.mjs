@@ -267,6 +267,33 @@ check("запрещены проценты и «за N минут»", prompt.inc
 check("запрещено вставлять ссылки в текст", prompt.includes("Ссылки, адреса сайтов"));
 check("рекомендовано 5-7 сцен", prompt.includes("оптимально 5-7"));
 
+console.log("\n=== ответ модели разбирается, даже если это не чистый JSON ===");
+// Так это и может сломаться при смене модели: response_format — параметр из
+// мира OpenAI, и если OpenRouter его для модели не переводит, JSON приходит
+// обёрнутым в ```-блок или с фразой перед ним.
+const { extractJson } = await import("../src/pipeline/generateScript.ts");
+const obj = { title: "Тест", scenes: [{ caption: "А", voiceoverText: "б" }] };
+const raw = JSON.stringify(obj);
+const same = (s) => JSON.stringify(JSON.parse(extractJson(s))) === raw;
+check("чистый JSON проходит как есть", same(raw));
+check("```json-блок снимается", same("```json\n" + raw + "\n```"));
+check("```-блок без языка тоже", same("```\n" + raw + "\n```"));
+check("фраза перед JSON отбрасывается", same("Вот сценарий:\n" + raw));
+check("фраза после JSON отбрасывается", same(raw + "\n\nГотово!"));
+check("отступы и перевод строки не мешают", same("\n  " + raw + "  \n"));
+// Берём текст до ПОСЛЕДНЕЙ }, а не до первой: иначе вложенный overlay обрезал
+// бы весь сценарий.
+const nested = JSON.stringify({
+  title: "Тест",
+  scenes: [{ caption: "А", voiceoverText: "б", overlay: { object: "кот" } }],
+});
+check(
+  "вложенные объекты не обрезаются",
+  JSON.parse(extractJson("Вот:\n```json\n" + nested + "\n```")).scenes[0].overlay
+    .object === "кот",
+);
+check("текст без JSON возвращается как есть — падение будет осмысленным", extractJson("Не могу") === "Не могу");
+
 console.log("\n=== визуальный акцент на первой сцене ===");
 const { sceneMotion, MOTION_CYCLE_LENGTH } = await import("../src/remotion/transitions.ts");
 check("у хука своё движение", sceneMotion(0).emphasis === true);
