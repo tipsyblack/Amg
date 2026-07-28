@@ -12,6 +12,14 @@ import { Accents } from "./Accents";
 import { Overlay } from "./Overlay";
 import { Subtitles } from "./Subtitles";
 import { CAPTION_FONT_FAMILY, loadCaptionFont } from "./font";
+import {
+  CARD_BORDER_PX,
+  CARD_RADIUS_PX,
+  CARD_TOP_PERCENT,
+  CARD_WIDTH_PERCENT,
+  REF_WIDTH,
+  cardAspect,
+} from "./layout";
 import { sceneMotion } from "./transitions";
 import type { Overlay as OverlayData } from "../types";
 
@@ -30,33 +38,6 @@ const IMAGE_ZOOM = 0.13; // насколько картинка подъезжа
 // Наезд хука начинается не с точки: первый кадр ролика — это ещё и обложка в
 // ленте, поэтому он должен быть непустым и читаемым сразу.
 const HOOK_PUNCH_FROM = 0.78;
-
-// Геометрия карточки снята с кадров референса (1440×2560): картинка
-// 1086×1435 px — это 75.4% ширины кадра, отношение сторон 0.757, верх на 10.9%
-// высоты. Числа ниже — те же пропорции, они не подгонялись «на глаз».
-const DEFAULT_CARD_ASPECT = 0.757;
-// Границы: слишком узкая карточка налезла бы на субтитры, слишком широкая
-// перестала бы походить на референс.
-const MIN_CARD_ASPECT = 0.66;
-const MAX_CARD_ASPECT = 1;
-
-const CARD_WIDTH_PERCENT = 75.4;
-const CARD_TOP_PERCENT = 10.9;
-// Рамка карточки. В референсе она 19 px на кадре 1440 — это 14 px на нашем
-// 1080; было 10, и рамка выглядела заметно тоньше. Радиус скругления снят с
-// увеличенного угла референса. Оба числа заданы для 1080 и масштабируются.
-const REF_WIDTH = 1080;
-const CARD_BORDER_PX = 14;
-const CARD_RADIUS_PX = 26;
-
-/**
- * Карточка повторяет пропорции самой картинки: модели иногда отдают квадрат
- * вместо вертикали, и жёсткая рамка обрезала бы его по бокам.
- */
-function cardAspect(width?: number, height?: number): number {
-  if (!width || !height) return DEFAULT_CARD_ASPECT;
-  return Math.min(Math.max(width / height, MIN_CARD_ASPECT), MAX_CARD_ASPECT);
-}
 
 interface SceneProps {
   // Слова озвучки с таймингами — для субтитров «по слову». Нет слов — нет и

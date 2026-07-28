@@ -102,6 +102,33 @@ const withGaps = [
 check("в паузе держится предыдущее слово", wordAt(withGaps, 600) === withGaps[0]);
 check("после конца речи держится последнее", wordAt(withGaps, 5000) === withGaps[1]);
 
+console.log("\n=== карточка не наезжает на субтитры ===");
+// Так это и сломалось на реальном ролике: карточка повторяет пропорции
+// картинки, картинки приходили 9:16, и рамка легла поверх букв. Проверяем
+// именно инвариант «низ карточки выше верха заглавных», а не конкретные числа.
+const layout = await import("../src/remotion/layout.ts");
+const textTop = layout.subtitleTopPx();
+const fits = (w, h) => layout.cardBottomPx(layout.cardAspect(w, h)) < textTop;
+check(
+  "вертикальная 9:16 не достаёт до строки",
+  fits(1080, 1920),
+  `низ карточки ${layout.cardBottomPx(layout.cardAspect(1080, 1920)).toFixed(0)}, верх букв ${textTop.toFixed(0)}`,
+);
+check("портрет 3:4 не достаёт", fits(900, 1200));
+check("квадрат не достаёт", fits(1024, 1024));
+check("совсем узкая картинка тоже", fits(600, 2400));
+check("размеры неизвестны — пропорции референса", layout.cardAspect() === layout.CARD_ASPECT);
+check(
+  "3:4 проходит без обрезки — пропорции берутся как есть",
+  Math.abs(layout.cardAspect(900, 1200) - 0.75) < 1e-9,
+  String(layout.cardAspect(900, 1200)),
+);
+check(
+  "просвет до строки не меньше заявленного",
+  textTop - layout.cardBottomPx(layout.minCardAspect()) >=
+    (layout.CARD_TO_TEXT_GAP_PERCENT / 100) * layout.REF_HEIGHT - 1,
+);
+
 console.log("\n=== сцена несёт слова дальше в рендер ===");
 const { sceneSchema } = await import("../src/types.ts");
 const parsed = sceneSchema.safeParse({

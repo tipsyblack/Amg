@@ -1,17 +1,21 @@
 import React from "react";
 import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { CAPTION_FONT_FAMILY } from "./font";
+import {
+  REF_WIDTH,
+  SUBTITLE_BASELINE_PERCENT,
+  SUBTITLE_CAP_HEIGHT_PX,
+} from "./layout";
 import { wordAt } from "./subtitleWord";
 
 // Субтитры как в референсе: в кадре одно слово, крупно, чёрным по белому, без
 // плашки и без анимации. Слово меняется в такт речи — это и есть весь эффект.
 //
-// Геометрия снята с кадров референса (1440×2560) и приведена к 1080×1920:
-// высота заглавных букв 77 px, базовая линия на 23% высоты от нижнего края
-// кадра, текст по центру. От этой пары чисел всё и считается.
-const REF_WIDTH = 1080;
-const CAP_HEIGHT_PX = 77;
-const BASELINE_PERCENT = 23;
+// Геометрия — из общего модуля: высота заглавных букв 77 px и базовая линия на
+// 23% высоты от нижнего края кадра. Там же по этим числам считается, насколько
+// высокой можно отпустить карточку, чтобы она не легла на строку.
+const CAP_HEIGHT_PX = SUBTITLE_CAP_HEIGHT_PX;
+const BASELINE_PERCENT = SUBTITLE_BASELINE_PERCENT;
 
 // Пересчёт кегля из высоты заглавной буквы. Коэффициент измерен на рендере
 // (Oswald 700: кегль 112 дал заглавные 94 px), а не взят из таблиц шрифта:

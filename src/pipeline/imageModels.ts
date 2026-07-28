@@ -13,6 +13,12 @@ export interface ImageModelSpec {
   buildInput(prompt: string, imageUrls: string[]): Record<string, unknown>;
 }
 
+// Пропорции картинки. Просим 3:4, а не 9:16: карточка в кадре повторяет
+// пропорции картинки, и вертикальная 9:16 растягивала её до самой строки
+// субтитров. В референсе картинка почти ровно 3:4 (0.757), так что 3:4 — это
+// и совпадение с ним, и отсутствие обрезки по краям при вписывании в карточку.
+const IMAGE_ASPECT = "3:4";
+
 export const IMAGE_MODELS: ImageModelSpec[] = [
   {
     key: "nb",
@@ -24,7 +30,7 @@ export const IMAGE_MODELS: ImageModelSpec[] = [
       prompt,
       image_urls: imageUrls,
       output_format: "png",
-      image_size: "9:16",
+      image_size: IMAGE_ASPECT,
     }),
   },
   {
@@ -35,7 +41,7 @@ export const IMAGE_MODELS: ImageModelSpec[] = [
     buildInput: (prompt, imageUrls) => ({
       prompt,
       image_input: imageUrls,
-      aspect_ratio: "9:16",
+      aspect_ratio: IMAGE_ASPECT,
       resolution: "1K",
       output_format: "png",
     }),
@@ -48,7 +54,7 @@ export const IMAGE_MODELS: ImageModelSpec[] = [
     buildInput: (prompt, imageUrls) => ({
       prompt,
       image_input: imageUrls,
-      aspect_ratio: "9:16",
+      aspect_ratio: IMAGE_ASPECT,
       resolution: "1K",
       output_format: "png",
     }),
@@ -61,7 +67,7 @@ export const IMAGE_MODELS: ImageModelSpec[] = [
     buildInput: (prompt, imageUrls) => ({
       prompt,
       image_input: imageUrls,
-      aspect_ratio: "9:16",
+      aspect_ratio: IMAGE_ASPECT,
       resolution: "1K",
       output_format: "png",
     }),
@@ -75,7 +81,7 @@ export const IMAGE_MODELS: ImageModelSpec[] = [
       prompt,
       input_urls: imageUrls,
       nsfw_checker: false,
-      aspect_ratio: "9:16",
+      aspect_ratio: IMAGE_ASPECT,
       resolution: "1K",
     }),
   },

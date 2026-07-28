@@ -15,15 +15,20 @@ check('nb: image_urls + image_size', JSON.stringify(Object.keys(nb).sort()) === 
 check('nb: слаг из конфига', byKey.nb.model === 'google/nano-banana-edit');
 
 const nb2 = byKey.nb2.buildInput('промпт', urls);
-check('nb2: image_input + aspect_ratio', nb2.image_input === urls && nb2.aspect_ratio === '9:16' && !('image_urls' in nb2));
+check('nb2: image_input + aspect_ratio', nb2.image_input === urls && nb2.aspect_ratio === '3:4' && !('image_urls' in nb2));
 check('nb2: слаг', byKey.nb2.model === 'nano-banana-2');
 
 const lite = byKey.nb2lite.buildInput('промпт', urls);
 check('lite: как nb2', lite.image_input === urls && byKey.nb2lite.model === 'nano-banana-2-lite');
 
 const pro = byKey.nbpro.buildInput('промпт', urls);
-check('pro: image_input + aspect_ratio', pro.image_input === urls && pro.aspect_ratio === '9:16' && !('image_urls' in pro));
+check('pro: image_input + aspect_ratio', pro.image_input === urls && pro.aspect_ratio === '3:4' && !('image_urls' in pro));
 check('pro: слаг', byKey.nbpro.model === 'nano-banana-pro');
+
+// Пропорции просим у всех моделей одинаковые: карточка в кадре повторяет их, а
+// 9:16 растягивала её на строку субтитров.
+const ratios = IMAGE_MODELS.map(m => { const i = m.buildInput('промпт', urls); return i.aspect_ratio ?? i.image_size; });
+check('все модели просят 3:4', ratios.every(r => r === '3:4'), ratios.join(','));
 
 const gpt = byKey.gpt2.buildInput('промпт', urls);
 check('gpt2: input_urls + nsfw_checker', gpt.input_urls === urls && gpt.nsfw_checker === false && !('image_urls' in gpt), JSON.stringify(gpt));
