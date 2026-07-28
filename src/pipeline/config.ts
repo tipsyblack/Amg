@@ -95,6 +95,9 @@ export const config = {
 
   characterReferenceUrl:
     env("CHARACTER_REFERENCE_URL") ?? DEFAULT_CHARACTER_REFERENCE_URL,
+  // Маскот по умолчанию только в хуке и финале: в каждой сцене он превращал
+  // ролик в галерею поз одного персонажа. =1 возвращает его во все сцены.
+  characterEveryScene: (env("CHARACTER_EVERY_SCENE") ?? "0") !== "0",
 
   // 60 кадров: резкие стыки длятся 0.3 с, и на 30 fps это всего 9 кадров —
   // движение читается рвано. В референсе 60. Платим временем рендера: оно

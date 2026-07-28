@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Scene, VideoData } from "../types";
 import {
   buildImagePrompt,
+  sceneWithCharacter,
   ensureDirs,
   generateSceneAudio,
   generateSceneIllustration,
@@ -47,10 +48,13 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       scriptScene.voiceoverText,
     );
 
+    const withCharacter = sceneWithCharacter(i, script.scenes.length);
     const illustration = await generateSceneIllustration(
       i,
-      buildImagePrompt(scriptScene),
+      buildImagePrompt(scriptScene, undefined, withCharacter),
       previousSceneUrl,
+      undefined,
+      withCharacter,
     );
     previousSceneUrl = illustration.resultUrl;
 

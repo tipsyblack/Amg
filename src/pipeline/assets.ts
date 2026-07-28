@@ -6,6 +6,8 @@ import { config } from "./config";
 import {
   generateSceneImage,
   NO_TEXT_RULE,
+  CHARACTER_PROMPT,
+  NO_CHARACTER_PROMPT,
   STYLE_PROMPT,
 } from "./generateImage";
 import { synthesizeSpeech, type TtsProvider } from "./generateVoiceover";
@@ -34,9 +36,26 @@ export async function ensureDirs(): Promise<void> {
   await mkdir(path.dirname(DATA_FILE), { recursive: true });
 }
 
+/**
+ * Нужен ли маскот в этой сцене.
+ *
+ * Раньше он был в каждой: эталон внешности прикладывался ко всем запросам, и
+ * ролик выходил галереей поз одного персонажа — даже там, где сцена про
+ * серверы или про космос. Держим его там, где он к месту: хук (лицо ролика) и
+ * финал (призыв к действию — говорит именно маскот). Середина — про содержание
+ * истории, и там он только отвлекает.
+ *
+ * CHARACTER_EVERY_SCENE=1 в .env возвращает прежнее поведение.
+ */
+export function sceneWithCharacter(index: number, total: number): boolean {
+  if (config.characterEveryScene) return true;
+  return index === 0 || index === total - 1;
+}
+
 export function buildImagePrompt(
   scene: { caption: string; voiceoverText: string },
   styleNotes?: string,
+  withCharacter = false,
 ): string {
   const styleAddition = styleNotes
     ? `\n\nДополнительные заметки о стиле из референса пользователя (учитывай их, не ломая описанный выше стиль и персонажа): ${styleNotes}`
@@ -49,6 +68,7 @@ export function buildImagePrompt(
   // экрана, и, попав в промпт, она провоцирует модель эту фразу нарисовать.
   return (
     `${STYLE_PROMPT}${styleAddition}` +
+    `\n\n${withCharacter ? CHARACTER_PROMPT : NO_CHARACTER_PROMPT}` +
     `\n\nЧто происходит в сцене: ${scene.voiceoverText}` +
     `\n\n${NO_TEXT_RULE}`
   );
@@ -95,6 +115,7 @@ export async function generateSceneIllustration(
   prompt: string,
   previousSceneUrl?: string,
   modelKey?: string,
+  withCharacter = false,
 ): Promise<{
   imageFileName: string;
   resultUrl: string;
@@ -108,6 +129,7 @@ export async function generateSceneIllustration(
     outFile,
     previousSceneUrl,
     modelKey,
+    withCharacter,
   });
   const size = await getImageSize(outFile);
   return {

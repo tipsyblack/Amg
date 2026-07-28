@@ -53,4 +53,28 @@ check('запрет идёт последним', prompt.trimEnd().endsWith('б�
 const withNotes = buildImagePrompt(scene, 'в референсе есть подписи на английском');
 check('заметки из референса не перебивают запрет', withNotes.indexOf('НИКАКОГО текста') > withNotes.indexOf('референсе есть подписи'));
 
+console.log('\n=== маскот не в каждой сцене ===');
+// Это и был перекос: эталон внешности прикладывался к КАЖДОМУ запросу, и джин
+// лез в кадр даже там, где сцена про серверы или про космос. Теперь он в хуке
+// и в финале, а середина — про содержание истории.
+const { sceneWithCharacter } = await import('../src/pipeline/assets.ts');
+check('в хуке маскот есть', sceneWithCharacter(0, 7) === true);
+check('в финале маскот есть', sceneWithCharacter(6, 7) === true);
+check('в середине маскота нет', [1, 2, 3, 4, 5].every((i) => sceneWithCharacter(i, 7) === false));
+check('ролик из одной сцены — с маскотом', sceneWithCharacter(0, 1) === true);
+
+const { CHARACTER_PROMPT, NO_CHARACTER_PROMPT } = await import('../src/pipeline/generateImage.ts');
+const withChar = buildImagePrompt(scene, undefined, true);
+const noChar = buildImagePrompt(scene, undefined, false);
+check('в сцене с маскотом есть его описание', withChar.includes(CHARACTER_PROMPT));
+check('в сцене без маскота описания нет', !noChar.includes('Шамиль'), noChar.slice(0, 60));
+check('и есть прямой запрет персонажей', noChar.includes(NO_CHARACTER_PROMPT));
+check('стиль одинаковый в обоих', withChar.includes('flat-cartoon') && noChar.includes('flat-cartoon'));
+check('запрет текста остаётся последним и там, и там', withChar.trimEnd().endsWith('без букв.') && noChar.trimEnd().endsWith('без букв.'));
+
+// Промпт объекта-оверлея вообще не должен упоминать персонажа: нужен предмет,
+// а упоминание джина провоцирует нарисовать джина.
+const { buildOverlayPrompt } = await import('../src/pipeline/generateOverlay.ts');
+check('в промпте объекта маскота нет', !buildOverlayPrompt('красный чемодан').includes('Шамиль'));
+
 process.exit(fails === 0 ? 0 : 1);

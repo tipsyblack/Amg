@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { Bot, Context, InlineKeyboard, InputFile } from "grammy";
 import {
   buildImagePrompt,
+  sceneWithCharacter,
   deleteMusicTrack,
   ensureDirs,
   ensureMusicLibraryDir,
@@ -299,11 +300,13 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
           continue;
         }
         await ctx.reply(`🎨 Сцена ${i + 1} из ${script.scenes.length}…`);
+        const withCharacter = sceneWithCharacter(i, script.scenes.length);
         const illustration = await generateSceneIllustration(
           i,
-          buildImagePrompt(script.scenes[i], session.styleNotes),
+          buildImagePrompt(script.scenes[i], session.styleNotes, withCharacter),
           previousSceneUrl,
           session.imageModel,
+          withCharacter,
         );
         const { imageFileName, resultUrl } = illustration;
         images[i] = illustration;
@@ -377,11 +380,19 @@ async function regenerateScene(
       }
 
       await ctx.reply(`🎨 Перегенерирую сцену ${index + 1}…`);
+      // Перегенерация одной сцены должна дать тот же тип кадра, что и общий
+      // проход, иначе в середине ролика внезапно появится маскот.
+      const regenWithCharacter = sceneWithCharacter(index, script.scenes.length);
       const illustration = await generateSceneIllustration(
         index,
-        buildImagePrompt(script.scenes[index], session.styleNotes),
+        buildImagePrompt(
+          script.scenes[index],
+          session.styleNotes,
+          regenWithCharacter,
+        ),
         images[index - 1]?.resultUrl,
         session.imageModel,
+        regenWithCharacter,
       );
       const { imageFileName } = illustration;
       images[index] = illustration;
