@@ -21,8 +21,25 @@ function requireEnv(name: string): string {
 // публичной ссылке, поэтому по умолчанию берём файл из этого же репозитория
 // через raw.githubusercontent.com. Если сделаете репозиторий приватным —
 // подставьте свою публичную ссылку в CHARACTER_REFERENCE_URL.
-const DEFAULT_CHARACTER_REFERENCE_URL =
-  "https://raw.githubusercontent.com/tipsyblack/Amg/refs/heads/claude/remotion-video-automation-biby8g/assets/characters/shamil.png";
+const RAW_BASE =
+  "https://raw.githubusercontent.com/tipsyblack/Amg/refs/heads/claude/remotion-video-automation-biby8g/assets/characters";
+
+// Эталон внешности. Это shamil-clip.png, а не исходный shamil.png, и разница
+// принципиальная: исходник — рекламный стикер на ФОТОГРАФИИ офиса, с лампой и
+// надписью PRO NEIRO внизу. Лицо занимало там 19% высоты кадра, то есть после
+// сжатия до 720p от него оставалось меньше шестидесяти пикселей — сохранять
+// нечего, и модель дорисовывала лицо заново. Отсюда «лицо не похоже».
+//
+// В shamil-clip.png фотография залита белым (стикер отделён от неё по сплошной
+// белой обводке), лампа с надписью отрезана по дымному хвосту, кадр обрезан по
+// персонажу: лицо стало 34% высоты — вчетверо больше пикселей. Заодно ушли две
+// причины поменьше: модели больше не нужно перерисовывать фон (он уже
+// однотонный, как мы и просим в промпте), и в кадр не лезет текст, который мы
+// сами же запрещаем.
+//
+// Собран скриптом scripts/build-character-reference.mjs из исходника — тот
+// остался в репозитории и никуда не делся.
+const DEFAULT_CHARACTER_REFERENCE_URL = `${RAW_BASE}/shamil-clip.png`;
 
 export const config = {
   // Сценарий — OpenRouter.
@@ -101,6 +118,12 @@ export const config = {
   //   library  — только библиотека, платных генераций не делать вовсе;
   //   generate — всегда оживлять картинку сцены, библиотеку не трогать.
   clipSource: (env("CLIP_SOURCE") ?? "auto") as "auto" | "library" | "generate",
+  // Замок внешности для клипов библиотеки: тот же эталон уходит и последним
+  // кадром, поэтому персонаж обязан к концу вернуться ровно к нему. Держит
+  // лицо, но делает движение «туда и обратно» — жест возвращается в исходную
+  // позу. Включать, если после нового эталона лицо всё равно плывёт.
+  // Работает только у Seedance 2.x: у V1 последнего кадра нет.
+  clipLockIdentity: (env("CLIP_LOCK_IDENTITY") ?? "0") !== "0",
   // Музыка (Suno через Kie.ai). Считается дольше картинок — свой лимит.
   kieMusicModel: env("KIE_MUSIC_MODEL") ?? "V5",
   // Suno у Kie.ai требует callBackUrl обязательно, но нам он не нужен: мы

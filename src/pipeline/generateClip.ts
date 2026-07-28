@@ -104,12 +104,20 @@ export async function generateLibraryClip(
   const fileName = libraryFileName(clip.id);
   await ensureLibraryDir();
 
+  // Замок внешности — только для библиотеки: у клипов сцены последним кадром
+  // был бы кадр сцены, и возврат к нему съел бы всё движение.
+  const lockTo =
+    config.clipLockIdentity && spec.supportsLastFrame
+      ? config.characterReferenceUrl
+      : undefined;
+
   await runKieTask({
     model: spec.model,
     input: spec.buildInput(
       buildLibraryClipPrompt(clip),
       config.characterReferenceUrl,
       clampClipSeconds(spec, seconds),
+      lockTo,
     ),
     outFile: path.join(CLIP_LIBRARY_DIR, fileName),
     label: `клип библиотеки «${clip.title}», модель ${spec.model}`,

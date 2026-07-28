@@ -29,11 +29,15 @@ export interface VideoModelSpec {
   /** Порядок цены за секунду — для честных цифр в чате. */
   pricePerSecond: number;
   // Промпт + первый кадр (публичная ссылка) + длительность в секундах.
+  // lastFrameUrl — необязательный «замок внешности»: см. CLIP_LOCK_IDENTITY.
   buildInput(
     prompt: string,
     firstFrameUrl: string,
     seconds: number,
+    lastFrameUrl?: string,
   ): Record<string, unknown>;
+  /** Умеет ли модель принимать последний кадр. У семейства V1 такого нет. */
+  supportsLastFrame: boolean;
 }
 
 // Клип показывается внутри карточки, а она повторяет пропорции картинки —
@@ -59,9 +63,15 @@ const seedance2Input = (
   prompt: string,
   firstFrameUrl: string,
   seconds: number,
+  lastFrameUrl?: string,
 ): Record<string, unknown> => ({
   prompt,
   first_frame_url: firstFrameUrl,
+  // Замок внешности. Seedance 2 умеет принимать и последний кадр; если дать
+  // ему тот же эталон, персонаж обязан к концу клипа вернуться ровно к нему,
+  // и это держит лицо на всём протяжении. Цена — движение получается
+  // «туда и обратно»: жест возвращается в исходную позу.
+  ...(lastFrameUrl ? { last_frame_url: lastFrameUrl } : {}),
   resolution: CLIP_RESOLUTION,
   aspect_ratio: CLIP_ASPECT,
   duration: seconds,
@@ -97,6 +107,7 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     minSeconds: 4,
     maxSeconds: 15,
     pricePerSecond: 0.056,
+    supportsLastFrame: true,
     buildInput: seedance2Input,
   },
   {
@@ -107,6 +118,7 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     minSeconds: 4,
     maxSeconds: 15,
     pricePerSecond: 0.09,
+    supportsLastFrame: true,
     buildInput: seedance2Input,
   },
   {
@@ -117,6 +129,7 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     minSeconds: 4,
     maxSeconds: 15,
     pricePerSecond: 0.125,
+    supportsLastFrame: true,
     buildInput: seedance2Input,
   },
   {
@@ -127,6 +140,7 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     minSeconds: 4,
     maxSeconds: 12,
     pricePerSecond: 0.1,
+    supportsLastFrame: true,
     buildInput: seedance2Input,
   },
   {
@@ -137,6 +151,7 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     minSeconds: 5,
     maxSeconds: 10,
     pricePerSecond: 0.09,
+    supportsLastFrame: false,
     buildInput: seedanceV1Input,
   },
   {
@@ -147,6 +162,7 @@ export const VIDEO_MODELS: VideoModelSpec[] = [
     minSeconds: 5,
     maxSeconds: 10,
     pricePerSecond: 0.045,
+    supportsLastFrame: false,
     buildInput: seedanceV1Input,
   },
 ];

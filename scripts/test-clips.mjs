@@ -334,6 +334,51 @@ const seen = new Set();
 for (let i = 0; i < 200; i++) seen.add(pickLibraryClip("intro", allReady)?.id);
 check("выбор перебирает варианты, а не залипает на первом", seen.size > 1, `${seen.size}`);
 
+console.log("\n--- эталон внешности ---");
+// «Лицо не похоже» лечилось не промптом, а эталоном: исходный shamil.png —
+// стикер на фотографии офиса, лицо занимало 18% высоты кадра и после сжатия
+// до 720p от него оставалось меньше шестидесяти пикселей.
+const refPath = path.resolve(
+  "assets/characters",
+  path.basename(new URL(config.characterReferenceUrl).pathname),
+);
+check(
+  "эталон — обрезанный кадр, а не исходный стикер с лампой",
+  config.characterReferenceUrl.endsWith("shamil-clip.png"),
+  config.characterReferenceUrl,
+);
+check("файл эталона на месте", existsSync(refPath), refPath);
+
+const refMeta = execFileSync("ffprobe", [
+  "-v", "error", "-select_streams", "v:0",
+  "-show_entries", "stream=width,height",
+  "-of", "csv=p=0", refPath,
+]).toString().trim();
+const [refW, refH] = refMeta.split(",").map(Number);
+check(
+  "пропорции 3:4 — как у карточки, иначе модель перекадрирует и перерисует",
+  Math.abs(refW / refH - 0.75) < 0.01,
+  `${refW}×${refH}`,
+);
+
+// Фон должен быть уже белым: промпт просит однотонный светлый, и если эталон
+// ему противоречит, модель перерисовывает кадр целиком — вместе с лицом.
+const px = execFileSync(
+  "ffmpeg",
+  ["-v", "error", "-i", refPath, "-vf", "scale=108:144", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+  { maxBuffer: 1 << 20 },
+);
+let white = 0;
+for (let i = 0; i < px.length; i += 3) {
+  if (px[i] > 245 && px[i + 1] > 245 && px[i + 2] > 245) white++;
+}
+const whiteShare = white / (px.length / 3);
+check(
+  "фон эталона белый, а не фотография",
+  whiteShare > 0.3,
+  `${Math.round(whiteShare * 100)}% белого`,
+);
+
 console.log("\n--- промпт библиотечного клипа ---");
 const libPrompt = buildLibraryClipPrompt(getClipDefinition("intro-snap"));
 check("действие попало в промпт", libPrompt.includes("щёлкает пальцами"));
@@ -350,6 +395,26 @@ check(
 check(
   "все десять промптов собираются без ошибок и непустые",
   CLIP_LIBRARY.every((c) => buildLibraryClipPrompt(c).length > 200),
+);
+
+// Замок внешности: тот же эталон уходит последним кадром, и персонаж обязан
+// к нему вернуться. У V1 последнего кадра нет — там поле не должно появляться.
+const withLock = getVideoModel("sd2mini").buildInput("x", "https://a/1.png", 4, "https://a/1.png");
+check(
+  "замок внешности кладёт последний кадр у Seedance 2",
+  withLock.last_frame_url === "https://a/1.png",
+  JSON.stringify(withLock),
+);
+const noLock = getVideoModel("sd2mini").buildInput("x", "https://a/1.png", 4);
+check(
+  "без замка поля последнего кадра нет вовсе",
+  !("last_frame_url" in noLock),
+  JSON.stringify(noLock),
+);
+check(
+  "у V1 замка нет и он не обещан",
+  getVideoModel("v1pro").supportsLastFrame === false &&
+    !("last_frame_url" in getVideoModel("v1pro").buildInput("x", "u", 5, "u")),
 );
 
 console.log("\n--- что пересобирать ---");
