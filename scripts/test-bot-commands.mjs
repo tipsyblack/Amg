@@ -36,6 +36,8 @@ bot.command('ttsmodel', (ctx) => { hits.push(['ttsmodel', ctx.match]); });
 bot.command('vidmodel', (ctx) => { hits.push(['vidmodel', ctx.match]); });
 bot.command('clips', (ctx) => { hits.push(['clips', ctx.match]); });
 bot.command('clone', (ctx) => { hits.push(['clone', ctx.match]); });
+bot.command('library', (ctx) => { hits.push(['library', ctx.match]); });
+bot.command('length', (ctx) => { hits.push(['length', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -129,5 +131,24 @@ await bot.handleUpdate(upd('/clone'));
 check('/clone не путается с /clips', hits.at(-1)?.[0] === 'clone', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/clonemore'));
 check('/clonemore не путается с /clips', hits.at(-1)?.[0] === 'clonemore');
+
+// 11) /library — подкоманды идут аргументом, а не отдельными командами.
+await bot.handleUpdate(upd('/library'));
+check('/library без аргумента', hits.at(-1)?.[0] === 'library' && hits.at(-1)?.[1] === '');
+await bot.handleUpdate(upd('/library build'));
+check(
+  '/library build: подкоманда пришла аргументом',
+  hits.at(-1)?.[0] === 'library' && hits.at(-1)?.[1] === 'build',
+  JSON.stringify(hits.at(-1)),
+);
+await bot.handleUpdate(upd('/library intro-lamp'));
+check(
+  '/library <id> с дефисом в аргументе',
+  hits.at(-1)?.[0] === 'library' && hits.at(-1)?.[1] === 'intro-lamp',
+  JSON.stringify(hits.at(-1)),
+);
+// /library и /length начинаются на «l» — проверяем, что не слиплись.
+await bot.handleUpdate(upd('/length 75'));
+check('/length не путается с /library', hits.at(-1)?.[0] === 'length' && hits.at(-1)?.[1] === '75');
 
 process.exit(fails === 0 ? 0 : 1);

@@ -36,6 +36,10 @@ export interface SceneOverlay {
 export interface SceneClip {
   clipFileName: string;
   clipDurationInFrames: number;
+  // Откуда клип взялся и какой именно был взят из библиотеки. Второе нужно,
+  // чтобы при повторе сборки не выдать тот же жест в соседнюю сцену.
+  source: "library" | "generated";
+  libraryId?: string;
 }
 
 export interface SceneAudio {

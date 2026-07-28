@@ -6,7 +6,7 @@ import {
   buildOutro,
   sceneWithCharacter,
   ensureDirs,
-  generateSceneAnimation,
+  sceneClip,
   generateSceneAudio,
   generateSceneIllustration,
   fitToBudget,
@@ -15,6 +15,7 @@ import {
 } from "./assets";
 import { config } from "./config";
 import { generateDescription } from "./generateDescription";
+import { readyClipIds } from "./clipLibrary";
 import { clipSceneIndexes } from "./generateClip";
 import { generateCheckedScript } from "./generateScript";
 import {
@@ -46,6 +47,10 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   const animated = new Set(
     clipSceneIndexes(script.scenes.length, config.clipScenes),
   );
+  // Что уже готово в библиотеке маскота и что из него уже занято в этом
+  // ролике: два раза подряд один и тот же жест выглядит как заевшая плёнка.
+  const libraryReady = await readyClipIds();
+  const usedLibraryClips = new Set<string>();
 
   for (let i = 0; i < script.scenes.length; i++) {
     const scriptScene = script.scenes[i];
@@ -70,14 +75,24 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     // идёт его первым кадром. Ссылку берём ту, что вернул Kie.ai — вход он
     // принимает только по URL, а локальный файл ему не отдать.
     const clip = animated.has(i)
-      ? await generateSceneAnimation(
-          i,
-          scriptScene.voiceoverText,
-          illustration.resultUrl,
-        )
+      ? await sceneClip({
+          index: i,
+          total: script.scenes.length,
+          voiceoverText: scriptScene.voiceoverText,
+          imageUrl: illustration.resultUrl,
+          ready: libraryReady,
+          used: usedLibraryClips,
+        })
       : undefined;
+    if (clip?.libraryId) usedLibraryClips.add(clip.libraryId);
     if (animated.has(i) && !clip) {
       console.warn(`Сцена ${i + 1} осталась картинкой: клип не сгенерировался`);
+    } else if (clip) {
+      console.log(
+        `Сцена ${i + 1}: клип ${
+          clip.source === "library" ? "из библиотеки" : "сгенерирован"
+        }`,
+      );
     }
 
     // Появляющийся объект: рисуется отдельно и ложится поверх этой же

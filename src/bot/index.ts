@@ -13,7 +13,7 @@ import {
   ensureDirs,
   ensureMusicLibraryDir,
   fitToBudget,
-  generateSceneAnimation,
+  sceneClip,
   generateSceneAudio,
   generateSceneIllustration,
   listMusicTracks,
@@ -21,7 +21,18 @@ import {
   pickMusic,
   writeVideoData,
 } from "../pipeline/assets";
-import { buildClipPrompt, clipSceneIndexes } from "../pipeline/generateClip";
+import {
+  CLIP_LIBRARY,
+  CLIP_LIBRARY_DIR,
+  getClipDefinition,
+  libraryFileName,
+  readyClipIds,
+} from "../pipeline/clipLibrary";
+import {
+  buildClipPrompt,
+  clipSceneIndexes,
+  generateLibraryClip,
+} from "../pipeline/generateClip";
 import { generateMusicTrack, MUSIC_PRESETS } from "../pipeline/generateMusic";
 import {
   generateSceneOverlay,
@@ -437,6 +448,11 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     const animated = new Set(
       clipSceneIndexes(script.scenes.length, clipCount),
     );
+    const libraryReady = await readyClipIds();
+    // Один и тот же жест два раза подряд выглядит как заевшая плёнка.
+    const usedLibraryClips = new Set(
+      clips.map((clip) => clip?.libraryId).filter(Boolean) as string[],
+    );
     // Объект появляется на слове из озвучки, а слова известны только после
     // синтеза — поэтому момент считается здесь, а не при генерации картинки.
     const sceneOverlay = (i: number) => {
@@ -483,15 +499,24 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       // повторная сборка после сбоя не должна оплачивать их заново.
       if (animated.has(i) && !clips[i]) {
         await ctx.reply(`🎞 Оживляю сцену ${i + 1}…`);
-        clips[i] = await generateSceneAnimation(
-          i,
-          script.scenes[i].voiceoverText,
-          images[i].resultUrl,
-          config.clipSeconds,
-          session.videoModel,
-        );
-        if (clips[i]) {
+        clips[i] = await sceneClip({
+          index: i,
+          total: script.scenes.length,
+          voiceoverText: script.scenes[i].voiceoverText,
+          imageUrl: images[i].resultUrl,
+          ready: libraryReady,
+          used: usedLibraryClips,
+          modelKey: session.videoModel,
+        });
+        const chosen = clips[i];
+        if (chosen) {
+          if (chosen.libraryId) usedLibraryClips.add(chosen.libraryId);
           updateSession(chatId, { clips });
+          if (chosen.source === "library") {
+            await ctx.reply(
+              `Взял готовый клип из библиотеки — эта сцена бесплатна.`,
+            );
+          }
         } else {
           await ctx.reply(
             `Клип для сцены ${i + 1} не получился — она останется картинкой. ` +
@@ -658,6 +683,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/ttsmodel — модель озвучки\n" +
       "/length — лимит длины ролика в секундах\n" +
       "/clips — сколько сцен оживлять видео (по умолчанию ни одной)\n" +
+      "/library — библиотека клипов с маскотом (генерируется один раз)\n" +
       "/vidmodel — модель оживления кадра\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека и генерация\n" +
@@ -908,6 +934,102 @@ bot.command("clips", async (ctx) => {
   );
 });
 
+// Библиотека клипов с маскотом: генерируется один раз и переиспользуется во
+// всех роликах. Отдельная команда, потому что это не часть сборки конкретного
+// видео — это разовая закупка, после которой оживление сцен становится
+// бесплатным.
+function libraryStatus(ready: Set<string>): string {
+  const byRole = new Map<string, string[]>();
+  for (const clip of CLIP_LIBRARY) {
+    const line = `${ready.has(clip.id) ? "✅" : "▫️"} ${clip.title} (${clip.id})`;
+    byRole.set(clip.role, [...(byRole.get(clip.role) ?? []), line]);
+  }
+  const titles: Record<string, string> = {
+    intro: "Появление (хук)",
+    reaction: "Реакция (середина)",
+    handoff: "Показ (середина)",
+    outro: "Прощание (финал)",
+  };
+  return [...byRole.entries()]
+    .map(([role, lines]) => `*${titles[role] ?? role}*\n${lines.join("\n")}`)
+    .join("\n\n");
+}
+
+bot.command("library", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const argument = ctx.match.trim();
+  const ready = await readyClipIds();
+
+  if (argument === "build" || argument === "rebuild") {
+    const todo =
+      argument === "rebuild"
+        ? CLIP_LIBRARY
+        : CLIP_LIBRARY.filter((clip) => !ready.has(clip.id));
+    if (todo.length === 0) {
+      await ctx.reply("Библиотека уже собрана целиком. Пересобрать: /library rebuild");
+      return;
+    }
+    const cost = todo.length * config.clipSeconds * CLIP_PRICE_PER_SECOND;
+    await withGeneration(ctx, chatId, async () => {
+      await ctx.reply(
+        `Генерирую ${todo.length} клип(ов), примерно $${cost.toFixed(2)}. ` +
+          "Это надолго — по паре минут на клип.",
+      );
+      let done = 0;
+      const failed: string[] = [];
+      for (const clip of todo) {
+        try {
+          await generateLibraryClip(clip, config.clipSeconds, getSession(chatId).videoModel);
+          done++;
+        } catch (error) {
+          failed.push(
+            `${clip.title} — ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      await ctx.reply(
+        `Готово ${done} из ${todo.length}.` +
+          (failed.length ? `\n\nНе получились:\n${failed.join("\n")}` : "") +
+          "\n\nСостояние: /library",
+      );
+    });
+    return;
+  }
+
+  if (argument) {
+    const clip = getClipDefinition(argument);
+    if (!clip) {
+      await ctx.reply(
+        `Не знаю клип «${argument}». Список: /library`,
+      );
+      return;
+    }
+    if (!ready.has(clip.id)) {
+      await ctx.reply(
+        `Клип «${clip.title}» ещё не сгенерирован. Собрать недостающие: /library build`,
+      );
+      return;
+    }
+    await ctx.replyWithVideo(
+      new InputFile(path.join(CLIP_LIBRARY_DIR, libraryFileName(clip.id))),
+      { caption: `${clip.title} — ${clip.action}` },
+    );
+    return;
+  }
+
+  await ctx.reply(
+    `🎭 Библиотека клипов с маскотом: готово ${ready.size} из ${CLIP_LIBRARY.length}.\n\n` +
+      libraryStatus(ready) +
+      "\n\nЭти клипы генерируются один раз и дальше подставляются в ролики " +
+      "бесплатно — платить за оживление сцены приходится только там, где " +
+      "готового клипа нет.\n\n" +
+      "Собрать недостающие: /library build\n" +
+      "Пересобрать всё заново: /library rebuild\n" +
+      "Посмотреть один: /library <id>",
+    { parse_mode: "Markdown" },
+  );
+});
+
 // Модель оживления кадра. Отдельная команда, а не кнопка в диалоге: слаги
 // моделей Seedance в API Kie.ai я подтвердить не мог (из окружения, где
 // писался код, к api.kie.ai хода нет), поэтому здесь можно не просто выбрать
@@ -959,7 +1081,15 @@ bot.command("vidmodel", async (ctx) => {
       return;
     }
     updateSession(chatId, { videoModel: spec.key });
-    await ctx.reply(`Оживляю кадры моделью ${spec.title}.`);
+    await ctx.reply(
+      `Оживляю кадры моделью ${spec.title}.` +
+        (config.kieVideoModel
+          ? `\n\n⚠️ Но выбор ни на что не влияет: KIE_VIDEO_MODEL в .env ` +
+            `перебивает реестр и жёстко задаёт слаг \`${config.kieVideoModel}\`. ` +
+            "Очистите переменную, если хотите переключать модель из чата."
+          : ""),
+      { parse_mode: "Markdown" },
+    );
     return;
   }
 

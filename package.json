@@ -24,7 +24,8 @@
     "test:subs": "tsx scripts/test-subtitles.mjs",
     "test:overlays": "tsx scripts/test-overlays.mjs",
     "test:description": "tsx scripts/test-description.mjs",
-    "test:clips": "tsx scripts/test-clips.mjs"
+    "test:clips": "tsx scripts/test-clips.mjs",
+    "clips:build": "tsx scripts/build-clip-library.mjs"
   },
   "dependencies": {
     "@remotion/captions": "4.0.499",

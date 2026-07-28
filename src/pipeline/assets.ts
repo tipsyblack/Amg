@@ -3,6 +3,12 @@ import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Outro, Scene, VideoData } from "../types";
 import { getAudioDurationInSeconds, getClipDurationInSeconds } from "./audioDuration";
+import {
+  clipRoleForScene,
+  installLibraryClip,
+  pickLibraryClip,
+  PUBLIC_CLIPS_DIR,
+} from "./clipLibrary";
 import { config } from "./config";
 import { generateSceneClip } from "./generateClip";
 import {
@@ -19,7 +25,9 @@ import { wordsForScene } from "./wordTimings";
 export const PUBLIC_AUDIO_DIR = path.resolve("public/audio");
 export const PUBLIC_IMAGES_DIR = path.resolve("public/images");
 export const PUBLIC_OVERLAYS_DIR = path.resolve("public/overlays");
-export const PUBLIC_CLIPS_DIR = path.resolve("public/clips");
+// Папка клипов живёт в clipLibrary — там же, где библиотека, которая в неё
+// копирует. Реэкспорт, чтобы вызывающим не нужно было знать про два модуля.
+export { PUBLIC_CLIPS_DIR };
 export const PUBLIC_MUSIC_DIR = path.resolve("public/music");
 export const MUSIC_LIBRARY_DIR = path.resolve("assets/music");
 export const DATA_FILE = path.resolve("data/video-data.json");
@@ -202,6 +210,71 @@ export async function generateSceneAnimation(
       1,
     ),
   };
+}
+
+export interface SceneClipResult {
+  clipFileName: string;
+  clipDurationInFrames: number;
+  /** Откуда взялся клип — это видно в чате и попадает в лог. */
+  source: "library" | "generated";
+  /** Какой именно клип библиотеки, чтобы не повторить его в том же ролике. */
+  libraryId?: string;
+}
+
+/**
+ * Клип для сцены: сначала библиотека, потом — платная генерация.
+ *
+ * Порядок именно такой, потому что библиотечный клип уже оплачен и стоит ноль,
+ * а оживление картинки сцены стоит примерно четверть доллара за каждую сцену
+ * каждого ролика. CLIP_SOURCE меняет правило: library — только готовые,
+ * generate — только свежие.
+ *
+ * Ничего не бросает: клип — украшение поверх уже готовой сцены, и ронять
+ * из-за него ролик, где оплачены картинки и озвучка, нельзя.
+ */
+export async function sceneClip({
+  index,
+  total,
+  voiceoverText,
+  imageUrl,
+  ready,
+  used = new Set(),
+  modelKey,
+  source = config.clipSource,
+}: {
+  index: number;
+  total: number;
+  voiceoverText: string;
+  imageUrl: string;
+  ready: Set<string>;
+  used?: Set<string>;
+  modelKey?: string;
+  source?: "auto" | "library" | "generate";
+}): Promise<SceneClipResult | undefined> {
+  if (source !== "generate") {
+    const pick = pickLibraryClip(clipRoleForScene(index, total), ready, used);
+    if (pick) {
+      try {
+        const installed = await installLibraryClip(pick);
+        return { ...installed, source: "library", libraryId: pick.id };
+      } catch (error) {
+        console.warn(
+          `Не удалось взять клип «${pick.title}» из библиотеки: ` +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+    }
+    if (source === "library") return undefined;
+  }
+
+  const generated = await generateSceneAnimation(
+    index,
+    voiceoverText,
+    imageUrl,
+    config.clipSeconds,
+    modelKey,
+  );
+  return generated ? { ...generated, source: "generated" } : undefined;
 }
 
 export async function listMusicTracks(): Promise<string[]> {

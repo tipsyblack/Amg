@@ -17,3 +17,8 @@ data/bot-state.json
 data/clone-samples/
 assets/music/*
 !assets/music/README.md
+
+# Библиотека клипов с маскотом: генерируется один раз командой clips:build,
+# в репозиторий не кладём — это десяток видеофайлов.
+assets/clips/*
+!assets/clips/README.md

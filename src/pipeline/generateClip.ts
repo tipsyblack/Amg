@@ -1,4 +1,12 @@
 import path from "node:path";
+import {
+  buildLibraryClipPrompt,
+  CLIP_LIBRARY_DIR,
+  ensureLibraryDir,
+  libraryFileName,
+  PUBLIC_CLIPS_DIR,
+  type ClipDefinition,
+} from "./clipLibrary";
 import { config } from "./config";
 import { runKieTask } from "./kie";
 import { getVideoModel } from "./videoModels";
@@ -16,8 +24,6 @@ import { getVideoModel } from "./videoModels";
 // Маскота сюда специально не тянем: анимируется то, что уже нарисовано в
 // сцене. Если персонажа в кадре нет — оживает предмет или место, и это
 // нормально.
-
-export const PUBLIC_CLIPS_DIR = path.resolve("public/clips");
 
 /**
  * Промпт движения. Камера почти неподвижна намеренно: карточка в кадре и так
@@ -74,6 +80,39 @@ export async function generateSceneClip(
     );
     return undefined;
   }
+}
+
+/**
+ * Генерирует один клип библиотеки маскота в assets/clips.
+ *
+ * В отличие от оживления сцены, здесь ошибка бросается: библиотека собирается
+ * отдельной командой, а не посреди сборки ролика, и молча пропустить неудачу
+ * значит оставить дыру в библиотеке, о которой узнаешь через месяц.
+ *
+ * Первым кадром идёт эталон внешности маскота — тот же файл, которым мы
+ * держим его лицо одинаковым в картинках сцен.
+ */
+export async function generateLibraryClip(
+  clip: ClipDefinition,
+  seconds: number = config.clipSeconds,
+  modelKey?: string,
+): Promise<string> {
+  const spec = getVideoModel(modelKey);
+  const fileName = libraryFileName(clip.id);
+  await ensureLibraryDir();
+
+  await runKieTask({
+    model: spec.model,
+    input: spec.buildInput(
+      buildLibraryClipPrompt(clip),
+      config.characterReferenceUrl,
+      seconds,
+    ),
+    outFile: path.join(CLIP_LIBRARY_DIR, fileName),
+    label: `клип библиотеки «${clip.title}», модель ${spec.model}`,
+  });
+
+  return fileName;
 }
 
 /**

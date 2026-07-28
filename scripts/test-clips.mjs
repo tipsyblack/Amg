@@ -6,7 +6,7 @@
 // videoModels.ts), проверять их можно только на живом аккаунте командой
 // /vidmodel probe. Проверяем всё, что от аккаунта не зависит.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -102,6 +102,17 @@ check(
   "неизвестный ключ откатывается на модель по умолчанию",
   getVideoModel("нет-такой").key === DEFAULT_VIDEO_MODEL_KEY,
 );
+// Слаг по умолчанию — тот, что назвал владелец аккаунта. Он не проверен, но
+// зафиксирован тестом: если кто-то его молча поменяет, это должно всплыть.
+check(
+  "по умолчанию берётся bytedance/seedance-2-0-mini",
+  getVideoModel().model === "bytedance/seedance-2-0-mini",
+  getVideoModel().model,
+);
+check(
+  "все слаги — Seedance от bytedance",
+  VIDEO_MODELS.every((m) => m.model.startsWith("bytedance/seedance")),
+);
 
 for (const spec of VIDEO_MODELS) {
   const input = spec.buildInput("движение", "https://example.com/a.png", 2);
@@ -149,6 +160,177 @@ try {
   );
 } finally {
   rmSync(dir, { recursive: true, force: true });
+}
+
+console.log("\n=== библиотека маскота ===");
+const {
+  CLIP_LIBRARY,
+  buildLibraryClipPrompt,
+  clipRoleForScene,
+  getClipDefinition,
+  libraryFileName,
+  pickLibraryClip,
+} = await import("../src/pipeline/clipLibrary.ts");
+
+check("в библиотеке ровно десять клипов", CLIP_LIBRARY.length === 10, String(CLIP_LIBRARY.length));
+check(
+  "идентификаторы уникальны",
+  new Set(CLIP_LIBRARY.map((c) => c.id)).size === CLIP_LIBRARY.length,
+);
+check(
+  "имена файлов уникальны и не пересекаются с клипами сцен",
+  new Set(CLIP_LIBRARY.map((c) => libraryFileName(c.id))).size === 10 &&
+    CLIP_LIBRARY.every((c) => libraryFileName(c.id).startsWith("lib-")),
+);
+check("поиск по id работает", getClipDefinition("intro-lamp")?.role === "intro");
+check("неизвестный id — undefined", getClipDefinition("нет") === undefined);
+
+// Роли должны покрывать все места, куда клип может встать: иначе сцена
+// молча останется картинкой, и понять почему будет неоткуда.
+for (const role of ["intro", "reaction", "handoff", "outro"]) {
+  const count = CLIP_LIBRARY.filter((c) => c.role === role).length;
+  check(`роль ${role}: есть хотя бы два варианта`, count >= 2, `${count}`);
+}
+
+check(
+  "хук получает появление, финал — прощание",
+  clipRoleForScene(0, 8) === "intro" && clipRoleForScene(7, 8) === "outro",
+);
+check(
+  "середина — не появление и не прощание",
+  [1, 2, 3, 4, 5, 6].every((i) => {
+    const role = clipRoleForScene(i, 8);
+    return role === "reaction" || role === "handoff";
+  }),
+);
+// Сцена одна на весь ролик: она и хук, и финал. Появление важнее — с него
+// начинается просмотр.
+check("единственная сцена считается хуком", clipRoleForScene(0, 1) === "intro");
+
+console.log("\n--- выбор из библиотеки ---");
+const allReady = new Set(CLIP_LIBRARY.map((c) => c.id));
+check(
+  "из пустой библиотеки не выбирается ничего",
+  pickLibraryClip("intro", new Set()) === undefined,
+);
+check(
+  "выбранный клип совпадает по роли",
+  pickLibraryClip("outro", allReady)?.role === "outro",
+);
+check(
+  "частично собранная библиотека: берётся только готовое",
+  pickLibraryClip("intro", new Set(["intro-wave"]))?.id === "intro-wave",
+);
+check(
+  "роли, которой нет в готовых, не выдумывается замена",
+  pickLibraryClip("outro", new Set(["intro-wave"])) === undefined,
+);
+// Занятые в этом же ролике клипы пропускаются — иначе два соседних
+// оживления окажутся одним и тем же жестом.
+const used = new Set(["react-think", "react-nod"]);
+check(
+  "занятый клип не выдаётся повторно",
+  pickLibraryClip("reaction", allReady, used)?.id === "react-surprise",
+);
+// Но если заняты все — лучше повтор, чем пустая сцена.
+const allReactionsUsed = new Set(
+  CLIP_LIBRARY.filter((c) => c.role === "reaction").map((c) => c.id),
+);
+check(
+  "когда заняты все клипы роли, повтор всё равно лучше пустоты",
+  pickLibraryClip("reaction", allReady, allReactionsUsed)?.role === "reaction",
+);
+// Выбор случайный: если брать всегда первый, все ролики будут открываться
+// одним кадром. Проверяем, что за много попыток встречается больше одного.
+const seen = new Set();
+for (let i = 0; i < 200; i++) seen.add(pickLibraryClip("intro", allReady)?.id);
+check("выбор перебирает варианты, а не залипает на первом", seen.size > 1, `${seen.size}`);
+
+console.log("\n--- промпт библиотечного клипа ---");
+const libPrompt = buildLibraryClipPrompt(getClipDefinition("intro-lamp"));
+check("действие попало в промпт", libPrompt.includes("вырывается из лампы"));
+check(
+  "фон просится пустым: клип встаёт в карточку рядом с иллюстрациями",
+  /фон/i.test(libPrompt) && /без окружения/i.test(libPrompt),
+);
+check("камера неподвижна", /неподвижн/i.test(libPrompt));
+check("запрет текста на месте", /никакого текста/i.test(libPrompt));
+check(
+  "внешность просим не перерисовывать",
+  /не перерисовывай/i.test(libPrompt),
+);
+check(
+  "все десять промптов собираются без ошибок и непустые",
+  CLIP_LIBRARY.every((c) => buildLibraryClipPrompt(c).length > 200),
+);
+
+console.log("\n=== библиотека предпочитается платной генерации ===");
+// Самое дорогое место во всей фиче: если порядок перепутать, каждый ролик
+// начнёт платить за то, что уже оплачено. Кладём в библиотеку настоящий файл
+// и проверяем, что он подставился, а в Kie.ai никто не пошёл (ключ здесь
+// фальшивый — любой сетевой вызов провалился бы).
+const { sceneClip } = await import("../src/pipeline/assets.ts");
+const { CLIP_LIBRARY_DIR, PUBLIC_CLIPS_DIR } = await import(
+  "../src/pipeline/clipLibrary.ts"
+);
+const libDir = CLIP_LIBRARY_DIR;
+const hadLibDir = existsSync(libDir);
+const fakeId = "intro-lamp";
+const fakeFile = path.join(libDir, libraryFileName(fakeId));
+const hadFake = existsSync(fakeFile);
+try {
+  mkdirSync(libDir, { recursive: true });
+  mkdirSync(PUBLIC_CLIPS_DIR, { recursive: true });
+  if (!hadFake) {
+    execFileSync("ffmpeg", [
+      "-y", "-hide_banner", "-loglevel", "error",
+      "-f", "lavfi", "-i", "color=c=blue:s=320x426:d=2:r=30",
+      "-pix_fmt", "yuv420p", fakeFile,
+    ]);
+  }
+
+  const fromLibrary = await sceneClip({
+    index: 0,
+    total: 5,
+    voiceoverText: "текст",
+    imageUrl: "https://example.com/scene.png",
+    ready: new Set([fakeId]),
+  });
+  check(
+    "готовый клип берётся из библиотеки, а не генерируется",
+    fromLibrary?.source === "library" && fromLibrary?.libraryId === fakeId,
+    JSON.stringify(fromLibrary),
+  );
+  check(
+    "длительность подставленного клипа посчитана",
+    fromLibrary?.clipDurationInFrames > 0,
+    String(fromLibrary?.clipDurationInFrames),
+  );
+  check(
+    "файл действительно лёг туда, где его прочитает Remotion",
+    existsSync(path.join(PUBLIC_CLIPS_DIR, fromLibrary.clipFileName)),
+  );
+
+  // source=library — платных генераций не делать вовсе, даже если готового
+  // клипа для этой роли нет. Иначе «только библиотека» молча тратила бы деньги.
+  const strict = await sceneClip({
+    index: 2,
+    total: 5,
+    voiceoverText: "текст",
+    imageUrl: "https://example.com/scene.png",
+    ready: new Set([fakeId]),
+    source: "library",
+  });
+  check(
+    "режим «только библиотека» не уходит в платную генерацию",
+    strict === undefined,
+    JSON.stringify(strict),
+  );
+
+  rmSync(path.join(PUBLIC_CLIPS_DIR, libraryFileName(fakeId)), { force: true });
+} finally {
+  if (!hadFake) rmSync(fakeFile, { force: true });
+  if (!hadLibDir) rmSync(libDir, { recursive: true, force: true });
 }
 
 console.log("\n=== схема сцены ===");
