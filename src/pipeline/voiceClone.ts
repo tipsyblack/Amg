@@ -1,6 +1,13 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { config } from "./config";
+import {
+  MAX_UPLOAD_BYTES,
+  concatAudio,
+  fileSizeBytes,
+  prepareUploadFiles,
+} from "./voiceSamples";
 
 // Клонирование голоса и очистка дорожки от музыки — прямые вызовы ElevenLabs.
 // Через Kie.ai эти операции недоступны, нужен свой ключ (Creator и выше).
@@ -24,13 +31,22 @@ async function fileToBlob(file: string): Promise<Blob> {
 }
 
 /**
- * Убирает музыку и шум, оставляя голос (Voice Isolator). Полезно послушать
- * результат до клонирования: если голос звучит «подводно», исходник не годится.
+ * Готовит файлы под лимит ElevenLabs на один загружаемый файл и убирает за
+ * собой куски, если резать пришлось.
  */
-export async function isolateVoice(
-  inFile: string,
-  outFile: string,
-): Promise<void> {
+async function withUploadFiles<T>(
+  files: string[],
+  run: (prepared: string[]) => Promise<T>,
+): Promise<T> {
+  const workDir = await mkdtemp(path.join(tmpdir(), "amg-samples-"));
+  try {
+    return await run(await prepareUploadFiles(files, workDir));
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
+async function isolateOne(inFile: string, outFile: string): Promise<void> {
   const form = new FormData();
   form.append("audio", await fileToBlob(inFile), path.basename(inFile));
 
@@ -49,6 +65,39 @@ export async function isolateVoice(
 }
 
 /**
+ * Убирает музыку и шум, оставляя голос (Voice Isolator). Полезно послушать
+ * результат до клонирования: если голос звучит «подводно», исходник не годится.
+ *
+ * Дорожку длиннее лимита на загрузку чистим по частям и склеиваем обратно:
+ * материал на клон собирается из нескольких роликов и легко перерастает 11 МБ,
+ * а отказ здесь обнуляет всю сессию сбора.
+ */
+export async function isolateVoice(
+  inFile: string,
+  outFile: string,
+): Promise<void> {
+  if ((await fileSizeBytes(inFile)) <= MAX_UPLOAD_BYTES) {
+    await isolateOne(inFile, outFile);
+    return;
+  }
+
+  await withUploadFiles([inFile], async (parts) => {
+    if (parts.length === 1) {
+      await isolateOne(parts[0], outFile);
+      return;
+    }
+    const workDir = path.dirname(parts[0]);
+    const cleaned: string[] = [];
+    for (const [index, part] of parts.entries()) {
+      const out = path.join(workDir, `clean-${index}.mp3`);
+      await isolateOne(part, out);
+      cleaned.push(out);
+    }
+    await concatAudio(cleaned, outFile);
+  });
+}
+
+/**
  * Создаёт мгновенный клон голоса из набора сэмплов.
  * removeBackgroundNoise просит ElevenLabs самому прогнать сэмплы через
  * шумоподавление — исходники из роликов идут с музыкой.
@@ -62,21 +111,29 @@ export async function createInstantVoiceClone({
   files: string[];
   removeBackgroundNoise?: boolean;
 }): Promise<{ voiceId: string }> {
-  const form = new FormData();
-  form.append("name", name);
-  form.append("remove_background_noise", String(removeBackgroundNoise));
-  for (const file of files) {
-    form.append("files", await fileToBlob(file), path.basename(file));
-  }
-
-  const response = await fetch(ADD_VOICE_URL, {
-    method: "POST",
-    headers: { "xi-api-key": requireKey() },
-    body: form,
+  const response = await withUploadFiles(files, async (prepared) => {
+    const form = new FormData();
+    form.append("name", name);
+    form.append("remove_background_noise", String(removeBackgroundNoise));
+    for (const file of prepared) {
+      form.append("files", await fileToBlob(file), path.basename(file));
+    }
+    return fetch(ADD_VOICE_URL, {
+      method: "POST",
+      headers: { "xi-api-key": requireKey() },
+      body: form,
+    });
   });
 
   if (!response.ok) {
     const body = await response.text();
+    if (body.includes("upload_file_size_exceeded")) {
+      throw new Error(
+        "ElevenLabs отверг сэмплы по размеру, хотя каждый файл уложен в 11 МБ " +
+          "— похоже, упёрлись в предел на весь набор. Пришлите меньше " +
+          "материала: мгновенному клону хватает одной-двух минут речи.",
+      );
+    }
     if (body.includes("can_not_use_instant_voice_cloning") || response.status === 403) {
       throw new Error(
         "Тариф ElevenLabs не разрешает клонирование голоса. Нужен Starter " +
@@ -185,21 +242,30 @@ export async function editInstantVoiceClone({
   files: string[];
   removeBackgroundNoise?: boolean;
 }): Promise<void> {
-  const form = new FormData();
-  form.append("name", name);
-  form.append("remove_background_noise", String(removeBackgroundNoise));
-  for (const file of files) {
-    form.append("files", await fileToBlob(file), path.basename(file));
-  }
-
-  const response = await fetch(`${VOICES_URL}/${voiceId}/edit`, {
-    method: "POST",
-    headers: { "xi-api-key": requireKey() },
-    body: form,
+  const response = await withUploadFiles(files, async (prepared) => {
+    const form = new FormData();
+    form.append("name", name);
+    form.append("remove_background_noise", String(removeBackgroundNoise));
+    for (const file of prepared) {
+      form.append("files", await fileToBlob(file), path.basename(file));
+    }
+    return fetch(`${VOICES_URL}/${voiceId}/edit`, {
+      method: "POST",
+      headers: { "xi-api-key": requireKey() },
+      body: form,
+    });
   });
 
   if (!response.ok) {
     const body = await response.text();
+    if (body.includes("upload_file_size_exceeded")) {
+      throw new Error(
+        "ElevenLabs отверг сэмплы по размеру, хотя каждый файл уложен в 11 МБ " +
+          "— похоже, упёрлись в предел на весь набор голоса. Материала в нём " +
+          "уже много: создайте новый голос из свежих записей (/clone) вместо " +
+          "добавления к этому.",
+      );
+    }
     if (body.includes("can_not_use_instant_voice_cloning") || response.status === 403) {
       throw new Error(
         "Тариф ElevenLabs не разрешает изменять клонированный голос. Нужен " +
