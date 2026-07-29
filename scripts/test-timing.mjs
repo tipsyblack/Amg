@@ -149,6 +149,7 @@ console.log("\n=== звуки стыков: файлы есть и они рез
 // единицы миллисекунд и короткий спад. Проверяем по самим файлам, потому что
 // заменить их легко, а услышать разницу в тесте — нет.
 const { existsSync, readFileSync } = await import("node:fs");
+const path = (await import("node:path")).default;
 const { execFileSync } = await import("node:child_process");
 const { tmpdir } = await import("node:os");
 const pathMod = await import("node:path");
@@ -182,6 +183,86 @@ for (const name of sfx) {
     attackMs <= 15 && decayMs >= 60 && decayMs <= 320 && lengthMs >= 200 && lengthMs <= 700,
   );
 }
+
+console.log("\n=== спектр звуков: основание, а не один щелчок ===");
+// Границы сняты с присланного референса: на девяти стыках и появлениях
+// мощность в момент события минус мощность фона за 0.4 с до него. У его
+// акцентов спектральный центр 900-6000 Гц и 8-61% энергии ниже 300 Гц.
+// У наших первых версий было 5600-9600 Гц и 0.1-0.4% низа — оттого звук
+// выходил тонким и «пластиковым»: у click стоял highpass=700, у clap и snap
+// полосовые фильтры от 1900 и 4200 Гц, то есть низ срезался целиком.
+//
+// Сам звук из референса не заимствован, только измерен: там плотный микс с
+// чужой озвучкой и музыкой (медиана -6.9 dB, тишины 0.5%), вырезать оттуда
+// чистый стингер нечего.
+//
+// Считаем прямым ДПФ по равномерной сетке 10 Гц. Именно равномерной: с
+// шагом 50 Гц метрика промахивалась мимо узкого низкого пика на 130 Гц и
+// показывала 3% там, где на деле 12.6%.
+const SFX_GRID_STEP = 10;
+const SFX_GRID_MAX = 12000;
+const SFX_WINDOW_SECONDS = 0.15;
+
+function sfxSpectrum(name) {
+  const b = readFileSync(path.resolve("public/sfx", `${name}.wav`));
+  const sr = b.readUInt32LE(24);
+  const total = (b.length - 44) / 2;
+  const n = Math.min(total, Math.round(sr * SFX_WINDOW_SECONDS));
+  const x = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
+    x[i] = (b.readInt16LE(44 + 2 * i) / 32768) * w;
+  }
+
+  let sumAll = 0;
+  let sumLow = 0;
+  let sumWeighted = 0;
+  for (let f = SFX_GRID_STEP; f <= SFX_GRID_MAX; f += SFX_GRID_STEP) {
+    let re = 0;
+    let im = 0;
+    const step = (2 * Math.PI * f) / sr;
+    for (let i = 0; i < n; i++) {
+      const a = step * i;
+      re += x[i] * Math.cos(a);
+      im -= x[i] * Math.sin(a);
+    }
+    const mag = Math.sqrt(re * re + im * im);
+    sumAll += mag;
+    sumWeighted += f * mag;
+    if (f < 300) sumLow += mag;
+  }
+  return { centroid: sumWeighted / sumAll, lowShare: (100 * sumLow) / sumAll };
+}
+
+for (const name of ["click", "clap", "snap", "impact"]) {
+  const { centroid, lowShare } = sfxSpectrum(name);
+  check(
+    `${name}: центр ${Math.round(centroid)} Гц, низ ${lowShare.toFixed(1)}%`,
+    centroid >= 900 && centroid <= 6100 && lowShare >= 7 && lowShare <= 65,
+  );
+}
+
+// Громкость выравнивается отдельным проходом в build-sfx: раньше она держалась
+// на подобранных вручную volume= в каждом звуке и разъезжалась при любой
+// правке фильтров — после добавления низа разброс дошёл до 5 dB, то есть один
+// стык бил, а другой еле шелестел.
+const levels = ["click", "clap", "snap", "impact", "hook"].map((name) => {
+  const b = readFileSync(path.resolve("public/sfx", `${name}.wav`));
+  const n = (b.length - 44) / 2;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const v = b.readInt16LE(44 + 2 * i) / 32768;
+    sum += v * v;
+  }
+  return { name, db: 20 * Math.log10(Math.sqrt(sum / n)) };
+});
+const spread =
+  Math.max(...levels.map((l) => l.db)) - Math.min(...levels.map((l) => l.db));
+check(
+  `громкость выровнена, разброс ${spread.toFixed(1)} dB`,
+  spread <= 2,
+  levels.map((l) => `${l.name} ${l.db.toFixed(1)}`).join(", "),
+);
 
 console.log("\n=== уровни слоёв в миксе ===");
 const { MIX } = await import("../src/remotion/mix.ts");
