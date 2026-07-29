@@ -71,7 +71,12 @@ const usefulBody = [
   { caption: "ТРИ ТОНА СРАЗУ", voiceoverText: "Попроси переписать текст в трёх тонах и выбери лучший." },
   { caption: "ПРОВЕРЬ ЦИФРЫ", voiceoverText: "Модель уверенно врёт в числах — сверяй с источником." },
 ];
-const cta = { caption: "ЖМИ ССЫЛКУ", voiceoverText: "Переходи по ссылке в описании." };
+// Призыв в фикстуре тоже обязан быть хорошим: он подставляется почти во все
+// проверки, и слабый ловился бы новым ctaProblem, зашумляя остальные тесты.
+const cta = {
+  caption: "ЖМИ ССЫЛКУ",
+  voiceoverText: "По ссылке в шапке затестишь любую нейросеть бесплатно.",
+};
 const cleanScript = {
   title: "Приёмы работы с текстом",
   scenes: [
@@ -419,5 +424,123 @@ const example = JSON.parse(STYLE_EXAMPLE);
   );
   check("в примере больше десяти кадров", example.scenes.length >= 10, String(example.scenes.length));
 }
+
+
+console.log("\n=== маркетинговые проверки ===");
+const {
+  deadEndProblem,
+  hookNumberProblem,
+  ctaProblem,
+  staleProblem,
+} = await import("../src/pipeline/generateScript.ts");
+
+console.log("--- финал без вывода ---");
+// Ролик, кончающийся «учёные работают над этим», не даёт зрителю ни вывода,
+// ни повода поделиться. Смотрим предпоследнюю сцену: в последней призыв.
+for (const [what, text] of [
+  ["учёные ищут", "Инженеры и учёные ищут способы снизить энергопотребление."],
+  ["непростая задача", "Это непростая задача, братуха."],
+  ["время покажет", "Что будет дальше — время покажет."],
+  ["пока неясно", "Пока непонятно, чем это кончится."],
+  ["работа идёт", "Работа всё ещё идёт."],
+]) {
+  const script = { title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: text }, cta] };
+  check(`поймано: ${what}`, deadEndProblem(script) !== undefined, String(deadEndProblem(script)));
+}
+check(
+  "вывод для зрителя претензий не вызывает",
+  deadEndProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Значит, проси у модели конкретику, а не красоту." }, cta] }) === undefined,
+);
+// Смотреть надо предпоследнюю: в последней сцене эти же слова были бы частью
+// призыва, а не концовкой рассказа.
+check(
+  "в самом призыве такие слова не ищем",
+  deadEndProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Проси конкретику." }, { caption: "CTA", voiceoverText: "Время покажет, но затестить бота можно бесплатно прямо сейчас." }] }) === undefined,
+);
+
+console.log("--- яркая цифра должна быть в хуке ---");
+const buried = {
+  title: "t",
+  scenes: [
+    { caption: "ХУК", voiceoverText: "Нейросети жрут энергию, и это стало проблемой." },
+    { caption: "ЦИФРА", voiceoverText: "Одно обучение — 1287 мегаватт-часов электричества." },
+    cta,
+  ],
+};
+check("цифра в середине поймана", hookNumberProblem(buried) !== undefined, String(hookNumberProblem(buried)));
+check(
+  "названо, в какой именно сцене она лежит",
+  /сцене 2/.test(hookNumberProblem(buried) ?? ""),
+  hookNumberProblem(buried),
+);
+check(
+  "цифра в хуке — претензий нет",
+  hookNumberProblem({ title: "t", scenes: [{ caption: "ХУК", voiceoverText: "Одно обучение нейросети — 1287 мегаватт-часов." }, { caption: "К", voiceoverText: "Это много." }, cta] }) === undefined,
+);
+check(
+  "ролик без крупных цифр вообще не трогаем",
+  hookNumberProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Проси три варианта." }, cta] }) === undefined,
+);
+// Год и номер поколения — не «яркая цифра», иначе проверка сработает на
+// каждом втором ролике про ИИ.
+check(
+  "год не считается крючком",
+  hookNumberProblem({ title: "t", scenes: [{ caption: "ХУК", voiceoverText: "Смотри, что поменялось." }, { caption: "К", voiceoverText: "В 2026 году всё стало иначе." }, cta] }) === undefined,
+);
+
+console.log("--- призыв ---");
+const weakCta = { title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Проси конкретику." }, { caption: "CTA", voiceoverText: "Наш бот умеет фото, видео и музыку. Загляни по ссылке в профиле, там много интересного." }] };
+const ctaFound = ctaProblem(weakCta);
+check("слабый призыв пойман", ctaFound !== undefined, String(ctaFound));
+check("названо «там много интересного»", /много интересного/.test(ctaFound ?? ""), ctaFound);
+check("названо отсутствие предложения", /конкретного предложения/.test(ctaFound ?? ""), ctaFound);
+check(
+  "растянутый призыв пойман",
+  /растянут/.test(
+    ctaProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "CTA", voiceoverText: "Бесплатно " + Array(30).fill("слово").join(" ") }] }) ?? "",
+  ),
+);
+check(
+  "конкретный короткий призыв проходит",
+  ctaProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "CTA", voiceoverText: "По ссылке в шапке затестишь любую нейросеть бесплатно." }] }) === undefined,
+  ctaProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "CTA", voiceoverText: "По ссылке в шапке затестишь любую нейросеть бесплатно." }] }),
+);
+
+console.log("--- устаревшие примеры ---");
+check(
+  "GPT-3 датирует ролик",
+  /GPT-3/.test(staleProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Нейросеть GPT-3, к примеру, потребляет много." }, cta] }) ?? ""),
+);
+check(
+  "актуальное поколение не трогаем",
+  staleProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "GPT-5.4 справляется с этим сама." }, cta] }) === undefined,
+);
+check(
+  "версия с точкой не путается со старой",
+  staleProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Claude 5 и Llama 4 умеют это." }, cta] }) === undefined,
+);
+
+console.log("--- сценарий из присланного ролика ---");
+// Тот самый ролик, ради которого проверки и появились.
+const shipped = {
+  title: "Энергия нейросетей",
+  scenes: [
+    { caption: "НЕЙРОСЕТИ ЖРУТ ЭНЕРГИЮ", voiceoverText: "Нейросети потребляют так много энергии, что уже стало настоящей проблемой. Чего так? Объясню, смотри." },
+    { caption: "1287 МЕГАВАТТ-ЧАСОВ", voiceoverText: "Нейросеть GPT-3, к примеру, за одно обучение потребляет около 1287 мегаватт-часов электричества." },
+    { caption: "УМНОЖЕНИЕ МАТРИЦ", voiceoverText: "Прикол в том, что обучение — это миллиарды операций умножения матриц." },
+    { caption: "НЕПРОСТАЯ ЗАДАЧА", voiceoverText: "Инженеры и учёные ищут способы снизить энергопотребление. Это непростая задача, братуха." },
+    { caption: "ЗАГЛЯНИ В ПРОФИЛЬ", voiceoverText: "Хочешь сам поработать с мощными нейросетями? Наш бот соберёт для тебя фото, видео, музыку. Загляни по ссылке профиле, там много интересного, да?" },
+  ],
+};
+const shippedProblems = scriptProblems(shipped, 60);
+for (const key of ["яркая цифра", "кончается ничем", "слабый призыв", "устаревшие примеры"]) {
+  check(`найдено: ${key}`, shippedProblems.some((p) => p.includes(key)), shippedProblems.join(" | ").slice(0, 90));
+}
+
+// Пример стиля в промпте сильнее правил, поэтому он обязан проходить ВСЕ
+// проверки, которые мы предъявляем модели, — не только ритм.
+console.log("--- пример стиля безупречен ---");
+const exampleProblems = scriptProblems(JSON.parse(STYLE_EXAMPLE), 60);
+check("пример проходит все проверки", exampleProblems.length === 0, exampleProblems.join(" | "));
 
 process.exit(fails === 0 ? 0 : 1);
