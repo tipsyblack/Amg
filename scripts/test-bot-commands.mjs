@@ -37,6 +37,7 @@ bot.command('vidmodel', (ctx) => { hits.push(['vidmodel', ctx.match]); });
 bot.command('clips', (ctx) => { hits.push(['clips', ctx.match]); });
 bot.command('clone', (ctx) => { hits.push(['clone', ctx.match]); });
 bot.command('library', (ctx) => { hits.push(['library', ctx.match]); });
+bot.command('rules', (ctx) => { hits.push(['rules', ctx.match]); });
 bot.command('length', (ctx) => { hits.push(['length', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
@@ -147,6 +148,19 @@ check(
   hits.at(-1)?.[0] === 'library' && hits.at(-1)?.[1] === 'intro-lamp',
   JSON.stringify(hits.at(-1)),
 );
+// 12) /rules: чек-лист присылают вставкой, иногда прямо в команде — аргумент
+// может быть многострочным и длинным.
+await bot.handleUpdate(upd('/rules'));
+check('/rules без аргумента', hits.at(-1)?.[0] === 'rules' && hits.at(-1)?.[1] === '');
+await bot.handleUpdate(upd('/rules reset'));
+check('/rules reset', hits.at(-1)?.[0] === 'rules' && hits.at(-1)?.[1] === 'reset');
+await bot.handleUpdate(upd('/rules # Чек-лист\n\n## 1. Пункт\nТекст правила.'));
+check(
+  '/rules с многострочным текстом: перевод строки не обрезал аргумент',
+  hits.at(-1)?.[0] === 'rules' && hits.at(-1)?.[1].includes('## 1. Пункт'),
+  JSON.stringify(hits.at(-1)?.[1]?.slice(0, 40)),
+);
+
 // /library и /length начинаются на «l» — проверяем, что не слиплись.
 await bot.handleUpdate(upd('/length 75'));
 check('/length не путается с /library', hits.at(-1)?.[0] === 'length' && hits.at(-1)?.[1] === '75');

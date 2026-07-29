@@ -187,10 +187,26 @@ const weakScript = {
 let requests = [];
 const queue = [];
 let httpStatus = 200;
+// Критика отвечаем отдельно: он ходит в тот же эндпоинт, но его ответ — это
+// список претензий, а не сценарий. Без разделения он съедал бы очередь
+// сценариев и ломал подсчёт запросов.
+let reviewProblems = [];
+const isReview = (body) =>
+  String(body.messages?.[0]?.content ?? "").startsWith("Ты — редактор");
+
 globalThis.fetch = async (url, init) => {
-  requests.push(JSON.parse(init.body));
+  const body = JSON.parse(init.body);
+  if (isReview(body)) {
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ problems: reviewProblems }) } }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+  requests.push(body);
   // Отказ имитируем только на запросах с плагином веб-поиска.
-  if (httpStatus !== 200 && JSON.parse(init.body).plugins) {
+  if (httpStatus !== 200 && body.plugins) {
     return new Response('{"error":"web plugin not available"}', { status: httpStatus });
   }
   return new Response(
@@ -226,6 +242,28 @@ requests = [];
 const stillWeak = await generateCheckedScript("Продукт: нейросети в Телеграм.");
 check("после двух попыток сценарий всё равно есть", stillWeak.script.scenes.length === 3);
 check("вторая попытка не зациклилась", requests.length === 2, String(requests.length));
+
+// Претензии критика должны попадать в тот же механизм автоправки, что и
+// структурные: иначе он бы только советовал, а сценарий уходил как есть.
+reviewProblems = [
+  { rule: "Тема ведёт к продукту", problem: "финал меняет тему", scene: 3 },
+];
+queue.length = 0;
+queue.push(cleanScript, cleanScript);
+requests = [];
+const reviewed = await generateCheckedScript("Продукт: нейросети в Телеграм.");
+check("претензия критика вызвала переписывание", requests.length === 2, String(requests.length));
+check(
+  "она названа в списке правок",
+  reviewed.fixes.some((f) => f.includes("финал меняет тему")),
+  reviewed.fixes.join(" | "),
+);
+check(
+  "и с номером сцены",
+  reviewed.fixes.some((f) => f.includes("сцена 3")),
+  reviewed.fixes.join(" | "),
+);
+reviewProblems = [];
 
 console.log("\n=== веб-поиск для актуальных тем ===");
 queue.length = 0;
@@ -623,5 +661,104 @@ const sickProblems = scriptProblems(sick, 60);
 for (const key of ["яркая цифра", "кончается ничем", "слабый призыв", "устаревшие примеры"]) {
   check(`больной сценарий всё ещё бракуется: ${key}`, sickProblems.some((p) => p.includes(key)));
 }
+
+
+console.log("\n=== критик: правила вкуса вынесены из кода ===");
+// Для контент-завода регулярки — тупик: каждая новая тема приносит свои
+// обороты, и список либо отстаёт, либо начинает браковать здоровое. Поэтому
+// смысл проверяет модель по чек-листу, а чек-лист лежит текстовым файлом и
+// правится редактором без деплоя.
+const review = await import("../src/pipeline/reviewScript.ts");
+const checklist = await import("../src/pipeline/reviewChecklist.ts");
+const { config: cfg } = await import("../src/pipeline/config.ts");
+
+check("чек-лист по умолчанию непустой", checklist.DEFAULT_CHECKLIST.length > 500);
+check(
+  "в нём есть главное правило — тема ведёт к продукту",
+  /ведёт к продукту/i.test(checklist.readChecklist()),
+);
+check("критик включён по умолчанию", cfg.scriptReview === true);
+
+const sample = { title: "т", scenes: [{ caption: "К", voiceoverText: "текст" }] };
+const realFetch = globalThis.fetch;
+const reply = (content) => async () =>
+  new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+globalThis.fetch = reply(
+  JSON.stringify({
+    problems: [
+      { rule: "Тема ведёт к продукту", problem: "финал меняет тему", scene: 4 },
+      { rule: "Хук", problem: "говорит об отрасли, а не о зрителе", scene: null },
+    ],
+  }),
+);
+let got = await review.reviewScript(sample, "бриф");
+check("претензии разобраны", got.problems.length === 2, JSON.stringify(got.problems));
+check(
+  "номер сцены попал в текст для сценариста",
+  review.formatReviewProblem(got.problems[0]).includes("(сцена 4)"),
+  review.formatReviewProblem(got.problems[0]),
+);
+check(
+  "без номера сцены скобок нет",
+  !review.formatReviewProblem(got.problems[1]).includes("("),
+  review.formatReviewProblem(got.problems[1]),
+);
+
+// Модель любит обернуть JSON в ограду — разбор должен это переживать.
+globalThis.fetch = reply('```json\n{"problems":[{"rule":"Призыв","problem":"пустой"}]}\n```');
+got = await review.reviewScript(sample, "бриф");
+check("ответ в markdown-ограде разобран", got.problems.length === 1, JSON.stringify(got));
+
+globalThis.fetch = reply('{"problems":[]}');
+got = await review.reviewScript(sample, "бриф");
+check("хороший сценарий не вызывает претензий", got.problems.length === 0);
+check("и не считается сбоем", got.unavailable === undefined);
+
+// Критик — улучшение, а не условие работы: дальше идут оплаченные картинки,
+// и ронять из-за него генерацию нельзя.
+globalThis.fetch = async () => new Response("nope", { status: 500 });
+got = await review.reviewScript(sample, "бриф");
+check("отказ сети не бросает исключение", got.problems.length === 0);
+check("но сбой назван вслух", /500/.test(got.unavailable ?? ""), got.unavailable);
+
+globalThis.fetch = reply("это вообще не json");
+got = await review.reviewScript(sample, "бриф");
+check("мусор в ответе не роняет генерацию", got.problems.length === 0);
+check("и тоже назван", Boolean(got.unavailable), got.unavailable);
+
+globalThis.fetch = realFetch;
+
+console.log("--- структура и вкус разделены ---");
+// Структурные проверки объективны и не выключаются; регулярки вкуса — за
+// выключателем, потому что на потоке тем они начинают мешать.
+const sickScript = {
+  title: "t",
+  scenes: [
+    sc2("ХУК", "Нейросети потребляют много энергии, и это стало проблемой."),
+    sc2("ЦИФРА", "GPT-3 за обучение потребляет 1287 мегаватт-часов электричества."),
+    sc2("ФИНАЛ", "Инженеры и учёные ищут способы. Это непростая задача."),
+    sc2("CTA", "Наш бот умеет фото. Загляни по ссылке, там много интересного."),
+  ],
+};
+const withTaste = scriptProblems(sickScript, 60);
+process.env.SCRIPT_TASTE_RULES = "0";
+const fresh = await import(`../src/pipeline/generateScript.ts?taste=off`);
+// Конфиг читается один раз при загрузке модуля, поэтому переключатель здесь
+// проверяем на самом объекте конфигурации, а не перезагрузкой всего графа.
+delete process.env.SCRIPT_TASTE_RULES;
+check(
+  "с регулярками вкуса претензий больше, чем структурных",
+  withTaste.some((p) => p.includes("яркая цифра")) &&
+    withTaste.some((p) => p.includes("слабый призыв")),
+  withTaste.join(" | ").slice(0, 80),
+);
+check(
+  "структурные проверки на месте независимо от вкуса",
+  typeof fresh.rhythmProblem === "function",
+);
 
 process.exit(fails === 0 ? 0 : 1);

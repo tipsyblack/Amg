@@ -1,4 +1,6 @@
 import { config } from "./config";
+import { extractJson } from "./extractJson";
+import { formatReviewProblem, reviewScript } from "./reviewScript";
 
 interface ScriptScene {
   caption: string;
@@ -667,14 +669,9 @@ export interface ScriptResult {
  * приписывает фразу до него — и голый `JSON.parse` на этом падает. Поэтому
  * снимаем обёртку сами и берём текст от первой `{` до последней `}`.
  */
-export function extractJson(content: string): string {
-  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const text = (fenced ? fenced[1] : content).trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return text;
-  return text.slice(start, end + 1);
-}
+// Реэкспорт: разбор ответа переехал в отдельный модуль, чтобы критик мог им
+// пользоваться, не замыкая импорт обратно сюда.
+export { extractJson };
 
 /**
  * Один запрос к OpenRouter. Веб-поиск подключается плагином: с ним модель
@@ -785,6 +782,9 @@ export interface CheckedScript extends ScriptResult {
   // Что бот переписал автоматически — показываем в чате, чтобы правки не
   // выглядели необъяснимой сменой текста.
   fixes: string[];
+  // Критик не отработал (сеть, лимит, мусор в ответе). Сценарий при этом
+  // прошёл только структурные проверки, и человеку стоит об этом знать.
+  reviewUnavailable?: string;
 }
 
 /**
@@ -846,20 +846,45 @@ export function rhythmProblem(
   return undefined;
 }
 
+/**
+ * Структурные проверки: ритм, длина хука, реклама не в финале. Объективны и
+ * от темы не зависят, поэтому живут в коде и не выключаются.
+ */
+function structuralProblems(
+  script: GeneratedScript,
+  maxVideoSeconds?: number,
+): (string | undefined)[] {
+  return [
+    hookProblem(script.scenes[0]),
+    rhythmProblem(script, maxVideoSeconds),
+    promoProblem(script),
+    toolListProblem(script),
+    fillerProblem(script),
+  ];
+}
+
+/**
+ * Проверки вкуса регулярками. Дешевле критика и детерминированны, но ловят
+ * формулировку, а не смысл, и на потоке тем неизбежно отстают. Выключаются
+ * через SCRIPT_TASTE_RULES=0 — тогда за смысл отвечает только критик.
+ */
+function tasteProblems(script: GeneratedScript): (string | undefined)[] {
+  if (!config.scriptTasteRules) return [];
+  return [
+    hookNumberProblem(script),
+    deadEndProblem(script),
+    ctaProblem(script),
+    staleProblem(script),
+  ];
+}
+
 export function scriptProblems(
   script: GeneratedScript,
   maxVideoSeconds?: number,
 ): string[] {
   return [
-    hookProblem(script.scenes[0]),
-    rhythmProblem(script, maxVideoSeconds),
-    hookNumberProblem(script),
-    deadEndProblem(script),
-    ctaProblem(script),
-    staleProblem(script),
-    promoProblem(script),
-    toolListProblem(script),
-    fillerProblem(script),
+    ...structuralProblems(script, maxVideoSeconds),
+    ...tasteProblems(script),
   ].filter((p): p is string => Boolean(p));
 }
 
@@ -946,8 +971,18 @@ export async function generateCheckedScript(
 ): Promise<CheckedScript> {
   const first = await generateScript(brief, revision, maxVideoSeconds, model);
 
-  const problems = scriptProblems(first.script, maxVideoSeconds);
-  if (problems.length === 0) return { ...first, fixes: [] };
+  // Структурные проверки бесплатны, поэтому идут первыми. Критик стоит
+  // генерации — зовём его один раз, вместе с ними, а не после.
+  const structural = scriptProblems(first.script, maxVideoSeconds);
+  const review = await reviewScript(first.script, brief, model);
+  const problems = [
+    ...structural,
+    ...review.problems.map(formatReviewProblem),
+  ];
+
+  if (problems.length === 0) {
+    return { ...first, fixes: [], reviewUnavailable: review.unavailable };
+  }
 
   const instructions = FIX_INSTRUCTIONS.filter(({ key }) =>
     problems.some((p) => p.includes(key)),
@@ -967,6 +1002,7 @@ export async function generateCheckedScript(
   return {
     script: fixed.script.scenes.length > 0 ? fixed.script : first.script,
     webSearchUnavailable: first.webSearchUnavailable,
+    reviewUnavailable: review.unavailable,
     fixes: problems,
   };
 }

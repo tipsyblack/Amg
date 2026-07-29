@@ -59,6 +59,11 @@ import { config } from "../pipeline/config";
 import { generateDescription } from "../pipeline/generateDescription";
 import { generateCheckedScript } from "../pipeline/generateScript";
 import {
+  readChecklist,
+  resetChecklist,
+  writeChecklist,
+} from "../pipeline/reviewChecklist";
+import {
   buildTtsInput,
   cloneViaProxyWarning,
   synthesizeSpeech,
@@ -272,7 +277,7 @@ async function runScriptStep(
     async () => {
       const session = getSession(chatId);
       await ctx.reply(feedback ? "Переписываю сценарий…" : "Пишу сценарий…");
-      const { script, fixes, webSearchUnavailable } = await generateCheckedScript(
+      const { script, fixes, webSearchUnavailable, reviewUnavailable } = await generateCheckedScript(
         session.brief ?? "",
         feedback && session.script
           ? { previousScript: session.script, feedback }
@@ -294,6 +299,14 @@ async function runScriptStep(
         await ctx.reply(
           "⚠️ Веб-поиск не сработал — сценарий написан по знаниям модели, " +
             "без свежих данных. Тему стоит перепроверить.",
+        );
+      }
+      if (reviewUnavailable) {
+        // Молча пропустить нельзя: сценарий прошёл только структурные
+        // проверки, то есть ритм и рекламу, но не смысл.
+        await ctx.reply(
+          `⚠️ ${reviewUnavailable}. Сценарий проверен только на ритм и ` +
+            "структуру — смысл, хук и призыв посмотрите глазами.",
         );
       }
       await ctx.reply(formatScript(script));
@@ -707,6 +720,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/length — лимит длины ролика в секундах\n" +
       "/clips — сколько сцен оживлять видео (по умолчанию ни одной)\n" +
       "/library — библиотека клипов с маскотом (генерируется один раз)\n" +
+      "/rules — чек-лист, по которому критик проверяет сценарий\n" +
       "/vidmodel — модель оживления кадра\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека и генерация\n" +
@@ -959,6 +973,49 @@ bot.command("clips", async (ctx) => {
     requested === 0
       ? "Клипов не будет — все сцены останутся картинками."
       : `Оживляю ${requested} сцен(ы): ${clipCostNote(requested, modelKey)}.`,
+  );
+});
+
+// Чек-лист, по которому критик проверяет сценарий. Живёт текстовым файлом, а
+// не в коде, потому что правила вкуса меняются вместе с продуктом и
+// площадкой: на контент-заводе правка правила не должна упираться в
+// программиста и деплой.
+bot.command("rules", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const argument = ctx.match.trim();
+
+  if (argument === "reset") {
+    resetChecklist();
+    await ctx.reply("Чек-лист возвращён к исходному. Посмотреть: /rules");
+    return;
+  }
+
+  if (argument) {
+    // Текст пришёл прямо в команде — обычно вставкой целиком.
+    writeChecklist(argument);
+    await ctx.reply(
+      `Чек-лист обновлён (${argument.length} символов). ` +
+        "Он применится к следующему сценарию — правки на сервере не нужны.",
+    );
+    return;
+  }
+
+  if (!config.scriptReview) {
+    await ctx.reply(
+      "Проверка критиком выключена (SCRIPT_REVIEW=0 в .env), чек-лист сейчас " +
+        "ни на что не влияет.",
+    );
+    return;
+  }
+
+  const text = readChecklist();
+  updateSession(chatId, { step: "awaiting_checklist" });
+  await ctx.reply(
+    "По этому чек-listу критик проверяет каждый сценарий. " +
+      "Пришлите новый текст одним сообщением — он заменит нынешний. " +
+      "Отмена — /cancel, вернуть исходный — /rules reset\n\n" +
+      "———\n\n" +
+      text.slice(0, 3500),
   );
 });
 
@@ -2310,6 +2367,25 @@ bot.on("message:text", async (ctx) => {
 
     case "awaiting_script_feedback": {
       await runScriptStep(ctx, chatId, text);
+      return;
+    }
+
+    case "awaiting_checklist": {
+      // Чек-лист — это текст на несколько экранов, и присылают его вставкой.
+      // Минимальная длина нужна, чтобы случайное «ок» не стёрло правила.
+      if (text.trim().length < 40) {
+        await ctx.reply(
+          "Похоже, это не чек-лист. Пришлите текст целиком одним сообщением " +
+            "или отмените: /cancel",
+        );
+        return;
+      }
+      writeChecklist(text);
+      updateSession(chatId, { step: "idle" });
+      await ctx.reply(
+        `Чек-лист обновлён (${text.trim().length} символов) и применится к ` +
+          "следующему сценарию. Посмотреть: /rules",
+      );
       return;
     }
 

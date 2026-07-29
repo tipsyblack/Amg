@@ -18,6 +18,7 @@ export type Step =
   | "awaiting_clone_links"
   | "awaiting_script_feedback"
   | "awaiting_scene_number"
+  | "awaiting_checklist"
   | "busy";
 
 export interface SceneImage {
