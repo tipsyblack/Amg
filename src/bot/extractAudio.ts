@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 export {
   audioDurationSeconds,
   concatAudio,
+  fileHash,
   fileSizeBytes,
 } from "../pipeline/voiceSamples";
 

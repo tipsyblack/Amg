@@ -134,6 +134,14 @@ export async function createInstantVoiceClone({
           "материала: мгновенному клону хватает одной-двух минут речи.",
       );
     }
+    if (body.includes("duplicated_files")) {
+      throw new Error(
+        "ElevenLabs увидел среди сэмплов два одинаковых файла. Побайтовые " +
+          "повторы отсеиваются автоматически, значит совпадение неточное — " +
+          "один и тот же фрагмент речи пришёл в разных файлах. Уберите " +
+          "дубликат из набора и повторите.",
+      );
+    }
     if (body.includes("can_not_use_instant_voice_cloning") || response.status === 403) {
       throw new Error(
         "Тариф ElevenLabs не разрешает клонирование голоса. Нужен Starter " +
@@ -264,6 +272,13 @@ export async function editInstantVoiceClone({
           "— похоже, упёрлись в предел на весь набор голоса. Материала в нём " +
           "уже много: создайте новый голос из свежих записей (/clone) вместо " +
           "добавления к этому.",
+      );
+    }
+    if (body.includes("duplicated_files")) {
+      throw new Error(
+        "Этот материал в голосе уже есть: ElevenLabs не принимает повторную " +
+          "загрузку того же файла. Пришлите фрагменты, которых в голосе ещё " +
+          "не было — состав показывает /voices.",
       );
     }
     if (body.includes("can_not_use_instant_voice_cloning") || response.status === 403) {

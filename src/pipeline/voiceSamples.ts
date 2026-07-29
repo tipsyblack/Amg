@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -36,6 +37,17 @@ const SIZE_MARGIN = 0.9;
 
 export async function fileSizeBytes(file: string): Promise<number> {
   return (await stat(file)).size;
+}
+
+/**
+ * Отпечаток содержимого файла. Нужен потому, что ElevenLabs отвергает загрузку
+ * одного и того же файла дважды (400 duplicated_files), и один случайно
+ * присланный второй раз ролик валит всю операцию.
+ */
+export async function fileHash(file: string): Promise<string> {
+  return createHash("sha256")
+    .update(await readFile(file))
+    .digest("hex");
 }
 
 export async function audioDurationSeconds(file: string): Promise<number> {
@@ -185,7 +197,15 @@ export async function prepareUploadFiles(
   maxBytes = MAX_UPLOAD_BYTES,
 ): Promise<string[]> {
   const prepared: string[] = [];
+  const seen = new Set<string>();
   for (const [index, file] of files.entries()) {
+    // Побайтово одинаковые файлы ElevenLabs не принимает: 400 duplicated_files.
+    // Отсеиваем их здесь — для отпечатка голоса второй экземпляр той же записи
+    // ничего не добавляет, а отказ стоил бы всей операции.
+    const hash = await fileHash(file);
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+
     if ((await fileSizeBytes(file)) <= maxBytes) {
       prepared.push(file);
       continue;

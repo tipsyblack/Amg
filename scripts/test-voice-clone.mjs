@@ -1,8 +1,9 @@
 // Проверка клонирования голоса: извлечение и склейка дорожек делаются
 // настоящим ffmpeg, вызовы ElevenLabs — на локальном моке.
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -37,17 +38,21 @@ const TOO_BIG_BODY =
   '{"detail":{"type":"invalid_request","code":"bad_request","message":"A ' +
   'uploaded file is too large, please upload files with a maximum of 11MB.",' +
   '"status":"upload_file_size_exceeded","param":"file"}}';
+const DUPLICATED_BODY =
+  '{"detail":{"type":"invalid_request","code":"bad_request","message":"You ' +
+  'cannot upload the same file twice.","status":"duplicated_files"}}';
 
 /**
- * Размеры файловых частей multipart — по ним мок и решает, отвергать ли запрос.
- * Настоящий ElevenLabs считает каждый файл отдельно, поэтому проверять суммарный
- * объём тела нельзя: три куска по 9 МБ он принимает, а один на 16 МБ — нет.
+ * Файловые части multipart — размер и отпечаток содержимого. По ним мок и
+ * решает, отвергать ли запрос. Настоящий ElevenLabs считает каждый файл
+ * отдельно, поэтому проверять суммарный объём тела нельзя: три куска по 9 МБ он
+ * принимает, а один на 16 МБ — нет.
  */
-function filePartSizes(req, buffer) {
+function fileParts(req, buffer) {
   const match = /boundary=([^;]+)/.exec(req.headers["content-type"] ?? "");
   if (!match) return [];
   const boundary = Buffer.from(`--${match[1]}`);
-  const sizes = [];
+  const parts = [];
   let start = buffer.indexOf(boundary);
   while (start !== -1) {
     const next = buffer.indexOf(boundary, start + boundary.length);
@@ -56,12 +61,24 @@ function filePartSizes(req, buffer) {
     const headEnd = part.indexOf("\r\n\r\n");
     if (headEnd !== -1) {
       const head = part.subarray(0, headEnd).toString("latin1");
-      // -4 на разделитель заголовков, -2 на \r\n перед следующей границей.
-      if (/filename=/.test(head)) sizes.push(part.length - headEnd - 6);
+      if (/filename=/.test(head)) {
+        // +4 на разделитель заголовков, -2 на \r\n перед следующей границей.
+        const body = part.subarray(headEnd + 4, part.length - 2);
+        parts.push({ size: body.length, hash: sha256(body) });
+      }
     }
     start = next;
   }
-  return sizes;
+  return parts;
+}
+
+function sha256(buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+/** Содержимое уже загруженного сэмпла — его же отдаёт эндпоинт скачивания. */
+function sampleBody(sampleId) {
+  return Buffer.from(`СТАРЫЙ-СЭМПЛ-${sampleId}`);
 }
 
 // Читаем multipart грубо, но достаточно, чтобы проверить состав полей.
@@ -71,10 +88,12 @@ async function readBody(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
   const buffer = Buffer.concat(chunks);
+  const parts = fileParts(req, buffer);
   return {
     latin1: buffer.toString("latin1"),
     utf8: buffer.toString("utf8"),
-    fileSizes: filePartSizes(req, buffer),
+    files: parts,
+    fileSizes: parts.map((part) => part.size),
   };
 }
 
@@ -85,6 +104,23 @@ function tooBig(request) {
 function rejectTooBig(res) {
   res.writeHead(400, { "Content-Type": "application/json" });
   res.end(TOO_BIG_BODY);
+}
+
+/**
+ * Повторы: один и тот же файл дважды в запросе или файл, который в голосе уже
+ * лежит. Именно так ответил живой API, когда бот присылал прежние сэмплы
+ * обратно вместе с новым материалом.
+ */
+function duplicated(request, storedIds = []) {
+  const hashes = request.files.map((part) => part.hash);
+  if (new Set(hashes).size !== hashes.length) return true;
+  const stored = new Set(storedIds.map((id) => sha256(sampleBody(id))));
+  return hashes.some((hash) => stored.has(hash));
+}
+
+function rejectDuplicated(res) {
+  res.writeHead(400, { "Content-Type": "application/json" });
+  res.end(DUPLICATED_BODY);
 }
 
 const server = createServer(async (req, res) => {
@@ -109,6 +145,10 @@ const server = createServer(async (req, res) => {
     cloneRequest = { key: req.headers["xi-api-key"], ...(await readBody(req)) };
     if (tooBig(cloneRequest)) {
       rejectTooBig(res);
+      return;
+    }
+    if (scenario === "duplicated" || duplicated(cloneRequest)) {
+      rejectDuplicated(res);
       return;
     }
     if (scenario === "no-plan") {
@@ -149,7 +189,7 @@ const server = createServer(async (req, res) => {
     }
     sampleDownloads.push(sample[2]);
     res.writeHead(200, { "Content-Type": "audio/mpeg" });
-    res.end(Buffer.from(`СТАРЫЙ-СЭМПЛ-${sample[2]}`));
+    res.end(sampleBody(sample[2]));
     return;
   }
 
@@ -159,6 +199,11 @@ const server = createServer(async (req, res) => {
     editRequest = { voiceId: edit[1], key: req.headers["xi-api-key"], ...(await readBody(req)) };
     if (tooBig(editRequest)) {
       rejectTooBig(res);
+      return;
+    }
+    // Сравнение идёт и с тем, что в голосе уже лежит.
+    if (duplicated(editRequest, voiceSamples.map((s) => s.sample_id))) {
+      rejectDuplicated(res);
       return;
     }
     if (scenario === "not-editable") {
@@ -289,20 +334,38 @@ for (const s of before.samples) {
   await clone.downloadVoiceSample("voice-shamil-2", s.sampleId, file);
   oldFiles.push(file);
 }
+check("скачаны оба прежних сэмпла", sampleDownloads.join(",").includes("s1") && sampleDownloads.join(",").includes("s2"));
+
+// Так бот делал раньше — присылал прежние сэмплы обратно вместе с новым, чтобы
+// набор не заменился. ElevenLabs отвечает на это 400 duplicated_files: файл,
+// который в голосе уже лежит, повторно загрузить нельзя. Заодно это и ответ на
+// вопрос, что делает edit: он дополняет набор, а не заменяет его.
+try {
+  await clone.editInstantVoiceClone({
+    voiceId: "voice-shamil-2",
+    name: before.name,
+    files: [...oldFiles, cleaned],
+  });
+  check("должно было упасть на повторе прежних сэмплов", false);
+} catch (e) {
+  check("повтор объяснён понятно", e.message.includes("в голосе уже есть"), e.message.slice(0, 60));
+  check("сказано, где посмотреть состав", e.message.includes("/voices"));
+}
+
+// Так бот делает теперь: в запрос уходит только новый материал.
 await clone.editInstantVoiceClone({
   voiceId: "voice-shamil-2",
   name: before.name,
-  files: [...oldFiles, cleaned],
+  files: [cleaned],
 });
 check("запрос ушёл на нужный голос", editRequest.voiceId === "voice-shamil-2", editRequest.voiceId);
 check("ключ передан", editRequest.key === "el-key");
 check("имя сохранено", /name="name"[\s\S]{0,60}Шамиль2/.test(editRequest.utf8));
 check("шумоподавление включено", /name="remove_background_noise"[\s\S]{0,40}true/.test(editRequest.latin1));
 const fileFields = (editRequest.latin1.match(/name="files"/g) ?? []).length;
-check("отправлены и старые сэмплы, и новый", fileFields === 3, `полей files: ${fileFields}`);
-check("старый материал внутри запроса", editRequest.utf8.includes("СТАРЫЙ-СЭМПЛ-s1"));
+check("отправлен только новый материал", fileFields === 1, `полей files: ${fileFields}`);
 check("новый материал внутри запроса", editRequest.utf8.includes("ОЧИЩЕННОЕ-АУДИО"));
-check("скачаны оба прежних сэмпла", sampleDownloads.join(",").includes("s1") && sampleDownloads.join(",").includes("s2"));
+check("прежние сэмплы в запрос не попали", !editRequest.utf8.includes("СТАРЫЙ-СЭМПЛ-s1"));
 
 const after = await clone.getVoiceSamples("voice-shamil-2");
 check("сэмплов стало больше", after.samples.length === before.samples.length + 1, `${before.samples.length} → ${after.samples.length}`);
@@ -362,6 +425,27 @@ check("материал не обрезан", Math.abs(fittedSeconds - 434) < 2,
 // отпечаток голоса, и портить его лишним перекодированием незачем.
 const untouched = await samples.prepareUploadFiles([a1, a2], path.join(workDir, "fit-small"));
 check("маленькие файлы остались теми же", untouched[0] === a1 && untouched[1] === a2, untouched.join(","));
+
+// Тот же файл дважды ElevenLabs не принимает — 400 duplicated_files. Прислать
+// один ролик два раза легко: сбор идёт по одному файлу и переживает ошибки.
+const twin = path.join(workDir, "twin.mp3");
+copyFileSync(a1, twin);
+const deduped = await samples.prepareUploadFiles([a1, twin, a2], path.join(workDir, "fit-dup"));
+check("побайтовый повтор отсеян", deduped.length === 2, `файлов: ${deduped.length}`);
+const dupClone = await clone.createInstantVoiceClone({ name: "Дубли", files: [a1, twin] });
+check("клон на повторах всё равно создан", dupClone.voiceId === "cloned123456789012345", dupClone.voiceId);
+check("в запрос ушёл один файл", cloneRequest.files.length === 1, `файлов: ${cloneRequest.files.length}`);
+
+// Неточный повтор (тот же фрагмент речи в другом файле) наши хеши не поймают —
+// его ловит сам ElevenLabs, и объяснение должно быть человеческим.
+scenario = "duplicated";
+try {
+  await clone.createInstantVoiceClone({ name: "x", files: [a1] });
+  check("должно было упасть", false);
+} catch (e) {
+  check("неточный повтор объяснён", e.message.includes("два одинаковых файла"), e.message.slice(0, 60));
+}
+scenario = "ok";
 
 // Пятнадцать минут моно на 192 кбит/с — 21 МБ, пережимать уже некуда: режем.
 const huge = path.join(workDir, "huge.mp3");

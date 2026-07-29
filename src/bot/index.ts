@@ -55,6 +55,7 @@ import {
   audioDurationSeconds,
   concatAudio,
   extractAudio,
+  fileHash,
 } from "./extractAudio";
 import { config } from "../pipeline/config";
 import { generateDescription } from "../pipeline/generateDescription";
@@ -1457,6 +1458,23 @@ async function addCloneSample(
   const target = path.join(dir, `sample-${samples.length}.mp3`);
 
   await extractAudio(sourceFile, target);
+
+  // Тот же ролик, присланный второй раз, дальше не пускаем: ElevenLabs
+  // отвергает повторную загрузку того же файла (400 duplicated_files) и валит
+  // этим всю операцию. Сказать об этом здесь полезнее, чем на /done: видно,
+  // какой именно файл лишний, и ничего не потеряно.
+  const hash = await fileHash(target);
+  for (const file of samples) {
+    if ((await fileHash(file)) !== hash) continue;
+    await rm(target, { force: true });
+    await ctx.reply(
+      "Этот файл уже есть в наборе — дорожка совпадает с присланной ранее " +
+        "побайтово. Пропускаю: для голоса второй экземпляр той же записи " +
+        "ничего не добавляет.",
+    );
+    return;
+  }
+
   const seconds = await audioDurationSeconds(target);
   const next = [...samples, target];
   // Шаг возвращаем явно: withGeneration после успешной задачи сбрасывает
@@ -1609,9 +1627,14 @@ bot.command("clone", async (ctx) => {
 });
 
 /**
- * Добавление материала в существующий клон. Старые сэмплы скачиваем и
- * отправляем обратно вместе с новым: у ElevenLabs не описано, дополняет ли
- * edit набор сэмплов или заменяет его, и терять исходный материал нельзя.
+ * Добавление материала в существующий клон.
+ *
+ * В запрос уходит только новый материал. Прежние сэмплы мы всё равно скачиваем,
+ * но как страховку, а не как часть запроса: ElevenLabs отвергает файл, который
+ * в голосе уже лежит, — 400 duplicated_files, «You cannot upload the same file
+ * twice». Этой ошибкой он же и ответил на вопрос, который в документации не
+ * описан: edit ДОПОЛНЯЕТ набор сэмплов, а не заменяет его — иначе сравнивать
+ * присланное с уже лежащим не имело бы смысла.
  */
 async function runAddSamplesStep(ctx: Context, chatId: number): Promise<void> {
   await withGeneration(
@@ -1646,37 +1669,52 @@ async function runAddSamplesStep(ctx: Context, chatId: number): Promise<void> {
           caption: "Это добавляется к голосу.",
         });
 
-        // Старые сэмплы забираем обратно. Если не получилось — честно
-        // предупреждаем: тогда набор может замениться новым материалом.
-        const existing: string[] = [];
-        let missed = 0;
+        // Копии прежних сэмплов — страховка на случай, если набор всё же
+        // заменится: тогда старый материал не пропадёт, мы пришлём его файлами
+        // в чат. В сам запрос они не идут (см. комментарий к функции).
+        const backups = new Map<string, string>();
         for (const sample of before.samples) {
           const file = path.join(workDir, `old-${sample.sampleId}.mp3`);
           try {
             await downloadVoiceSample(voiceId, sample.sampleId, file);
-            existing.push(file);
+            backups.set(sample.sampleId, file);
           } catch {
-            missed++;
+            // Страховка не удалась — на саму операцию это не влияет.
           }
-        }
-        if (missed > 0) {
-          await ctx.reply(
-            `⚠️ Не удалось скачать ${missed} из ${before.samples.length} ` +
-              "прежних сэмплов. Отправлю то, что есть: возможно, старый " +
-              "материал в голосе заменится новым.",
-          );
         }
 
         await ctx.reply("🧬 Обновляю голос…");
         await editInstantVoiceClone({
           voiceId,
           name: before.name,
-          files: [...existing, cleaned],
+          files: [cleaned],
         });
 
         // Проверяем результат по составу голоса — это то, что можно увидеть
         // глазами, а не поверить на слово.
         const after = await getVoiceSamples(voiceId);
+
+        // Прежние сэмплы должны остаться на месте. Если какой-то исчез, набор
+        // всё-таки заменился — отдаём страховочные копии в чат, пока рабочая
+        // папка не удалена.
+        const lost = before.samples.filter(
+          (sample) => !after.samples.some((s) => s.sampleId === sample.sampleId),
+        );
+        if (lost.length > 0) {
+          await ctx.reply(
+            `⚠️ ElevenLabs не дополнил набор, а заменил его: из голоса ушли ` +
+              `${lost.length} прежних сэмпл(ов). Присылаю их файлами — чтобы ` +
+              "вернуть материал, добавьте их через /clonemore.",
+          );
+          for (const sample of lost) {
+            const file = backups.get(sample.sampleId);
+            if (file) {
+              await ctx.replyWithAudio(new InputFile(file), {
+                title: `${before.name} — прежний сэмпл ${sample.fileName}`,
+              });
+            }
+          }
+        }
         const secondsBefore = before.samples.reduce(
           (sum, s) => sum + (s.durationSeconds ?? 0),
           0,
