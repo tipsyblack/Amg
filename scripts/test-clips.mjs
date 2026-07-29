@@ -443,6 +443,65 @@ check(
 );
 check("пустой ролик не ломает выбор", librarySceneIndexes(0).length === 0);
 
+console.log("\n--- сцена без карточки: маскот на белом ---");
+// Приём из референса, которого у нас не было: карточка исчезает совсем, и
+// персонаж стоит прямо на белом фоне. Измерено на установившемся кадре
+// (не на кадре перехода — первый раз я прочитал именно его и ошибся):
+// фигура занимает 60.6% высоты, верх на 14.4%, карточки в кадре нет.
+const { mascotSceneIndexes } = await import("../src/pipeline/clipLibrary.ts");
+const { mascotBox, MASCOT_HEIGHT_PERCENT, MASCOT_TOP_PERCENT } = await import(
+  "../src/remotion/mascot.ts"
+);
+
+check("ноль — сцен без карточки нет", mascotSceneIndexes(10, 0).length === 0);
+check(
+  "одна достаётся финалу: там маскот обращается к зрителю",
+  JSON.stringify(mascotSceneIndexes(10, 1)) === "[9]",
+  JSON.stringify(mascotSceneIndexes(10, 1)),
+);
+check(
+  "две — финал и хук",
+  JSON.stringify(mascotSceneIndexes(10, 2)) === "[0,9]",
+  JSON.stringify(mascotSceneIndexes(10, 2)),
+);
+for (const [total, count] of [[1, 1], [2, 3], [5, 2], [15, 4]]) {
+  const picked = mascotSceneIndexes(total, count);
+  const ok =
+    new Set(picked).size === picked.length &&
+    picked.every((i) => i >= 0 && i < total) &&
+    picked.length <= Math.min(count, total);
+  if (!ok) check(`набор корректен при total=${total}, count=${count}`, false, JSON.stringify(picked));
+}
+check("номера сцен не выходят за границы ни при каком раскладе", true);
+
+// Геометрия: фигура должна встать по измеренным долям кадра, а не картинка.
+// Разница существенная — у файла есть поля сверху, и без поправки на них
+// персонаж оказался бы мельче и ниже.
+const box = mascotBox(1080, 1920);
+const FIGURE_TOP_SHARE = 0.081;   // поле над фигурой внутри shamil.png
+const figureTop = box.top + box.height * FIGURE_TOP_SHARE;
+const figureHeight = box.height * 0.918;
+check(
+  `верх фигуры на ${(100 * figureTop / 1920).toFixed(1)}% высоты`,
+  Math.abs((100 * figureTop) / 1920 - MASCOT_TOP_PERCENT) < 1.5,
+);
+check(
+  `высота фигуры ${(100 * figureHeight / 1920).toFixed(1)}% кадра`,
+  Math.abs((100 * figureHeight) / 1920 - MASCOT_HEIGHT_PERCENT) < 1.5,
+);
+check("фигура не упирается в края кадра", box.width * 0.812 < 1080 * 0.9);
+check(
+  "на другом разрешении доли те же",
+  Math.abs(mascotBox(2160, 3840).height / 3840 - box.height / 1920) < 0.001,
+);
+
+// Файл, на который ссылается сцена без карточки, обязан существовать: иначе
+// Remotion уронит рендер, когда всё дорогое уже посчитано.
+check(
+  "картинка маскота лежит в public",
+  existsSync(path.resolve("public/characters/shamil.png")),
+);
+
 console.log("\n--- что пересобирать ---");
 // Пересобирать все десять клипов ради трёх — это лишние деньги, поэтому
 // выбор понимает и роль, и отдельные идентификаторы.

@@ -27,6 +27,7 @@ import {
   getClipDefinition,
   libraryFileName,
   librarySceneIndexes,
+  mascotSceneIndexes,
   orphanClipFiles,
   readyClipIds,
   resolveClipSelection,
@@ -342,8 +343,20 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
       const images = [...(session.images ?? [])];
       const overlays = [...(session.overlays ?? [])];
       let previousSceneUrl: string | undefined;
+      // Сцены без карточки: маскот во весь рост на белом. Картинка им не
+      // нужна — рисовать её было бы и тратой денег, и путаницей: она попала
+      // бы в согласование, а в ролик не вошла.
+      const mascotScenes = new Set(
+        mascotSceneIndexes(script.scenes.length, config.mascotScenes),
+      );
 
       for (let i = 0; i < script.scenes.length; i++) {
+        if (mascotScenes.has(i)) {
+          await ctx.reply(
+            `🧞 Сцена ${i + 1}: маскот во весь кадр, без карточки — картинку не рисую.`,
+          );
+          continue;
+        }
         // Уже сгенерированные при прошлой попытке сцены пропускаем.
         if (images[i]) {
           previousSceneUrl = images[i].resultUrl;
@@ -481,6 +494,9 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     const clipCount = session.clipScenes ?? config.clipScenes;
     const paid = new Set(clipSceneIndexes(script.scenes.length, clipCount));
     const fromLibrary = new Set(librarySceneIndexes(script.scenes.length));
+    const mascotScenes = new Set(
+      mascotSceneIndexes(script.scenes.length, config.mascotScenes),
+    );
     const libraryReady = await readyClipIds();
     // Один и тот же жест два раза подряд выглядит как заевшая плёнка.
     const usedLibraryClips = new Set(
@@ -530,13 +546,14 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       // Оживление кадра. Первым кадром идёт уже согласованная картинка сцены,
       // поэтому подмена не видна на стыке. Готовые клипы кэшируем в сессии:
       // повторная сборка после сбоя не должна оплачивать их заново.
-      if ((paid.has(i) || fromLibrary.has(i)) && !clips[i]) {
+      // Клип живёт внутри карточки — сцене без неё он не нужен.
+      if (!mascotScenes.has(i) && (paid.has(i) || fromLibrary.has(i)) && !clips[i]) {
         if (paid.has(i)) await ctx.reply(`🎞 Оживляю сцену ${i + 1}…`);
         clips[i] = await sceneClip({
           index: i,
           total: script.scenes.length,
           voiceoverText: script.scenes[i].voiceoverText,
-          imageUrl: images[i].resultUrl,
+          imageUrl: images[i]!.resultUrl,
           ready: libraryReady,
           used: usedLibraryClips,
           modelKey: session.videoModel,
@@ -565,9 +582,10 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         caption: script.scenes[i].caption,
         voiceoverText: script.scenes[i].voiceoverText,
         audioFileName: audio[i].audioFileName,
-        imageFileName: images[i].imageFileName,
-        imageWidth: images[i].imageWidth,
-        imageHeight: images[i].imageHeight,
+        imageFileName: images[i]?.imageFileName,
+        imageWidth: images[i]?.imageWidth,
+        imageHeight: images[i]?.imageHeight,
+        mascotOnly: mascotScenes.has(i) || undefined,
         clipFileName: clips[i]?.clipFileName,
         clipDurationInFrames: clips[i]?.clipDurationInFrames,
         durationInFrames: audio[i].durationInFrames,

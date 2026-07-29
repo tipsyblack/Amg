@@ -129,6 +129,7 @@ export const VideoComposition: React.FC<VideoData> = ({
                     imageWidth={scene.imageWidth}
                     imageHeight={scene.imageHeight}
                     accentsEnabled={accentsEnabled}
+                    mascotOnly={scene.mascotOnly}
                     clipFileName={scene.clipFileName}
                     clipDurationInFrames={scene.clipDurationInFrames}
                     sceneIndex={index}

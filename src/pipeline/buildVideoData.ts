@@ -15,7 +15,11 @@ import {
 } from "./assets";
 import { config } from "./config";
 import { generateDescription } from "./generateDescription";
-import { librarySceneIndexes, readyClipIds } from "./clipLibrary";
+import {
+  librarySceneIndexes,
+  mascotSceneIndexes,
+  readyClipIds,
+} from "./clipLibrary";
 import { clipSceneIndexes } from "./generateClip";
 import { generateCheckedScript } from "./generateScript";
 import {
@@ -50,6 +54,11 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     clipSceneIndexes(script.scenes.length, config.clipScenes),
   );
   const fromLibrary = new Set(librarySceneIndexes(script.scenes.length));
+  // Сцены без карточки: маскот во весь рост на белом. Иллюстрация им не
+  // нужна — рисовать её было бы и тратой денег, и путаницей на согласовании.
+  const mascotScenes = new Set(
+    mascotSceneIndexes(script.scenes.length, config.mascotScenes),
+  );
   // Что уже готово в библиотеке маскота и что из него уже занято в этом
   // ролике: два раза подряд один и тот же жест выглядит как заевшая плёнка.
   const libraryReady = await readyClipIds();
@@ -64,26 +73,31 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       scriptScene.voiceoverText,
     );
 
+    const mascotOnly = mascotScenes.has(i);
     const withCharacter = sceneWithCharacter(i, script.scenes.length);
-    const illustration = await generateSceneIllustration(
-      i,
-      buildImagePrompt(scriptScene, undefined, withCharacter),
-      previousSceneUrl,
-      undefined,
-      withCharacter,
-    );
-    previousSceneUrl = illustration.resultUrl;
+    const illustration = mascotOnly
+      ? undefined
+      : await generateSceneIllustration(
+          i,
+          buildImagePrompt(scriptScene, undefined, withCharacter),
+          previousSceneUrl,
+          undefined,
+          withCharacter,
+        );
+    if (illustration) previousSceneUrl = illustration.resultUrl;
+    if (mascotOnly) console.log(`Сцена ${i + 1}: маскот во весь кадр, без карточки`);
 
     // Оживление кадра: клип делается из только что нарисованной картинки, она
     // идёт его первым кадром. Ссылку берём ту, что вернул Kie.ai — вход он
     // принимает только по URL, а локальный файл ему не отдать.
-    const wantsClip = paid.has(i) || fromLibrary.has(i);
+    // Клип живёт внутри карточки — сцене без неё он не нужен.
+    const wantsClip = !mascotOnly && (paid.has(i) || fromLibrary.has(i));
     const clip = wantsClip
       ? await sceneClip({
           index: i,
           total: script.scenes.length,
           voiceoverText: scriptScene.voiceoverText,
-          imageUrl: illustration.resultUrl,
+          imageUrl: illustration!.resultUrl,
           ready: libraryReady,
           used: usedLibraryClips,
           // Сцена попала сюда только из-за библиотеки — платить за неё не
@@ -134,9 +148,10 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       caption: scriptScene.caption,
       voiceoverText: scriptScene.voiceoverText,
       audioFileName,
-      imageFileName: illustration.imageFileName,
-      imageWidth: illustration.imageWidth,
-      imageHeight: illustration.imageHeight,
+      imageFileName: illustration?.imageFileName,
+      imageWidth: illustration?.imageWidth,
+      imageHeight: illustration?.imageHeight,
+      mascotOnly: mascotOnly || undefined,
       clipFileName: clip?.clipFileName,
       clipDurationInFrames: clip?.clipDurationInFrames,
       durationInFrames,

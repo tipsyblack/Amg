@@ -22,6 +22,7 @@ import {
   REF_WIDTH,
   cardAspect,
 } from "./layout";
+import { mascotBox } from "./mascot";
 import { coversFrame, sceneMotion } from "./transitions";
 import type { Overlay as OverlayData } from "../types";
 
@@ -80,6 +81,9 @@ interface SceneProps {
   clipDurationInFrames?: number;
   // Графические акценты вокруг карточки. В референсе их нет — см. types.ts.
   accentsEnabled?: boolean;
+  // Сцена без карточки: маскот стоит прямо на белом фоне, во весь рост.
+  // Отдельный приём из референса — см. mascot.ts.
+  mascotOnly?: boolean;
   sceneIndex: number;
   // Кроссфейд с предыдущей сценой: сколько кадров проявляется вся сцена
   // целиком, включая фон. У первой сцены — 0.
@@ -104,6 +108,7 @@ export const Scene: React.FC<SceneProps> = ({
   clipFileName,
   clipDurationInFrames,
   accentsEnabled = false,
+  mascotOnly = false,
   sceneIndex,
   fadeInFrames,
   visualDuration,
@@ -316,7 +321,26 @@ export const Scene: React.FC<SceneProps> = ({
         })
       : null;
 
-  const card = (
+  // Сцена-маскот: карточки нет вовсе, персонаж стоит на белом. Движение
+  // входа и ухода берём то же самое — оно применяется к фигуре вместо
+  // карточки, поэтому стыки читаются как обычно.
+  const mascot = mascotOnly ? mascotBox(width, height) : undefined;
+  const card = mascot ? (
+    <Img
+      src={staticFile("characters/shamil.png")}
+      style={{
+        position: "absolute",
+        top: mascot.top,
+        width: mascot.width,
+        height: mascot.height,
+        opacity: cardOpacity,
+        transform:
+          `translate(${cardX}px, ${cardY}px) ` +
+          `rotate(${cardRotate}deg) skewY(${crumpleSkew}deg) ` +
+          `scale(${cardScale * squeezeX}, ${cardScale})`,
+      }}
+    />
+  ) : (
       <div
         style={{
           width: `${CARD_WIDTH_PERCENT}%`,
@@ -418,7 +442,7 @@ export const Scene: React.FC<SceneProps> = ({
         // Отступ считаем в пикселях от высоты кадра. Процентный padding в CSS
         // отмеряется от ШИРИНЫ контейнера — на вертикальном кадре это давало
         // почти вдвое меньший отступ, и карточка стояла выше, чем в референсе.
-        paddingTop: (CARD_TOP_PERCENT / 100) * height,
+        paddingTop: mascotOnly ? 0 : (CARD_TOP_PERCENT / 100) * height,
         // Кроссфейд нужен только тем появлениям, которые не закрывают кадр
         // сами. Зум-блюр приходит во весь экран, и проявление делало его
         // полупрозрачным: под ним просвечивала уходящая сцена.

@@ -268,6 +268,30 @@ export function librarySceneIndexes(total: number): number[] {
 }
 
 /**
+ * Каким сценам достаётся кадр без карточки — маскот во весь рост на белом.
+ *
+ * По умолчанию одна на ролик, и это финал: там маскот обращается к зрителю с
+ * призывом. Приём сильный, но от повторения стирается — в референсе он тоже
+ * один раз за ролик.
+ *
+ * Такой сцене НЕ НУЖНА иллюстрация: карточки нет, рисовать нечего. Это не
+ * только про деньги (одна генерация картинки на ролик), но и про смысл —
+ * сгенерированная и никем не увиденная картинка попала бы в согласование в
+ * чате и путала бы.
+ */
+export function mascotSceneIndexes(total: number, count: number): number[] {
+  if (count <= 0 || total <= 0) return [];
+  if (count >= total) return Array.from({ length: total }, (_, i) => i);
+  const chosen = [total - 1];
+  if (count >= 2) chosen.unshift(0);
+  for (let i = chosen.length; i < count; i++) {
+    const candidate = Math.round((i * (total - 1)) / count);
+    if (!chosen.includes(candidate)) chosen.push(candidate);
+  }
+  return chosen.sort((a, b) => a - b).slice(0, count);
+}
+
+/**
  * Роль клипа для сцены по её месту в ролике. Совпадает с правилом появления
  * маскота (sceneWithCharacter): хук и финал — его места, середина — про
  * содержание, и там он в лучшем случае реагирует.
