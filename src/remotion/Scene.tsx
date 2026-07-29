@@ -78,6 +78,8 @@ interface SceneProps {
   // зум-блюр на входе.
   clipFileName?: string;
   clipDurationInFrames?: number;
+  // Графические акценты вокруг карточки. В референсе их нет — см. types.ts.
+  accentsEnabled?: boolean;
   sceneIndex: number;
   // Кроссфейд с предыдущей сценой: сколько кадров проявляется вся сцена
   // целиком, включая фон. У первой сцены — 0.
@@ -101,6 +103,7 @@ export const Scene: React.FC<SceneProps> = ({
   imageHeight,
   clipFileName,
   clipDurationInFrames,
+  accentsEnabled = false,
   sceneIndex,
   fadeInFrames,
   visualDuration,
@@ -423,7 +426,9 @@ export const Scene: React.FC<SceneProps> = ({
       }}
     >
       {/* Акценты под карточкой: они украшение, а не содержание. */}
-      <Accents sceneIndex={sceneIndex} exitProgress={plainExit ? 0 : exit} />
+      {accentsEnabled && (
+        <Accents sceneIndex={sceneIndex} exitProgress={plainExit ? 0 : exit} />
+      )}
 
       {shuffleGhosts}
       {card}

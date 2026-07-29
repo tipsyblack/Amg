@@ -39,6 +39,8 @@ export const VideoComposition: React.FC<VideoData> = ({
   outro,
   musicFileName,
   sfxEnabled = true,
+  // См. комментарий в types.ts: в референсе акцентов нет.
+  accentsEnabled = false,
   motionBlurEnabled = true,
   subtitlesEnabled = true,
 }) => {
@@ -126,6 +128,7 @@ export const VideoComposition: React.FC<VideoData> = ({
                     imageFileName={scene.imageFileName}
                     imageWidth={scene.imageWidth}
                     imageHeight={scene.imageHeight}
+                    accentsEnabled={accentsEnabled}
                     clipFileName={scene.clipFileName}
                     clipDurationInFrames={scene.clipDurationInFrames}
                     sceneIndex={index}

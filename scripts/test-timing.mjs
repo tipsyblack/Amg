@@ -278,4 +278,41 @@ check("мягкий стык длиннее резкого", MIX.softTransitionS
 check("оба укладываются в паузу после реплики", MIX.softTransitionSeconds <= 0.5, String(MIX.softTransitionSeconds));
 
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
+
+console.log("\n=== акценты: в референсе их нет ===");
+// Искры, звёзды, стрелки и кольца вокруг карточки были моей выдумкой, а не
+// замером. Проверка по присланному референсу: полоса над карточкой (верхние
+// 10% кадра) пуста на 259 кадрах всех семи частей, а редкие «непустые» кадры
+// оказались зум-блюром на стыке, который закрывает кадр целиком.
+//
+// Код акцентов оставлен — приём рабочий, если однажды захочется отойти от
+// референса, — но по умолчанию выключен.
+const minimal = {
+  title: "т", fps: 60, width: 1080, height: 1920,
+  scenes: [{ caption: "c", voiceoverText: "v", audioFileName: "a.mp3", durationInFrames: 60 }],
+};
+const withoutAccents = videoDataSchema.parse(minimal);
+check(
+  "в данных ролика акцентов нет, пока их явно не включили",
+  withoutAccents.accentsEnabled === undefined,
+  String(withoutAccents.accentsEnabled),
+);
+check(
+  "но включить можно",
+  videoDataSchema.parse({ ...minimal, accentsEnabled: true }).accentsEnabled === true,
+);
+
+const sceneSource = readFileSync(path.resolve("src/remotion/Scene.tsx"), "utf-8");
+check(
+  "Scene рисует акценты только по флагу",
+  /accentsEnabled\s*&&\s*\(\s*<Accents/.test(sceneSource.replace(/\s+/g, " ")),
+);
+const compSource = readFileSync(
+  path.resolve("src/remotion/VideoComposition.tsx"), "utf-8",
+);
+check(
+  "и по умолчанию флаг выключен",
+  /accentsEnabled = false/.test(compSource),
+);
+
 process.exit(fails === 0 ? 0 : 1);
