@@ -23,6 +23,7 @@ export interface GeneratedScript {
 // Хук — короткая новость плюс, при желании, фраза-зацепка («сейчас расскажу,
 // смотри»). В сумме это укладывается в пару фраз; жёсткие 12 слов браковали
 // нормальные новостные хуки, поэтому лимит по факту — 20.
+const CAPTION_MAX_WORDS = 8;
 const HOOK_MAX_WORDS = 20;
 
 /**
@@ -94,8 +95,14 @@ export function hookProblem(scene: ScriptScene): string | undefined {
   if (words > HOOK_MAX_WORDS) {
     return `в хуке ${words} слов, нужно не больше ${HOOK_MAX_WORDS}`;
   }
-  if (scene.caption.split(/\s+/).filter(Boolean).length > 5) {
-    return "подпись хука длиннее 5 слов";
+  // Предел тот же, что назван в промпте (до 8 слов). Раньше здесь стояло 5, и
+  // проверка отвергала подписи, которые сама же инструкция разрешала: модель
+  // послушно писала шесть слов и получала отказ. Подпись на экране не
+  // показывается вовсе — она нужна человеку на согласовании, — так что
+  // придираться к ней сверх промпта незачем.
+  const captionWords = scene.caption.split(/\s+/).filter(Boolean).length;
+  if (captionWords > CAPTION_MAX_WORDS) {
+    return `подпись хука длиннее ${CAPTION_MAX_WORDS} слов`;
   }
   return undefined;
 }
@@ -225,6 +232,14 @@ const DEAD_END_PATTERNS: { re: RegExp; what: string }[] = [
   { re: /работа\s+(всё ещё\s+)?ид[её]т/i, what: "«работа идёт»" },
 ];
 
+// Признаки того, что вывод всё-таки есть: прямое указание зрителю или
+// связка «поэтому/значит». «Это непростая задача, ПОЭТОМУ начни с одного
+// инструмента» — законный финал: руками разводят и тут же говорят, что
+// делать. Без этого исключения проверка браковала бы половину нормальных
+// концовок — поймано на корпусе здоровых сценариев.
+const TAKEAWAY_MARKERS =
+  /(поэтому|значит,|так что|вывод|начни|начинай|проси|смотри|проверь|проверяй|бери|делай|попробуй|используй|запомни|считай|называй|убери|сравни|не жди|не пытайся)/i;
+
 /**
  * Содержательный финал должен давать зрителю вывод, а не разводить руками.
  */
@@ -235,6 +250,7 @@ export function deadEndProblem(script: GeneratedScript): string | undefined {
   const text = `${last.caption} ${last.voiceoverText}`;
   const hit = DEAD_END_PATTERNS.find(({ re }) => re.test(text));
   if (!hit) return undefined;
+  if (TAKEAWAY_MARKERS.test(text)) return undefined;
   return (
     `ролик кончается ничем: ${hit.what} — зрителю нечего унести, ` +
     "нечем поделиться и не о чем спорить"
@@ -245,10 +261,20 @@ export function deadEndProblem(script: GeneratedScript): string | undefined {
 // это как сто домов за год» стояло на двенадцатой секунде — к этому моменту
 // половина зрителей уже ушла. Если в ролике есть яркая цифра, она обязана
 // звучать в первой сцене.
-const SCALE_WORDS = /(миллион|миллиард|триллион|тысяч|мегаватт|киловатт|терабайт|петабайт|процент)/i;
+const SCALE_WORDS = "(миллион|миллиард|триллион|тысяч|мегаватт|киловатт|гигаватт|терабайт|петабайт|процент)";
+// Слово масштаба считается крючком только рядом с цифрой: «5 миллионов»,
+// «300 мегаватт». Само по себе «тысячи вариантов» — это расплывчатое «много»,
+// а не цифра, ради которой стоит смотреть.
+//
+// Это ровно то место, где проверка сначала была подогнана под один сценарий:
+// в присланном ролике крючком было «1287 мегаватт-часов», и я обобщил его до
+// «любого слова масштаба». На корпусе здоровых сценариев такое правило сразу
+// забраковало фразу «внутри у них тысячи вариантов» — она не крючок и в хук
+// не просится.
+const NUMBER_WITH_SCALE = new RegExp(`\\d[\\d\\u00A0\\s]*\\s*${SCALE_WORDS}`, "i");
 
 function hasStrikingNumber(text: string): boolean {
-  if (SCALE_WORDS.test(text)) return true;
+  if (NUMBER_WITH_SCALE.test(text)) return true;
   // Пробел внутри числа («1 287») склеиваем, иначе крупное число распадётся
   // на два мелких. Пробелы между разными числами при этом не трогаем.
   const joined = text.replace(/(\d)[\u00A0\s]+(\d)/g, "$1$2");
@@ -287,7 +313,14 @@ export function hookNumberProblem(script: GeneratedScript): string | undefined {
 const VAGUE_CTA = /(там|тут)\s+(много|полно)\s+(интересного|полезного|всего)|там\s+всё\s+есть|не\s+пожалеешь|заходи[,\s]|будет\s+интересно/i;
 // Конкретика, ради которой человек нажимает: цена, скорость, отсутствие
 // барьера или прямое «попробуй».
-const CONCRETE_OFFER = /бесплатн|без\s+(регистрации|карты|подписки)|прямо\s+сейчас|за\s+(минуту|пару\s+минут|секунды)|попробуй|затест|проверь\s+сам|первый\s+[а-яё]+\s+бесплатн/i;
+const CONCRETE_OFFER =
+  /бесплатн|без\s+(регистрации|карты|подписки)|прямо\s+сейчас|за\s+(минуту|пару\s+минут|секунды)|попробуй|затест|проверь\s+сам|первый\s+[а-яё]+\s+бесплатн/i;
+// Обещание тоже конкретика, даже без слова «бесплатно»: «подпишись —
+// разбираю по одной нейросети каждую неделю» говорит, что человек получит и
+// как часто. Поймано на корпусе: без этого проверка браковала любой призыв
+// через подписку.
+const CONCRETE_PROMISE =
+  /(разбира|показыва|покажу|научу|выкладыва|присыла)[а-яё]*|кажд[а-яё]+\s+(день|неделю|недели)|раз\s+в\s+(день|неделю)|по\s+одн[а-яё]+/i;
 // Призыв длиннее этого перестаёт быть призывом: в присланном ролике он занял
 // двенадцать секунд, то есть шестую часть хронометража.
 const CTA_MAX_WORDS = 22;
@@ -304,7 +337,7 @@ export function ctaProblem(script: GeneratedScript): string | undefined {
 
   const vague = text.match(VAGUE_CTA);
   if (vague) found.push(`«${vague[0].trim()}» ничего не обещает`);
-  if (!CONCRETE_OFFER.test(text)) {
+  if (!CONCRETE_OFFER.test(text) && !CONCRETE_PROMISE.test(text)) {
     found.push("нет конкретного предложения (бесплатно, без регистрации, попробуй сейчас)");
   }
   const words = cta.voiceoverText.trim().split(/\s+/).filter(Boolean).length;
@@ -323,12 +356,21 @@ export function ctaProblem(script: GeneratedScript): string | undefined {
 const STALE_NAMES =
   /(GPT-3(\.5)?|ChatGPT-3|DALL-?E\s?2|Midjourney\s?v?[45]|Stable\s?Diffusion\s?1\.5|Llama\s?2|Claude\s?2)(?![\d.])/i;
 
+// Ссылка в прошедшем времени — это не устаревший пример, а история: «тогда
+// GPT-3 удивлял одним абзацем» рассказывает, как было, и датирует не ролик, а
+// эпоху. Поймано на корпусе здоровых сценариев.
+const PAST_FRAME =
+  /(тогда|раньше|когда-то|в\s+своё\s+время|лет\s+назад|год[аы]?\s+назад|перв[а-яё]+\s+верси|история|появился|появилась|казал[а-яё]+\s+чудом)/i;
+
 /** Пример из позапрошлого поколения старит ролик целиком. */
 export function staleProblem(script: GeneratedScript): string | undefined {
   const found: string[] = [];
   script.scenes.forEach((scene, index) => {
-    const match = `${scene.caption} ${scene.voiceoverText}`.match(STALE_NAMES);
-    if (match) found.push(`сцена ${index + 1} — ${match[0]}`);
+    const text = `${scene.caption} ${scene.voiceoverText}`;
+    const match = text.match(STALE_NAMES);
+    if (match && !PAST_FRAME.test(text)) {
+      found.push(`сцена ${index + 1} — ${match[0]}`);
+    }
   });
   if (found.length === 0) return undefined;
   return (
