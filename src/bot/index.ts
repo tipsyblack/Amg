@@ -50,13 +50,16 @@ import {
   editInstantVoiceClone,
   getVoiceSamples,
   isolateVoice,
+  separateStems,
 } from "../pipeline/voiceClone";
+import type { StemVariation } from "../pipeline/voiceClone";
 import {
   audioDurationSeconds,
   concatAudio,
   extractAudio,
   fileHash,
 } from "./extractAudio";
+import { prepareUploadFiles } from "../pipeline/voiceSamples";
 import { config } from "../pipeline/config";
 import { generateDescription } from "../pipeline/generateDescription";
 import { generateCheckedScript } from "../pipeline/generateScript";
@@ -104,7 +107,7 @@ import {
   makeThumbnail,
   SAFE_VIDEO_BYTES,
 } from "./videoSize";
-import { masterLoudness } from "./masterAudio";
+import { masterLoudness, measureLoudness } from "./masterAudio";
 import { extractStyleNotes } from "./referenceStyle";
 import {
   deleteProfile,
@@ -770,6 +773,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/music — фоновая музыка: библиотека и генерация\n" +
       "/clone — клонировать голос из своих роликов\n" +
       "/clonemore — добавить материал в уже созданный клон\n" +
+      "/stems — разобрать чужую дорожку: что играет под речью\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
@@ -1632,6 +1636,130 @@ bot.callbackQuery(/^clonemore_(.+)$/, async (ctx) => {
   );
 });
 
+// ——— Разбор чужой дорожки на стемы ———
+
+/**
+ * Ответ на «а есть ли под речью музыка и какая». ElevenLabs умеет разделять
+ * дорожку на стемы (v1/music/stem-separation): в режиме двух стемов это голос и
+ * «минус». Слышно и видно по цифрам сразу: если минус тише голоса на 25+ дБ, то
+ * под речью не музыка, а шум и звуки стыков.
+ *
+ * Важно про использование: вытащенный минус — чужая запись. Он годится
+ * разобраться, что там играет, и повторить это своей генерацией. Ставить его в
+ * свои ролики нельзя.
+ */
+const MUSIC_PRESENT_WITHIN_DB = 25;
+
+async function runStemsStep(
+  ctx: Context,
+  chatId: number,
+  sourceFile: string,
+  variation: StemVariation,
+): Promise<void> {
+  const workDir = await mkdtemp(path.join(tmpdir(), "amg-stems-"));
+  try {
+    const audio = path.join(workDir, "source.mp3");
+    await extractAudio(sourceFile, audio);
+    const seconds = await audioDurationSeconds(audio);
+
+    // Тот же предел 11 МБ на файл, что и у остальных загрузок.
+    const [fitted, ...extra] = await prepareUploadFiles([audio], workDir);
+    if (extra.length > 0) {
+      await ctx.reply(
+        `Фрагмент длинный (${Math.round(seconds)} с) — разберу первые ` +
+          `${Math.round(await audioDurationSeconds(fitted))} с: в один запрос ` +
+          "больше 11 МБ не влезает.",
+      );
+    }
+
+    await ctx.reply("🎛 Разделяю дорожку на стемы…");
+    const stems = await separateStems({
+      inFile: fitted,
+      outDir: path.join(workDir, "stems"),
+      variation,
+    });
+
+    const measured: { name: string; lufs: number; file: string }[] = [];
+    for (const stem of stems) {
+      try {
+        const { lufs } = await measureLoudness(stem.file);
+        measured.push({ name: stem.name, lufs, file: stem.file });
+      } catch {
+        measured.push({ name: stem.name, lufs: Number.NaN, file: stem.file });
+      }
+    }
+
+    // Голосовой стем ElevenLabs называет vocals; если имя другое, берём самый
+    // громкий — под речью он и есть голос.
+    const vocals =
+      measured.find((s) => /vocal|voice/i.test(s.name)) ??
+      measured.reduce((a, b) => (b.lufs > a.lufs ? b : a));
+
+    const lines = measured.map((s) => {
+      const level = Number.isFinite(s.lufs) ? `${s.lufs} LUFS` : "тишина";
+      const gap =
+        s !== vocals && Number.isFinite(s.lufs) && Number.isFinite(vocals.lufs)
+          ? ` (тише голоса на ${(vocals.lufs - s.lufs).toFixed(1)} дБ)`
+          : "";
+      return `• ${s.name}: ${level}${gap}`;
+    });
+
+    const backing = measured.filter((s) => s !== vocals && Number.isFinite(s.lufs));
+    const loudest = backing.length
+      ? backing.reduce((a, b) => (b.lufs > a.lufs ? b : a))
+      : undefined;
+    const verdict =
+      loudest === undefined
+        ? "Кроме голоса ничего не выделилось."
+        : vocals.lufs - loudest.lufs <= MUSIC_PRESENT_WITHIN_DB
+          ? `Под речью есть слой на ${(vocals.lufs - loudest.lufs).toFixed(1)} дБ ` +
+            "тише голоса — послушайте, музыка это или шум зала."
+          : `Всё, кроме голоса, тише его на ${(vocals.lufs - loudest.lufs).toFixed(1)} дБ ` +
+            "— это уже уровень шума и звуков стыков, а не музыкальный фон.";
+
+    await ctx.reply(`Готово. Стемы:\n${lines.join("\n")}\n\n${verdict}`);
+
+    for (const stem of measured) {
+      await ctx.replyWithAudio(new InputFile(stem.file), {
+        title: stem.name,
+      });
+    }
+    await ctx.reply(
+      "Это чужая запись: годится понять, что там играет, и повторить своей " +
+        "генерацией (/music), но ставить её в свои ролики нельзя.",
+    );
+    updateSession(chatId, { step: "idle" });
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
+bot.command("stems", async (ctx) => {
+  if (!isElevenLabsAvailable()) {
+    await ctx.reply(
+      "Для разделения на стемы нужен ELEVENLABS_API_KEY в .env на сервере.",
+    );
+    return;
+  }
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  const six = /six|6/.test(ctx.match ?? "");
+  updateSession(ctx.chat.id, {
+    step: "awaiting_stems_source",
+    stemsVariation: six ? "six_stems_v1" : "two_stems_v1",
+  });
+  await ctx.reply(
+    "Пришлите видео, аудио или ссылку на Google Drive — разберу дорожку на " +
+      "стемы и покажу, что под речью.\n\n" +
+      (six
+        ? "Режим: шесть стемов (вокал, барабаны, бас и остальное)."
+        : "Режим: два стема (голос и минус). Шесть — /stems six.") +
+      "\n\nОтменить — /cancel.",
+  );
+});
+
 bot.command("clone", async (ctx) => {
   if (!isElevenLabsAvailable()) {
     await ctx.reply(
@@ -2210,7 +2338,8 @@ bot.callbackQuery(/^regen_(\d+)$/, async (ctx) => {
 // с запасом, а большие видео идут ссылкой на Drive.
 bot.on([":video", ":audio", ":voice", ":document", ":video_note"], async (ctx) => {
   const chatId = ctx.chat.id;
-  if (getSession(chatId).step !== "awaiting_clone_links") return;
+  const step = getSession(chatId).step;
+  if (step !== "awaiting_clone_links" && step !== "awaiting_stems_source") return;
 
   await withGeneration(
     ctx,
@@ -2232,13 +2361,22 @@ bot.on([":video", ":audio", ":voice", ":document", ":video_note"], async (ctx) =
         }
         const localPath = path.join(workDir, path.basename(file.file_path));
         await writeFile(localPath, Buffer.from(await response.arrayBuffer()));
-        await addCloneSample(ctx, chatId, localPath);
+        if (step === "awaiting_stems_source") {
+          await runStemsStep(
+            ctx,
+            chatId,
+            localPath,
+            getSession(chatId).stemsVariation ?? "two_stems_v1",
+          );
+        } else {
+          await addCloneSample(ctx, chatId, localPath);
+        }
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
     },
     {
-      errorStep: "awaiting_clone_links",
+      errorStep: step,
       errorHint:
         "Не получилось разобрать файл. Пришлите другой, ссылку или /cancel.\n" +
         "Файлы больше 20 МБ Telegram боту не отдаёт — такие только ссылкой.",
@@ -2289,6 +2427,41 @@ bot.on("message:text", async (ctx) => {
           `Присылайте по одному, я буду считать. Нужно минимум ${CLONE_MIN_SECONDS} с речи.\n` +
           "Когда всё — /done.",
         { parse_mode: "Markdown" },
+      );
+      return;
+    }
+
+    case "awaiting_stems_source": {
+      const link = text.split(/\s+/).find((part) => /^https?:\/\//.test(part));
+      if (!link) {
+        await ctx.reply(
+          "Жду видео, аудио или ссылку на Google Drive. Отменить — /cancel.",
+        );
+        return;
+      }
+      await withGeneration(
+        ctx,
+        chatId,
+        async () => {
+          const workDir = await mkdtemp(path.join(tmpdir(), "amg-stems-dl-"));
+          try {
+            await ctx.reply("⬇️ Скачиваю…");
+            const file = path.join(workDir, "source.mp4");
+            await downloadDriveFile(link, file);
+            await runStemsStep(
+              ctx,
+              chatId,
+              file,
+              session.stemsVariation ?? "two_stems_v1",
+            );
+          } finally {
+            await rm(workDir, { recursive: true, force: true });
+          }
+        },
+        {
+          errorStep: "awaiting_stems_source",
+          errorHint: "Пришлите ссылку ещё раз, файл или /cancel.",
+        },
       );
       return;
     }

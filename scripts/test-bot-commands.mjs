@@ -39,6 +39,7 @@ bot.command('clone', (ctx) => { hits.push(['clone', ctx.match]); });
 bot.command('library', (ctx) => { hits.push(['library', ctx.match]); });
 bot.command('rules', (ctx) => { hits.push(['rules', ctx.match]); });
 bot.command('length', (ctx) => { hits.push(['length', ctx.match]); });
+bot.command('stems', (ctx) => { hits.push(['stems', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -164,5 +165,14 @@ check(
 // /library и /length начинаются на «l» — проверяем, что не слиплись.
 await bot.handleUpdate(upd('/length 75'));
 check('/length не путается с /library', hits.at(-1)?.[0] === 'length' && hits.at(-1)?.[1] === '75');
+
+// 13) /stems: режим приходит аргументом, и команда начинается на «st» — как и
+// /start, поэтому проверяем обе.
+await bot.handleUpdate(upd('/stems'));
+check('/stems без аргумента', hits.at(-1)?.[0] === 'stems' && hits.at(-1)?.[1] === '');
+await bot.handleUpdate(upd('/stems six'));
+check('/stems six', hits.at(-1)?.[0] === 'stems' && hits.at(-1)?.[1] === 'six');
+await bot.handleUpdate(upd('/start'));
+check('/stems не перехватил /start', hits.at(-1)?.[0] === 'start', JSON.stringify(hits.at(-1)));
 
 process.exit(fails === 0 ? 0 : 1);

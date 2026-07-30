@@ -19,6 +19,7 @@ export type Step =
   | "awaiting_script_feedback"
   | "awaiting_scene_number"
   | "awaiting_checklist"
+  | "awaiting_stems_source"
   | "busy";
 
 export interface SceneImage {
@@ -104,6 +105,8 @@ export interface Session {
   // Если задан — собранный материал добавляется к этому голосу, а не создаёт
   // новый клон (команда /clonemore).
   cloneTargetVoiceId?: string;
+  // Режим разделения на стемы, выбранный командой /stems.
+  stemsVariation?: "two_stems_v1" | "six_stems_v1";
   // Профиль в процессе создания.
   draftProfile?: {
     name?: string;

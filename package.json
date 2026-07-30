@@ -22,6 +22,7 @@
     "test:script": "tsx scripts/test-script.mjs",
     "test:size": "tsx scripts/test-video-size.mjs",
     "test:master": "tsx scripts/test-master.mjs",
+    "test:stems": "tsx scripts/test-stems.mjs",
     "test:subs": "tsx scripts/test-subtitles.mjs",
     "test:overlays": "tsx scripts/test-overlays.mjs",
     "test:description": "tsx scripts/test-description.mjs",

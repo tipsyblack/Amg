@@ -1,7 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { config } from "./config";
+import { unzip } from "./unzip";
 import {
   MAX_UPLOAD_BYTES,
   concatAudio,
@@ -12,6 +13,7 @@ import {
 // Клонирование голоса и очистка дорожки от музыки — прямые вызовы ElevenLabs.
 // Через Kie.ai эти операции недоступны, нужен свой ключ (Creator и выше).
 const ISOLATION_URL = "https://api.elevenlabs.io/v1/audio-isolation";
+const STEMS_URL = "https://api.elevenlabs.io/v1/music/stem-separation";
 const ADD_VOICE_URL = "https://api.elevenlabs.io/v1/voices/add";
 const VOICES_URL = "https://api.elevenlabs.io/v1/voices";
 
@@ -164,6 +166,90 @@ export async function createInstantVoiceClone({
     throw new Error("ElevenLabs не вернул voice_id созданного голоса");
   }
   return { voiceId: data.voice_id };
+}
+
+/**
+ * Разделение дорожки на стемы.
+ *
+ * `two_stems_v1` — голос и всё остальное («минус»); именно он отвечает на
+ * вопрос «есть ли под речью музыка». `six_stems_v1` дробит дальше: вокал,
+ * барабаны, бас и прочее — полезно, когда музыка нашлась и нужно понять, из
+ * чего она собрана.
+ *
+ * Контракт сверен с официальным SDK (@elevenlabs/elevenlabs-js 2.59.0,
+ * resources/music/client/Client.js): POST v1/music/stem-separation, файл полем
+ * `file`, вариация полем `stem_variation_id`, формат — query-параметром
+ * `output_format`, ответ — zip. Живым ключом отсюда проверить нельзя:
+ * api.elevenlabs.io из песочницы недоступен.
+ */
+export type StemVariation = "two_stems_v1" | "six_stems_v1";
+
+export interface Stem {
+  /** Имя файла внутри архива — им ElevenLabs и называет стем. */
+  name: string;
+  file: string;
+}
+
+export async function separateStems({
+  inFile,
+  outDir,
+  variation = "two_stems_v1",
+  outputFormat = "mp3_44100_192",
+}: {
+  inFile: string;
+  outDir: string;
+  variation?: StemVariation;
+  outputFormat?: string;
+}): Promise<Stem[]> {
+  const form = new FormData();
+  form.append("file", await fileToBlob(inFile), path.basename(inFile));
+  form.append("stem_variation_id", variation);
+
+  const response = await fetch(
+    `${STEMS_URL}?output_format=${encodeURIComponent(outputFormat)}`,
+    {
+      method: "POST",
+      headers: { "xi-api-key": requireKey() },
+      body: form,
+    },
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    if (body.includes("upload_file_size_exceeded")) {
+      throw new Error(
+        "Файл больше 11 МБ — ElevenLabs его не примет. Пришлите фрагмент " +
+          "покороче.",
+      );
+    }
+    if (response.status === 403 || body.includes("missing_permissions")) {
+      throw new Error(
+        "Тариф или ключ ElevenLabs не разрешает разделение на стемы " +
+          "(v1/music/stem-separation). Проверьте, что у ключа есть доступ к " +
+          "Music.",
+      );
+    }
+    throw new Error(
+      `ElevenLabs (разделение на стемы) вернул ошибку ${response.status}: ${body}`,
+    );
+  }
+
+  const archive = Buffer.from(await response.arrayBuffer());
+  const entries = unzip(archive);
+  if (entries.length === 0) {
+    throw new Error("ElevenLabs вернул пустой архив стемов");
+  }
+
+  await mkdir(outDir, { recursive: true });
+  const stems: Stem[] = [];
+  for (const entry of entries) {
+    // Имя приходит от сервиса: берём только базовое, чтобы «../» из архива не
+    // мог увести запись за пределы папки.
+    const file = path.join(outDir, path.basename(entry.name));
+    await writeFile(file, entry.data);
+    stems.push({ name: path.basename(entry.name), file });
+  }
+  return stems;
 }
 
 export interface VoiceSample {
