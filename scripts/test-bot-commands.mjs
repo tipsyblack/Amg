@@ -40,6 +40,8 @@ bot.command('library', (ctx) => { hits.push(['library', ctx.match]); });
 bot.command('rules', (ctx) => { hits.push(['rules', ctx.match]); });
 bot.command('length', (ctx) => { hits.push(['length', ctx.match]); });
 bot.command('stems', (ctx) => { hits.push(['stems', ctx.match]); });
+bot.command('music', (ctx) => { hits.push(['music', ctx.match]); });
+bot.command('addmusic', (ctx) => { hits.push(['addmusic', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -174,5 +176,12 @@ await bot.handleUpdate(upd('/stems six'));
 check('/stems six', hits.at(-1)?.[0] === 'stems' && hits.at(-1)?.[1] === 'six');
 await bot.handleUpdate(upd('/start'));
 check('/stems не перехватил /start', hits.at(-1)?.[0] === 'start', JSON.stringify(hits.at(-1)));
+
+// 14) /addmusic и /music: одна команда — начало другой, проверяем, что не
+// слиплись (у grammY это уже ломалось на /library и /length).
+await bot.handleUpdate(upd('/addmusic'));
+check('/addmusic', hits.at(-1)?.[0] === 'addmusic', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/music'));
+check('/music не перехвачен /addmusic', hits.at(-1)?.[0] === 'music', JSON.stringify(hits.at(-1)));
 
 process.exit(fails === 0 ? 0 : 1);

@@ -309,6 +309,75 @@ check(
   `${moved.result.after.lufs} LUFS`,
 );
 
+console.log("\n=== так это делает бот с присланным файлом ===");
+// Присылают что угодно: mp3, m4a, ogg, а то и видео. Путь бота — вытащить
+// дорожку через extractAudio и подготовить её. Проверяем на настоящих форматах:
+// на «а ffmpeg наверное справится» уже наступали.
+const audio = await import("/home/user/Amg/src/bot/extractAudio.ts");
+for (const [label, build] of [
+  ["m4a", async (f) => execFileAsync("ffmpeg", ["-y", "-loglevel", "error", "-i", hot, "-c:a", "aac", "-b:a", "192k", f])],
+  ["ogg", async (f) => execFileAsync("ffmpeg", ["-y", "-loglevel", "error", "-i", hot, "-c:a", "libvorbis", f])],
+  ["видео", async (f) => execFileAsync("ffmpeg", ["-y", "-loglevel", "error",
+    "-f", "lavfi", "-i", "color=c=black:s=320x180:r=24:d=16", "-i", hot,
+    "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "32",
+    "-c:a", "aac", "-shortest", f])],
+]) {
+  const src = path.join(workDir, `sent.${label === "видео" ? "mp4" : label}`);
+  await build(src);
+  const pulled = path.join(workDir, `pulled-${label}.mp3`);
+  await audio.extractAudio(src, pulled);
+  const target = path.join(workDir, prep.libraryTrackName(`Мой трек.${label}`));
+  const r = await prep.prepareMusicTrack(pulled, target);
+  const okLoud = Math.abs(r.after.lufs - prep.MUSIC_LUFS) <= 1;
+  const okLen = r.secondsAfter > 10;
+  check(
+    `${label}: дорожка вытащена и подготовлена`,
+    okLoud && okLen && r.looped,
+    `${r.after.lufs} LUFS, ${r.secondsAfter.toFixed(1)} с, петля ${r.looped ? "есть" : "нет"}`,
+  );
+}
+
+console.log("\n=== имя присланного файла в библиотеке ===");
+// Имя приходит из Telegram, то есть от пользователя, и становится путём на
+// диске. Проверяем именно это: из него не должно получиться ни выхода из папки,
+// ни сломанного списка файлов.
+const name = (s, now = 1700000000000) => prep.libraryTrackName(s, now);
+check(
+  "узнаваемое имя сохраняется",
+  name("Ambient Chill.mp3") === "Ambient-Chill-1700000000000.wav",
+  name("Ambient Chill.mp3"),
+);
+check(
+  "кириллица не теряется",
+  name("Восточный бит.wav") === "Восточный-бит-1700000000000.wav",
+  name("Восточный бит.wav"),
+);
+check(
+  "путь наверх не проходит",
+  !name("../../etc/passwd").includes("/") && !name("../../etc/passwd").includes(".."),
+  name("../../etc/passwd"),
+);
+check(
+  "кавычки и пробелы вычищены",
+  /^[\p{L}\p{N}_-]+-1700000000000\.wav$/u.test(name('my "best" track (v2).mp3')),
+  name('my "best" track (v2).mp3'),
+);
+check(
+  "пустое имя не даёт файл без имени",
+  name("...") === "track-1700000000000.wav",
+  name("..."),
+);
+check(
+  "длинное имя обрезается",
+  name("a".repeat(200)).length < 70,
+  `${name("a".repeat(200)).length} символов`,
+);
+check(
+  "два файла с одним именем не затрут друг друга",
+  prep.libraryTrackName("x.mp3", 1) !== prep.libraryTrackName("x.mp3", 2),
+);
+check("расширение всегда wav", name("track.m4a").endsWith(".wav"), name("track.m4a"));
+
 rmSync(workDir, { recursive: true, force: true });
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

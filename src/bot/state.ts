@@ -20,6 +20,7 @@ export type Step =
   | "awaiting_scene_number"
   | "awaiting_checklist"
   | "awaiting_stems_source"
+  | "awaiting_music_upload"
   | "busy";
 
 export interface SceneImage {

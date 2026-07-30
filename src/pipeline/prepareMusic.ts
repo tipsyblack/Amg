@@ -51,6 +51,26 @@ const LOOP_CROSSFADE_SECONDS = 2;
 /** Короче этого зацикливать нечего — склейка съест весь трек. */
 const MIN_LOOPABLE_SECONDS = 8;
 
+/**
+ * Имя для файла в библиотеке, собранное из присланного.
+ *
+ * Имя приходит из Telegram, то есть от пользователя, — и в библиотеке оно
+ * становится путём на диске. Поэтому от исходного остаётся только основа без
+ * папок, а из неё вычищается всё, кроме букв, цифр, дефиса и подчёркивания:
+ * «../» или кавычка в имени не должны ни увести запись из папки, ни сломать
+ * список файлов. Метка времени — чтобы два файла с одинаковым названием не
+ * затирали друг друга.
+ */
+export function libraryTrackName(original: string, now = Date.now()): string {
+  const base = path
+    .basename(original, path.extname(original))
+    .replace(/[^\p{L}\p{N}_-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
+  return `${base || "track"}-${now}.wav`;
+}
+
 export interface PreparedMusic {
   before: Loudness;
   after: Loudness;

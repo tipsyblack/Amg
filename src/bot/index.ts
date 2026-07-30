@@ -61,6 +61,7 @@ import {
 } from "./extractAudio";
 import { prepareUploadFiles } from "../pipeline/voiceSamples";
 import {
+  libraryTrackName,
   prepareMusicTrack,
   prepareMusicTrackInPlace,
 } from "../pipeline/prepareMusic";
@@ -779,7 +780,8 @@ bot.command(["start", "help"], async (ctx) => {
       "/rules — чек-лист, по которому критик проверяет сценарий\n" +
       "/vidmodel — модель оживления кадра\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
-      "/music — фоновая музыка: библиотека и генерация\n" +
+      "/music — фоновая музыка: библиотека, загрузка и генерация\n" +
+      "/addmusic — добавить свои треки в библиотеку\n" +
       "/clone — клонировать голос из своих роликов\n" +
       "/clonemore — добавить материал в уже созданный клон\n" +
       "/stems — разобрать чужую дорожку: что играет под речью\n" +
@@ -2095,6 +2097,7 @@ bot.command("music", async (ctx) => {
   for (const preset of MUSIC_PRESETS) {
     keyboard.text(`🎵 ${preset.title}`, `music_gen_${preset.key}`).row();
   }
+  keyboard.text("⬆️ Загрузить свои треки", "music_upload").row();
   if (tracks.length > 0) {
     keyboard.text("🎚 Привести треки к порядку", "music_prepare").row();
     keyboard.text("🗑 Очистить библиотеку", "music_clear");
@@ -2106,8 +2109,9 @@ bot.command("music", async (ctx) => {
       : `В библиотеке ${tracks.length} трек(ов):\n` +
         tracks.map((t) => `• ${t}`).join("\n") +
         "\n\nДля каждого ролика берётся случайный.\n\n") +
-      "Сгенерировать трек (Suno через Kie.ai, ~1-2 минуты, тратит кредиты). " +
-      "Можно нажать несколько раз — соберётся набор на разные настроения:",
+      "Можно загрузить свои файлы кнопкой ниже или сгенерировать трек " +
+      "(Suno через Kie.ai, ~1-2 минуты, тратит кредиты). Генерацию можно " +
+      "нажать несколько раз — соберётся набор на разные настроения:",
     { reply_markup: keyboard },
   );
 });
@@ -2157,6 +2161,67 @@ async function addPreparedTrack(
       (result.looped ? ", петля склеена без щелчка" : "") +
       "\nБудет случайно подмешиваться в ролики. Ещё треки — /music",
   };
+}
+
+/**
+ * Кладёт в библиотеку присланный файл. Дорожка вытаскивается из чего угодно
+ * (видео, аудио, голосовое), поэтому «музыкой» может стать и звук из ролика.
+ */
+async function addUploadedTrack(
+  ctx: Context,
+  sourceFile: string,
+  originalName: string,
+): Promise<void> {
+  await ensureMusicLibraryDir();
+  const workDir = await mkdtemp(path.join(tmpdir(), "amg-music-up-"));
+  try {
+    // Через extractAudio, а не напрямую: присылают и видео, и m4a, и ogg, а
+    // подготовке нужна обычная дорожка.
+    const raw = path.join(workDir, "source.mp3");
+    await extractAudio(sourceFile, raw);
+
+    const target = path.join(MUSIC_LIBRARY_DIR, libraryTrackName(originalName));
+    const result = await prepareMusicTrack(raw, target);
+    await ctx.reply(
+      `✅ ${path.basename(target)}\n` +
+        `Громкость выровнена: ${result.before.lufs} → ${result.after.lufs} LUFS` +
+        (result.looped
+          ? `, петля склеена (${result.secondsBefore.toFixed(0)} → ${result.secondsAfter.toFixed(0)} с)`
+          : ", трек короткий — петлю не склеивал") +
+        "\n\nПрисылайте ещё или /done, чтобы закончить.",
+    );
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
+bot.callbackQuery("music_upload", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await startMusicUpload(ctx);
+});
+
+bot.command("addmusic", async (ctx) => {
+  await startMusicUpload(ctx);
+});
+
+async function startMusicUpload(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  updateSession(chatId, { step: "awaiting_music_upload" });
+  await ctx.reply(
+    "Присылайте треки — по одному, можно подряд. Годятся аудиофайлы и видео " +
+      "(возьму из них дорожку), а файлы больше 20 МБ — ссылкой на Google Drive: " +
+      "больше Telegram боту не отдаёт.\n\n" +
+      "Каждый трек я подготовлю: выровняю громкость под остальные, уберу низ, " +
+      "который мешает ударам на склейках, и склею бесшовную петлю.\n\n" +
+      "Загружайте только то, на что у вас есть права: за чужой трек площадка " +
+      "может заглушить ролик.\n\n" +
+      "Закончить — /done, отменить — /cancel.",
+  );
 }
 
 bot.callbackQuery("music_prepare", async (ctx) => {
@@ -2477,7 +2542,13 @@ bot.callbackQuery(/^regen_(\d+)$/, async (ctx) => {
 bot.on([":video", ":audio", ":voice", ":document", ":video_note"], async (ctx) => {
   const chatId = ctx.chat.id;
   const step = getSession(chatId).step;
-  if (step !== "awaiting_clone_links" && step !== "awaiting_stems_source") return;
+  if (
+    step !== "awaiting_clone_links" &&
+    step !== "awaiting_stems_source" &&
+    step !== "awaiting_music_upload"
+  ) {
+    return;
+  }
 
   await withGeneration(
     ctx,
@@ -2506,6 +2577,19 @@ bot.on([":video", ":audio", ":voice", ":document", ":video_note"], async (ctx) =
             localPath,
             getSession(chatId).stemsVariation ?? "two_stems_v1",
           );
+        } else if (step === "awaiting_music_upload") {
+          // Имя для библиотеки берём из присланного файла, а не из пути в
+          // Telegram: тот выглядит как «music/file_12.mp3» и в списке треков
+          // ничего не говорит.
+          const sent =
+            ctx.message?.audio?.file_name ??
+            ctx.message?.document?.file_name ??
+            ctx.message?.audio?.title ??
+            path.basename(file.file_path);
+          await addUploadedTrack(ctx, localPath, sent);
+          // Шаг возвращаем: withGeneration после успеха сбрасывает его в idle, а
+          // треки присылают подряд.
+          updateSession(chatId, { step: "awaiting_music_upload" });
         } else {
           await addCloneSample(ctx, chatId, localPath);
         }
@@ -2565,6 +2649,51 @@ bot.on("message:text", async (ctx) => {
           `Присылайте по одному, я буду считать. Нужно минимум ${CLONE_MIN_SECONDS} с речи.\n` +
           "Когда всё — /done.",
         { parse_mode: "Markdown" },
+      );
+      return;
+    }
+
+    case "awaiting_music_upload": {
+      if (text === "/done") {
+        const tracks = await listMusicTracks();
+        updateSession(chatId, { step: "idle" });
+        await ctx.reply(
+          tracks.length === 0
+            ? "Ничего не добавилось. Библиотека пуста — ролики будут без музыки."
+            : `Готово. В библиотеке ${tracks.length} трек(ов):\n` +
+                tracks.map((t) => `• ${t}`).join("\n") +
+                "\n\nДля каждого ролика берётся случайный. Ещё треки — /music",
+        );
+        return;
+      }
+      const musicLink = text
+        .split(/\s+/)
+        .find((part) => /^https?:\/\//.test(part));
+      if (!musicLink) {
+        await ctx.reply(
+          "Жду файл или ссылку на Google Drive. Закончить — /done, отменить — /cancel.",
+        );
+        return;
+      }
+      await withGeneration(
+        ctx,
+        chatId,
+        async () => {
+          const workDir = await mkdtemp(path.join(tmpdir(), "amg-music-dl-"));
+          try {
+            await ctx.reply("⬇️ Скачиваю…");
+            const file = path.join(workDir, "track.mp3");
+            await downloadDriveFile(musicLink, file);
+            await addUploadedTrack(ctx, file, "track");
+            updateSession(chatId, { step: "awaiting_music_upload" });
+          } finally {
+            await rm(workDir, { recursive: true, force: true });
+          }
+        },
+        {
+          errorStep: "awaiting_music_upload",
+          errorHint: "Пришлите ссылку ещё раз, файл или /cancel.",
+        },
       );
       return;
     }
