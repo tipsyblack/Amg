@@ -104,6 +104,7 @@ import {
   makeThumbnail,
   SAFE_VIDEO_BYTES,
 } from "./videoSize";
+import { masterLoudness } from "./masterAudio";
 import { extractStyleNotes } from "./referenceStyle";
 import {
   deleteProfile,
@@ -654,6 +655,30 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     // размер заранее: 413 от Telegram приходит уже после загрузки, и ролик,
     // за который заплачены генерации, остаётся лежать на сервере.
     let videoFile = path.resolve("out/video.mp4");
+
+    // Громкость выравниваем по референсу. Это единственное, чем его звуковой
+    // «фон» отличается от нашего: музыки там нет, а громкость на 2-3 дБ выше и
+    // прижата лимитером. Картинку операция не пересчитывает (-c:v copy).
+    if (config.masterLufs !== 0) {
+      try {
+        const mastered = path.resolve("out/video-loud.mp4");
+        const { before, after, gainDb } = await masterLoudness(
+          videoFile,
+          mastered,
+          config.masterLufs,
+        );
+        videoFile = mastered;
+        console.log(
+          `Громкость: ${before.lufs} → ${after.lufs} LUFS ` +
+            `(${gainDb >= 0 ? "+" : ""}${gainDb.toFixed(1)} дБ), ` +
+            `пик ${after.truePeakDb} dBTP, разброс ${after.lra} LU`,
+        );
+      } catch (error) {
+        // Ролик уже готов — из-за громкости его терять незачем.
+        console.error("Выравнивание громкости не удалось:", error);
+      }
+    }
+
     const renderedBytes = await fileSizeBytes(videoFile);
     if (renderedBytes > SAFE_VIDEO_BYTES) {
       await ctx.reply(
