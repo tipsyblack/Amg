@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { dbToLinear, measureLoudness } from "../pipeline/loudness";
+import type { Loudness } from "../pipeline/loudness";
+
+// Измеритель громкости лежит в pipeline: он нужен и здесь (готовый ролик), и
+// при подготовке треков для библиотеки музыки.
+export { measureLoudness } from "../pipeline/loudness";
+export type { Loudness } from "../pipeline/loudness";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,38 +35,6 @@ export const TARGET_PEAK_DB = -1.5;
 /** Ближе этого к цели не гонимся: слух такой разницы не замечает. */
 const TOLERANCE_LU = 0.3;
 
-export interface Loudness {
-  lufs: number;
-  lra: number;
-  truePeakDb: number;
-}
-
-/**
- * Громкость по EBU R128 — тем же способом, которым мерялся референс.
- */
-export async function measureLoudness(file: string): Promise<Loudness> {
-  // ebur128 пишет сводку в stderr, а на stdout идёт (пустой) выходной поток.
-  const { stderr } = await execFileAsync(
-    "ffmpeg",
-    ["-hide_banner", "-i", file, "-filter_complex", "ebur128=peak=true", "-f", "null", "-"],
-    { maxBuffer: 16 * 1024 * 1024 },
-  );
-
-  const summary = stderr.slice(stderr.lastIndexOf("Summary:"));
-  const pick = (label: string): number => {
-    const match = new RegExp(`${label}:\\s*(-?[\\d.]+)`).exec(summary);
-    if (!match) {
-      throw new Error(`ffmpeg не отдал ${label} для ${file}`);
-    }
-    return Number(match[1]);
-  };
-
-  return { lufs: pick("I"), lra: pick("LRA"), truePeakDb: pick("Peak") };
-}
-
-function dbToLinear(db: number): number {
-  return 10 ** (db / 20);
-}
 
 /**
  * Приводит громкость готового ролика к референсной.

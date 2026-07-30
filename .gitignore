@@ -15,6 +15,7 @@ data/video-data.json
 # Состояние телеграм-бота, собранные сэмплы голоса и музыкальная библиотека
 data/bot-state.json
 data/clone-samples/
+data/music-samples/
 assets/music/*
 !assets/music/README.md
 

@@ -267,7 +267,20 @@ check(
 console.log("\n=== уровни слоёв в миксе ===");
 const { MIX } = await import("../src/remotion/mix.ts");
 check("музыка тише всего", MIX.music < MIX.hookSfx && MIX.music < MIX.sfx, `музыка ${MIX.music}`);
-check("музыка не глушит речь", MIX.music <= 0.1, String(MIX.music));
+// Уровень подложки проверяем расчётом, а не «не больше 0.1». Раньше стоял
+// именно такой предел, и он молча зависел от того, каким мастерингом трек отдал
+// генератор: у Suno около −8 LUFS, у файла, положенного руками, могло быть и
+// −20 — при одном множителе разница в подложке двенадцать децибел. Теперь треки
+// приводятся к известной громкости, и множитель означает ровно одно: насколько
+// подложка тише речи.
+const { MUSIC_LUFS } = await import("../src/pipeline/prepareMusic.ts");
+const VOICE_LUFS = -14.8; // замер присланного ролика: микс −14.6 и он почти весь речь
+const bedUnderVoiceDb = VOICE_LUFS - (MUSIC_LUFS + 20 * Math.log10(MIX.music));
+check(
+  "подложка садится на 16-20 дБ ниже речи",
+  bedUnderVoiceDb >= 16 && bedUnderVoiceDb <= 20,
+  `${bedUnderVoiceDb.toFixed(1)} дБ (трек ${MUSIC_LUFS} LUFS, множитель ${MIX.music})`,
+);
 check("стык слышен поверх озвучки", MIX.sfx >= 0.6, String(MIX.sfx));
 check("но не перебивает её совсем", MIX.sfx <= 0.85, String(MIX.sfx));
 check("звук хука не громче стыка", MIX.hookSfx <= MIX.sfx, `${MIX.hookSfx} vs ${MIX.sfx}`);

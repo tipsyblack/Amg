@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -60,6 +60,15 @@ import {
   fileHash,
 } from "./extractAudio";
 import { prepareUploadFiles } from "../pipeline/voiceSamples";
+import {
+  prepareMusicTrack,
+  prepareMusicTrackInPlace,
+} from "../pipeline/prepareMusic";
+import {
+  analyzeMusic,
+  BEAT_FOUND_ABOVE,
+  musicPromptFromAnalysis,
+} from "../pipeline/analyzeMusic";
 import { config } from "../pipeline/config";
 import { generateDescription } from "../pipeline/generateDescription";
 import { generateCheckedScript } from "../pipeline/generateScript";
@@ -1724,15 +1733,88 @@ async function runStemsStep(
         title: stem.name,
       });
     }
+    // Разобрали — теперь предлагаем законный путь: обмерить минус и заказать
+    // генератору свой трек в том же темпе и тональности. Сам минус в библиотеку
+    // не кладём: это чужая запись.
+    if (loudest) {
+      const sample = musicSamplePath(chatId);
+      await mkdir(path.dirname(sample), { recursive: true });
+      await copyFile(loudest.file, sample);
+      try {
+        const analysis = await analyzeMusic(sample);
+        await ctx.reply(
+          `Обмер «${loudest.name}»:\n` +
+            (analysis.onsetContrast >= BEAT_FOUND_ABOVE
+              ? `• темп ${analysis.bpm} BPM\n`
+              : "• выраженного пульса нет\n") +
+            `• тональность ${analysis.root} ${analysis.minor ? "минор" : "мажор"}\n` +
+            `• по полосам: ${analysis.bands
+              .map((b) => `${b.name} ${b.percent.toFixed(0)}%`)
+              .join(", ")}\n\n` +
+            "Описание для генератора:\n" +
+            `«${musicPromptFromAnalysis(analysis)}»`,
+          {
+            reply_markup: new InlineKeyboard().text(
+              "🎵 Сгенерировать похожий и добавить в библиотеку",
+              "music_like",
+            ),
+          },
+        );
+      } catch (error) {
+        await ctx.reply(
+          `Обмерить минус не получилось: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
     await ctx.reply(
-      "Это чужая запись: годится понять, что там играет, и повторить своей " +
-        "генерацией (/music), но ставить её в свои ролики нельзя.",
+      "Сам вытащенный минус — чужая запись: он годится понять, что там играет, " +
+        "и повторить это своей генерацией, но ставить его в свои ролики нельзя.",
     );
     updateSession(chatId, { step: "idle" });
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
 }
+
+/** Куда кладётся обмеренный минус — из него генерируется похожий трек. */
+function musicSamplePath(chatId: number): string {
+  return path.resolve("data/music-samples", `${chatId}.mp3`);
+}
+
+bot.callbackQuery("music_like", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = ctx.chat!.id;
+  await withGeneration(ctx, chatId, async () => {
+    const sample = musicSamplePath(chatId);
+    let analysis;
+    try {
+      analysis = await analyzeMusic(sample);
+    } catch {
+      throw new Error(
+        "Обмеренного трека уже нет на диске — разберите дорожку заново: /stems",
+      );
+    }
+    const prompt = musicPromptFromAnalysis(analysis);
+    await ensureMusicLibraryDir();
+    await ctx.reply(
+      "🎵 Заказываю свой трек по этому обмеру — минуту-две…\n\n" +
+        `«${prompt}»`,
+    );
+    const raw = path.join(MUSIC_LIBRARY_DIR, `like-${Date.now()}.raw.mp3`);
+    const info = await generateMusicTrack(prompt, raw);
+    const { file, caption } = await addPreparedTrack(raw, "like");
+    const made = await analyzeMusic(file);
+    await ctx.replyWithAudio(new InputFile(file), {
+      title: info.title ?? "Похожий трек",
+      caption:
+        `${caption}\n\nСверка с образцом: темп ${made.bpm} против ${analysis.bpm} BPM, ` +
+        `тональность ${made.root} ${made.minor ? "минор" : "мажор"} против ` +
+        `${analysis.root} ${analysis.minor ? "минор" : "мажор"}.`,
+    });
+  });
+});
 
 bot.command("stems", async (ctx) => {
   if (!isElevenLabsAvailable()) {
@@ -2014,6 +2096,7 @@ bot.command("music", async (ctx) => {
     keyboard.text(`🎵 ${preset.title}`, `music_gen_${preset.key}`).row();
   }
   if (tracks.length > 0) {
+    keyboard.text("🎚 Привести треки к порядку", "music_prepare").row();
     keyboard.text("🗑 Очистить библиотеку", "music_clear");
   }
 
@@ -2043,16 +2126,71 @@ bot.callbackQuery(/^music_gen_(.+)$/, async (ctx) => {
     await ctx.reply(
       `🎵 Генерирую трек «${preset.title}» — это займёт минуту-две…`,
     );
-    const fileName = `${preset.key}-${Date.now()}.mp3`;
-    const outFile = path.join(MUSIC_LIBRARY_DIR, fileName);
-    const info = await generateMusicTrack(preset.prompt, outFile);
+    const raw = path.join(MUSIC_LIBRARY_DIR, `${preset.key}-${Date.now()}.raw.mp3`);
+    const info = await generateMusicTrack(preset.prompt, raw);
+    const { file, caption } = await addPreparedTrack(raw, preset.key);
 
-    await ctx.replyWithAudio(new InputFile(outFile), {
+    await ctx.replyWithAudio(new InputFile(file), {
       title: info.title ?? preset.title,
-      caption:
-        `Добавлен в библиотеку: ${fileName}\n` +
-        "Будет случайно подмешиваться в ролики. Ещё треки — /music",
+      caption,
     });
+  });
+});
+
+/**
+ * Кладёт трек в библиотеку, приведя его к рабочему виду: ровная громкость,
+ * освобождённое место под голос, бесшовная петля. Без этого громкость подложки
+ * зависела от того, каким мастерингом её отдал генератор.
+ */
+async function addPreparedTrack(
+  rawFile: string,
+  keyName: string,
+): Promise<{ file: string; caption: string }> {
+  const target = path.join(MUSIC_LIBRARY_DIR, `${keyName}-${Date.now()}.wav`);
+  const result = await prepareMusicTrack(rawFile, target);
+  await rm(rawFile, { force: true });
+  return {
+    file: target,
+    caption:
+      `Добавлен в библиотеку: ${path.basename(target)}\n` +
+      `Громкость выровнена: ${result.before.lufs} → ${result.after.lufs} LUFS` +
+      (result.looped ? ", петля склеена без щелчка" : "") +
+      "\nБудет случайно подмешиваться в ролики. Ещё треки — /music",
+  };
+}
+
+bot.callbackQuery("music_prepare", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const chatId = ctx.chat!.id;
+  await withGeneration(ctx, chatId, async () => {
+    const tracks = await listMusicTracks();
+    if (tracks.length === 0) {
+      await ctx.reply("Библиотека пуста — приводить нечего.");
+      return;
+    }
+    await ctx.reply(`🎚 Обрабатываю ${tracks.length} трек(ов)…`);
+    const lines: string[] = [];
+    for (const track of tracks) {
+      try {
+        const { file, result } = await prepareMusicTrackInPlace(
+          path.join(MUSIC_LIBRARY_DIR, track),
+        );
+        lines.push(
+          `• ${path.basename(file)}: ${result.before.lufs} → ${result.after.lufs} LUFS` +
+            (result.looped ? ", петля склеена" : ""),
+        );
+      } catch (error) {
+        lines.push(
+          `• ${track}: не получилось — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    await ctx.reply(
+      `Готово:\n${lines.join("\n")}\n\nТеперь все треки одинаковой громкости, ` +
+        "низ ниже 60 Гц убран, полоса разборчивости речи приглушена на 3 дБ.",
+    );
   });
 });
 
