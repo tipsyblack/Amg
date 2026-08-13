@@ -42,6 +42,7 @@ bot.command('length', (ctx) => { hits.push(['length', ctx.match]); });
 bot.command('stems', (ctx) => { hits.push(['stems', ctx.match]); });
 bot.command('music', (ctx) => { hits.push(['music', ctx.match]); });
 bot.command('addmusic', (ctx) => { hits.push(['addmusic', ctx.match]); });
+bot.command('autopilot', (ctx) => { hits.push(['autopilot', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -183,5 +184,56 @@ await bot.handleUpdate(upd('/addmusic'));
 check('/addmusic', hits.at(-1)?.[0] === 'addmusic', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/music'));
 check('/music не перехвачен /addmusic', hits.at(-1)?.[0] === 'music', JSON.stringify(hits.at(-1)));
+
+// 15) /autopilot: у него есть аргумент on/off, и он начинается на «a» — как и
+// /addmusic. Проверяем обе, чтобы не слиплись.
+await bot.handleUpdate(upd('/autopilot'));
+check('/autopilot без аргумента', hits.at(-1)?.[0] === 'autopilot' && hits.at(-1)?.[1] === '');
+await bot.handleUpdate(upd('/autopilot off'));
+check('/autopilot off', hits.at(-1)?.[0] === 'autopilot' && hits.at(-1)?.[1] === 'off');
+await bot.handleUpdate(upd('/addmusic'));
+check('/addmusic не перехвачен /autopilot', hits.at(-1)?.[0] === 'addmusic', JSON.stringify(hits.at(-1)));
+
+// 16) Логика автопилота: продолжать цепочку или нет. Два условия, и оба
+// неочевидны — withGeneration ошибки не выбрасывает, а шаг сценария может
+// остановить автопилот сам.
+const { autopilotContinues, parseAutopilotArg } = await import(
+  '../src/bot/autopilot.ts'
+);
+const S = (autopilot, step) => ({ autopilot, step });
+check(
+  'идёт дальше: шаг прошёл, автопилот включён, диалог свободен',
+  autopilotContinues({ ok: true, session: S(true, 'idle') }) === true,
+);
+check(
+  'НЕ идёт после сбоя шага',
+  autopilotContinues({ ok: false, session: S(true, 'idle') }) === false,
+);
+check(
+  'НЕ идёт при выключенном автопилоте',
+  autopilotContinues({ ok: true, session: S(false, 'idle') }) === false,
+);
+check(
+  'НЕ идёт, если автопилот не настроен вовсе',
+  autopilotContinues({ ok: true, session: S(undefined, 'idle') }) === false,
+);
+check(
+  'НЕ идёт, если диалог ждёт правок сценария',
+  autopilotContinues({ ok: true, session: S(true, 'awaiting_script_feedback') }) === false,
+);
+check(
+  'НЕ идёт, если шаг ещё занят',
+  autopilotContinues({ ok: true, session: S(true, 'busy') }) === false,
+);
+
+// Аргумент команды: пусто — переключить, слово — выставить явно.
+check('пустой аргумент переключает выключенный', parseAutopilotArg('', false) === true);
+check('пустой аргумент переключает включённый', parseAutopilotArg('', true) === false);
+check('undefined тоже переключает', parseAutopilotArg(undefined, true) === false);
+check('«off» выключает даже у выключенного', parseAutopilotArg('off', false) === false);
+check('«on» включает', parseAutopilotArg('on', false) === true);
+check('«вкл» включает', parseAutopilotArg('вкл', false) === true);
+check('«ON» с заглавными включает', parseAutopilotArg('ON', false) === true);
+check('мусор трактуется как выключить', parseAutopilotArg('пиво', true) === false);
 
 process.exit(fails === 0 ? 0 : 1);

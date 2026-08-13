@@ -118,6 +118,7 @@ import {
   SAFE_VIDEO_BYTES,
 } from "./videoSize";
 import { masterLoudness, measureLoudness } from "./masterAudio";
+import { autopilotContinues, parseAutopilotArg } from "./autopilot";
 import { extractStyleNotes } from "./referenceStyle";
 import {
   deleteProfile,
@@ -198,15 +199,21 @@ interface GenerationOptions {
   errorHint?: string;
 }
 
+/**
+ * Обёртка вокруг тяжёлого шага. Возвращает true, если шаг прошёл — по этому
+ * признаку автопилот решает, продолжать ли цепочку. Продолжать после сбоя
+ * нельзя: следующий шаг работал бы на пустом месте и добавил бы к одной
+ * ошибке вторую.
+ */
 async function withGeneration(
   ctx: Context,
   chatId: number,
   task: () => Promise<void>,
   options: GenerationOptions = {},
-): Promise<void> {
+): Promise<boolean> {
   if (generationRunning) {
     await ctx.reply("Уже идёт другая генерация — дождитесь её окончания.");
-    return;
+    return false;
   }
   generationRunning = true;
   updateSession(chatId, { step: "busy" });
@@ -217,6 +224,7 @@ async function withGeneration(
     if (getSession(chatId).step === "busy") {
       updateSession(chatId, { step: "idle" });
     }
+    return true;
   } catch (error) {
     console.error(error);
     updateSession(chatId, { step: options.errorStep ?? "idle" });
@@ -236,6 +244,7 @@ async function withGeneration(
           }
         : undefined,
     );
+    return false;
   } finally {
     generationRunning = false;
   }
@@ -282,18 +291,23 @@ async function askImageModel(ctx: Context, chatId: number): Promise<void> {
   );
 }
 
+/** Включён ли автопилот в этом чате. */
+function autopilotOn(chatId: number): boolean {
+  return getSession(chatId).autopilot === true;
+}
+
 async function runScriptStep(
   ctx: Context,
   chatId: number,
   feedback?: string,
 ): Promise<void> {
-  await withGeneration(
+  const ok = await withGeneration(
     ctx,
     chatId,
     async () => {
       const session = getSession(chatId);
       await ctx.reply(feedback ? "Переписываю сценарий…" : "Пишу сценарий…");
-      const { script, fixes, webSearchUnavailable, reviewUnavailable } = await generateCheckedScript(
+      const { script, fixes, remaining, webSearchUnavailable, reviewUnavailable } = await generateCheckedScript(
         session.brief ?? "",
         feedback && session.script
           ? { previousScript: session.script, feedback }
@@ -308,8 +322,17 @@ async function runScriptStep(
         images: undefined,
         audio: undefined,
       });
+      // Раньше здесь стояло «✏️ Переписал: …» — то есть результат утверждался,
+      // хотя правка это всего лишь просьба к модели. Теперь отдельно то, что
+      // просили поправить, и отдельно то, что после правки осталось.
       for (const fix of fixes) {
-        await ctx.reply(`✏️ Переписал: ${fix}.`);
+        await ctx.reply(`✏️ Просил переписать: ${fix}.`);
+      }
+      if (remaining.length > 0) {
+        await ctx.reply(
+          `⚠️ После правки осталось: ${remaining.join("; ")}. ` +
+            "Это объективные проверки — стоит поправить руками через «✏️ Правки».",
+        );
       }
       if (webSearchUnavailable) {
         await ctx.reply(
@@ -330,6 +353,24 @@ async function runScriptStep(
       // продукту. Ролик про энергопотребление дата-центров с финалом «попробуй
       // наш бот для картинок» проходит все проверки и при этом не продаёт —
       // боль хука не та, которую лечит продукт.
+      if (autopilotOn(chatId)) {
+        // На автопилоте кнопок нет, но замечания всё равно показываем: ролик
+        // потом смотреть, и знать, с чем он вышел, полезно.
+        if (remaining.length > 0) {
+          // Единственное, что автопилот останавливает: объективные проверки не
+          // прошли ПОСЛЕ правки. Дальше пошли бы деньги на картинки и озвучку
+          // ради ролика, который заведомо не годится.
+          await ctx.reply(
+            "🛑 Автопилот остановлен: после правки в сценарии осталось — " +
+              `${remaining.join("; ")}.\n\nПопросите «✏️ Правки» или ` +
+              "перегенерируйте: /new",
+            { reply_markup: scriptKeyboard },
+          );
+          return;
+        }
+        await ctx.reply("🤖 Автопилот: сценарий прошёл проверки, рисую картинки.");
+        return;
+      }
       await ctx.reply(
         "Перед тем как рисовать, проверьте главное — то, что я проверить не " +
           "могу:\n\n" +
@@ -343,10 +384,16 @@ async function runScriptStep(
     },
     { retryData: "retry_script" },
   );
+
+  // Продолжение автопилота — СНАРУЖИ withGeneration: внутри флаг генерации ещё
+  // поднят, и вложенный шаг ответил бы «уже идёт другая генерация».
+  if (autopilotContinues({ ok, session: getSession(chatId) })) {
+    await runImagesStep(ctx, chatId);
+  }
 }
 
 async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
-  await withGeneration(
+  const ok = await withGeneration(
     ctx,
     chatId,
     async () => {
@@ -479,10 +526,19 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
       }
 
       updateSession(chatId, { step: "idle", images, overlays });
+      if (autopilotOn(chatId)) {
+        await ctx.reply("🤖 Автопилот: картинки готовы, собираю видео.");
+        return;
+      }
       await ctx.reply("Как картинки?", { reply_markup: imagesKeyboard });
     },
     { retryData: "retry_images" },
   );
+
+  // Та же причина, что и в шаге сценария: цепочка идёт снаружи withGeneration.
+  if (autopilotContinues({ ok, session: getSession(chatId) })) {
+    await runAssembleStep(ctx, chatId);
+  }
 }
 
 async function regenerateScene(
@@ -856,10 +912,12 @@ bot.command(["start", "help"], async (ctx) => {
       "/clone — клонировать голос из своих роликов\n" +
       "/clonemore — добавить материал в уже созданный клон\n" +
       "/stems — разобрать чужую дорожку: что играет под речью\n" +
+      "/autopilot — генерация без подтверждений на каждом шаге\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
       "картинки с перегенерацией → озвучка и сборка.\n\n" +
+      `Автопилот: ${autopilotOn(ctx.chat.id) ? "включён" : "выключен"}\n` +
       `Версия кода: ${botVersion}`,
   );
 });
@@ -1887,6 +1945,54 @@ bot.callbackQuery("music_like", async (ctx) => {
         `${analysis.root} ${analysis.minor ? "минор" : "мажор"}.`,
     });
   });
+});
+
+/**
+ * Автопилот: сценарий → картинки → сборка без кнопок между шагами.
+ *
+ * Что он НЕ делает: не отменяет проверки. Структурные (ритм, длина хука,
+ * реклама не в финале) и критик по чек-листу работают как раньше, и если после
+ * правки объективные проверки не прошли — цепочка останавливается на сценарии,
+ * до того как начнутся траты на картинки и озвучку.
+ *
+ * Чего он лишает: взгляда человека на сценарий перед отрисовкой. Автоматика
+ * умеет проверить ритм и структуру, но не то, ведёт ли тема к продукту — а это
+ * как раз то, из-за чего ролик может оказаться бесполезным при всех пройденных
+ * проверках. Поэтому текст сообщения об этом и говорит: решение осознанное.
+ */
+bot.command("autopilot", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const next = parseAutopilotArg(ctx.match, autopilotOn(chatId));
+
+  updateSession(chatId, { autopilot: next });
+
+  if (!next) {
+    await ctx.reply(
+      "Автопилот выключен. Каждый шаг снова ждёт кнопки: сценарий → " +
+        "картинки → сборка.",
+    );
+    return;
+  }
+
+  const clips = getSession(chatId).clipScenes ?? config.clipScenes;
+  await ctx.reply(
+    "🤖 Автопилот включён. Один бриф — и дальше без кнопок: сценарий, " +
+      "картинки, озвучка, сборка, готовое видео.\n\n" +
+      "Проверки при этом никуда не делись. Если после автоправки в сценарии " +
+      "останется объективная проблема (ритм, длина хука, реклама не в финале), " +
+      "цепочка встанет на сценарии — до трат на картинки.\n\n" +
+      "Чего вы лишаетесь: взгляда на сценарий перед отрисовкой. Проверить " +
+      "ритм и структуру я могу, а ведёт ли тема к продукту — нет. Ролик с " +
+      "хорошим ритмом и мимо продукта пройдёт все проверки.\n\n" +
+      (clips > 0
+        ? `⚠️ Оживление кадров включено (${clips} сцен) — это самая дорогая ` +
+          "часть, и на автопилоте она тоже пойдёт без подтверждения. " +
+          "Выключить: /clips\n\n"
+        : "") +
+      "Быстрее всего так: /profiles → выбрать профиль → отправить тему (или " +
+      "/skip) → и ждать готовое видео. Два касания на ролик.\n\n" +
+      "Выключить автопилот — /autopilot off",
+  );
 });
 
 bot.command("stems", async (ctx) => {

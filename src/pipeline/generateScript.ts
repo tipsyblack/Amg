@@ -844,6 +844,11 @@ export interface CheckedScript extends ScriptResult {
   // Критик не отработал (сеть, лимит, мусор в ответе). Сценарий при этом
   // прошёл только структурные проверки, и человеку стоит об этом знать.
   reviewUnavailable?: string;
+  // Что осталось непочиненным ПОСЛЕ правки. Раньше бот писал «✏️ Переписал:
+  // ритм» и на этом успокаивался — то есть утверждал результат, не проверив
+  // его. Структурные проверки бесплатны, так что перепроверить их после правки
+  // ничего не стоит; критика второй раз не зовём, он стоит генерации.
+  remaining: string[];
 }
 
 /**
@@ -1040,7 +1045,12 @@ export async function generateCheckedScript(
   ];
 
   if (problems.length === 0) {
-    return { ...first, fixes: [], reviewUnavailable: review.unavailable };
+    return {
+      ...first,
+      fixes: [],
+      reviewUnavailable: review.unavailable,
+      remaining: [],
+    };
   }
 
   const instructions = FIX_INSTRUCTIONS.filter(({ key }) =>
@@ -1058,10 +1068,15 @@ export async function generateCheckedScript(
     model,
   );
 
+  const script = fixed.script.scenes.length > 0 ? fixed.script : first.script;
   return {
-    script: fixed.script.scenes.length > 0 ? fixed.script : first.script,
+    script,
     webSearchUnavailable: first.webSearchUnavailable,
     reviewUnavailable: review.unavailable,
     fixes: problems,
+    // Перепроверяем то, что можно проверить бесплатно. Правка — просьба к
+    // модели, а не гарантия: она вполне может не сработать, и знать об этом
+    // нужно до сборки, а не после просмотра.
+    remaining: scriptProblems(script, maxVideoSeconds),
   };
 }

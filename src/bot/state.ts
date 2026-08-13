@@ -113,6 +113,9 @@ export interface Session {
   cloneTargetVoiceId?: string;
   // Режим разделения на стемы, выбранный командой /stems.
   stemsVariation?: "two_stems_v1" | "six_stems_v1";
+  // Автопилот: шаги идут подряд без кнопок согласования. Настройка, а не часть
+  // диалога — переживает /new, как модели и голос.
+  autopilot?: boolean;
   // Профиль в процессе создания.
   draftProfile?: {
     name?: string;
@@ -174,6 +177,7 @@ export function resetSession(chatId: number): void {
     clipScenes,
     scriptModel,
     maxVideoSeconds,
+    autopilot,
   } = getSession(chatId);
   store.sessions[String(chatId)] = {
     step: "idle",
@@ -185,6 +189,7 @@ export function resetSession(chatId: number): void {
     clipScenes,
     scriptModel,
     maxVideoSeconds,
+    autopilot,
   };
   persist();
 }
