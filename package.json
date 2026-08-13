@@ -20,6 +20,7 @@
     "test:clone": "tsx scripts/test-voice-clone.mjs",
     "test:drive": "tsx scripts/test-drive.mjs",
     "test:script": "tsx scripts/test-script.mjs",
+    "test:voice": "tsx scripts/test-script-audio.mjs",
     "test:size": "tsx scripts/test-video-size.mjs",
     "test:master": "tsx scripts/test-master.mjs",
     "test:stems": "tsx scripts/test-stems.mjs",

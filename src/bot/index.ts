@@ -15,6 +15,7 @@ import {
   fitToBudget,
   sceneClip,
   generateSceneAudio,
+  PUBLIC_AUDIO_DIR,
   generateSceneIllustration,
   listMusicTracks,
   MUSIC_LIBRARY_DIR,
@@ -44,6 +45,7 @@ import {
   OVERLAY_WIDTH_PERCENT,
 } from "../pipeline/generateOverlay";
 import { overlayStartMs } from "../pipeline/wordTimings";
+import { generateScriptAudio } from "../pipeline/scriptAudio";
 import {
   createInstantVoiceClone,
   downloadVoiceSample,
@@ -641,6 +643,47 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         session.ttsProvider,
       );
       if (warning) await ctx.reply(`⚠️ ${warning}`);
+    }
+
+    // Озвучка всего сценария ОДНИМ чтением: синтезатор ведёт интонацию через
+    // весь ролик, а не читает каждую сцену как отдельное предложение с
+    // падающим тоном в конце. Дорожка потом режется на сцены по таймингам
+    // слов — они приходят от прямого ElevenLabs и считаются по символам
+    // ВХОДНОГО текста, поэтому разрез попадает точно в стык слов.
+    //
+    // Делаем только когда озвучки нет вовсе: при повторе после сбоя часть сцен
+    // уже оплачена, и переозвучивать всё заново ради интонации — плохой размен.
+    if (audio.length === 0 || audio.every((item) => !item)) {
+      await ctx.reply("🎙 Озвучиваю сценарий целиком — одним чтением…");
+      try {
+        const whole = await generateScriptAudio(
+          script.scenes.map((scene) => scene.voiceoverText),
+          PUBLIC_AUDIO_DIR,
+          session.voice,
+          session.ttsModel,
+          session.ttsProvider,
+        );
+        if (whole) {
+          for (const [i, item] of whole.entries()) audio[i] = item;
+          updateSession(chatId, { audio });
+          await ctx.reply(
+            `Готово: одна дорожка, разрезана на ${whole.length} сцен(ы) по словам.`,
+          );
+        } else {
+          // Через прокси Kie.ai таймингов не бывает, и резать нечем.
+          await ctx.reply(
+            "Таймингов слов нет — озвучиваю посценно, как раньше. Сквозная " +
+              "интонация работает только на прямом ElevenLabs: /tts elevenlabs",
+          );
+        }
+      } catch (error) {
+        console.error(error);
+        await ctx.reply(
+          `Единая озвучка не получилась (${
+            error instanceof Error ? error.message : String(error)
+          }). Озвучиваю посценно.`,
+        );
+      }
     }
 
     const scenes: Scene[] = [];

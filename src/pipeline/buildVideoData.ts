@@ -9,11 +9,13 @@ import {
   sceneClip,
   generateSceneAudio,
   generateSceneIllustration,
+  PUBLIC_AUDIO_DIR,
   fitToBudget,
   pickMusic,
   writeVideoData,
 } from "./assets";
 import { config } from "./config";
+import { generateScriptAudio } from "./scriptAudio";
 import { generateDescription } from "./generateDescription";
 import {
   librarySceneIndexes,
@@ -64,14 +66,35 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   const libraryReady = await readyClipIds();
   const usedLibraryClips = new Set<string>();
 
+  // Одно чтение на весь сценарий: синтезатор ведёт интонацию насквозь, а не
+  // читает каждую сцену как отдельное предложение. Не вышло (нет таймингов —
+  // через прокси Kie.ai их не бывает) — озвучиваем посценно, как раньше.
+  let wholeAudio;
+  try {
+    wholeAudio = await generateScriptAudio(
+      script.scenes.map((scene) => scene.voiceoverText),
+      PUBLIC_AUDIO_DIR,
+    );
+    if (wholeAudio) {
+      console.log(`Озвучка одним чтением, разрезана на ${wholeAudio.length} сцен`);
+    } else {
+      console.log("Таймингов слов нет — озвучиваю посценно");
+    }
+  } catch (error) {
+    console.warn(
+      `Единая озвучка не получилась (${
+        error instanceof Error ? error.message : String(error)
+      }) — озвучиваю посценно`,
+    );
+  }
+
   for (let i = 0; i < script.scenes.length; i++) {
     const scriptScene = script.scenes[i];
     console.log(`Сцена ${i + 1} из ${script.scenes.length}: ${scriptScene.caption}`);
 
-    const { audioFileName, durationInFrames, words } = await generateSceneAudio(
-      i,
-      scriptScene.voiceoverText,
-    );
+    const { audioFileName, durationInFrames, words } =
+      wholeAudio?.[i] ??
+      (await generateSceneAudio(i, scriptScene.voiceoverText));
 
     const mascotOnly = mascotScenes.has(i);
     const withCharacter = sceneWithCharacter(i, script.scenes.length);
