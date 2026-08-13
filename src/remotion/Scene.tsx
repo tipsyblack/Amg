@@ -23,6 +23,7 @@ import {
   cardAspect,
 } from "./layout";
 import { mascotBox } from "./mascot";
+import { MIX } from "./mix";
 import { coversFrame, sceneMotion } from "./transitions";
 import type { Overlay as OverlayData } from "../types";
 
@@ -57,10 +58,16 @@ const SHUFFLE_LIFE_SECONDS = 0.22;
 const ZOOM_FROM_SCALE = 2.2;
 const ZOOM_BLUR_LAYERS = 6;
 const ZOOM_BLUR_SPREAD = 0.16;
-// Наезда на картинку нет намеренно. В референсе иллюстрация стоит мёртво —
-// я мерил покадровую разницу внутри рамки, 0.00-0.15 из 255 на протяжении
-// полутора секунд. Вся жизнь кадра там в стыках и в маскоте, а не в ползающей
-// картинке; с нашим наездом мягкий стык переставал читаться как мягкий.
+// Медленного наезда на картинку нет намеренно: в референсе иллюстрация стоит
+// мёртво — покадровая разница внутри рамки 0.00-0.15 из 255 на протяжении
+// полутора секунд, и с нашим наездом мягкий стык переставал читаться как мягкий.
+//
+// Но «стоит мёртво» не значит «не меняется». Тот замер я делал на спокойном
+// участке и пропустил главное: внутри сцены иллюстрация РЕЗКО МЕНЯЕТСЯ на
+// другую — 13 раз за 62 секунды во втором референсе. Отсюда и разрыв по
+// движению: у них кадр живёт 15% времени, у нас было 4%. Смена сделана ниже
+// (swapImageFileName) — не ползанием, а сменой: первая картинка уезжает вниз и
+// растворяется, вторая открывается под ней.
 // Наезд хука начинается не с точки: первый кадр ролика — это ещё и обложка в
 // ленте, поэтому он должен быть непустым и читаемым сразу.
 const HOOK_PUNCH_FROM = 0.78;
@@ -71,6 +78,10 @@ interface SceneProps {
   words?: { text: string; startMs: number; endMs: number }[];
   // Объект, который появляется поверх картинки, не заменяя её.
   overlay?: OverlayData;
+  // Вторая иллюстрация сцены и момент смены (мс от начала сцены). Первая
+  // уезжает вниз и растворяется, вторая открывается под ней.
+  swapImageFileName?: string;
+  swapStartMs?: number;
   imageFileName?: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -102,6 +113,8 @@ interface SceneProps {
 export const Scene: React.FC<SceneProps> = ({
   words,
   overlay,
+  swapImageFileName,
+  swapStartMs,
   imageFileName,
   imageWidth,
   imageHeight,
@@ -132,6 +145,31 @@ export const Scene: React.FC<SceneProps> = ({
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
         })
+      : 0;
+
+  // Смена иллюстрации внутри сцены: 0 → 1 за MIX.imageSwapSeconds, начиная с
+  // момента, привязанного к слову реплики. Нет второй картинки — нет и смены.
+  //
+  // Смену не пускаем на участок ухода сцены: два движения подряд (картинка
+  // уезжает вниз, а за ней уезжает вся карточка) читаются как сбой, а не как
+  // приём. Если слово попало слишком близко к концу, смену просто не делаем —
+  // лучше без неё, чем поверх стыка.
+  const swapDurationFrames = Math.round(MIX.imageSwapSeconds * fps);
+  const swapStartFrame =
+    swapImageFileName && swapStartMs !== undefined
+      ? Math.round((swapStartMs / 1000) * fps)
+      : undefined;
+  const swapFits =
+    swapStartFrame !== undefined &&
+    swapStartFrame + swapDurationFrames <= exitStartFrame;
+  const swapProgress =
+    swapFits && swapStartFrame !== undefined
+      ? interpolate(
+          frame,
+          [swapStartFrame, swapStartFrame + swapDurationFrames],
+          [0, 1],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+        )
       : 0;
 
   // Проявление всей сцены поверх предыдущей — основа любого перехода.
@@ -362,6 +400,21 @@ export const Scene: React.FC<SceneProps> = ({
       >
         {imageFileName ? (
           <>
+            {/* Вторая иллюстрация лежит ПОД первой и не двигается: в референсе
+                открывается именно она, а уезжает старая. Рисуем её только когда
+                смена уже началась — до этого момента она не нужна. */}
+            {swapImageFileName && swapProgress > 0 && (
+              <Img
+                src={staticFile(`images/${swapImageFileName}`)}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                }}
+              />
+            )}
             {clipFileName ? (
               // Оживлённый кадр. Клип короче сцены (обычно 2 с против трёх), и
               // остаток сцены мы подмораживаем на его последнем кадре, а не
@@ -384,7 +437,20 @@ export const Scene: React.FC<SceneProps> = ({
             ) : (
               <Img
                 src={staticFile(`images/${imageFileName}`)}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  // Уход первой картинки. Растворение начинается позже съезда:
+                  // в референсе уходящая картинка видна почти до конца движения,
+                  // и если гасить её сразу, смена читается как простое
+                  // растворение, а не как «сдвинули и убрали».
+                  transform: `translateY(${swapProgress * 100}%)`,
+                  opacity: interpolate(swapProgress, [0.45, 1], [1, 0], {
+                    extrapolateLeft: "clamp",
+                    extrapolateRight: "clamp",
+                  }),
+                }}
               />
             )}
             {/* Стопка копий с растущим масштабом поверх картинки — так

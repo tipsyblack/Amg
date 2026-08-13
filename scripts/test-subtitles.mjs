@@ -150,6 +150,46 @@ check(
 
 console.log("\n=== сцена несёт слова дальше в рендер ===");
 const { sceneSchema } = await import("../src/types.ts");
+const { MIX } = await import("../src/remotion/mix.ts");
+
+console.log("\n=== смена картинки внутри сцены ===");
+const base = {
+  caption: "C",
+  voiceoverText: "текст",
+  audioFileName: "a.mp3",
+  durationInFrames: 180,
+};
+check(
+  "сцена со второй картинкой валидна",
+  sceneSchema.safeParse({
+    ...base,
+    imageFileName: "scene-0.png",
+    swapImageFileName: "scene-0-swap.png",
+    swapImageWidth: 900,
+    swapImageHeight: 1189,
+    swapStartMs: 1200,
+  }).success,
+);
+check(
+  "сцена без второй картинки валидна",
+  sceneSchema.safeParse({ ...base, imageFileName: "scene-0.png" }).success,
+);
+check(
+  "отрицательный момент смены отвергается",
+  !sceneSchema.safeParse({ ...base, swapStartMs: -1 }).success,
+);
+// Смена не должна успевать наложиться на уход сцены: длительность берётся из
+// MIX, и это единственное место, где она задана.
+check(
+  "длина смены задана и меньше сцены",
+  MIX.imageSwapSeconds > 0.2 && MIX.imageSwapSeconds < 1,
+  `${MIX.imageSwapSeconds} с`,
+);
+check(
+  "смена короче мягкого стыка не более чем вдвое",
+  MIX.imageSwapSeconds >= MIX.softTransitionSeconds,
+  `смена ${MIX.imageSwapSeconds} c, стык ${MIX.softTransitionSeconds} с`,
+);
 const parsed = sceneSchema.safeParse({
   caption: "ТЕСТ",
   voiceoverText: "текст",

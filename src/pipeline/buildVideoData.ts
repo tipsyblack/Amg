@@ -87,6 +87,40 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     if (illustration) previousSceneUrl = illustration.resultUrl;
     if (mascotOnly) console.log(`Сцена ${i + 1}: маскот во весь кадр, без карточки`);
 
+    // Вторая иллюстрация сцены: рисуется от первой, чтобы стиль не разошёлся —
+    // они видны почти одновременно, и расхождение здесь заметнее, чем между
+    // сценами. Не получилась — сцена остаётся с одной картинкой.
+    let swap: { fileName: string; width?: number; height?: number } | undefined;
+    if (illustration && scriptScene.swap?.scene) {
+      try {
+        const second = await generateSceneIllustration(
+          i,
+          buildImagePrompt(
+            { ...scriptScene, voiceoverText: scriptScene.swap.scene },
+            undefined,
+            false,
+          ),
+          illustration.resultUrl,
+          undefined,
+          false,
+          "swap",
+        );
+        swap = {
+          fileName: second.imageFileName,
+          width: second.imageWidth,
+          height: second.imageHeight,
+        };
+        previousSceneUrl = second.resultUrl;
+        console.log(`Сцена ${i + 1}: вторая картинка — ${scriptScene.swap.scene}`);
+      } catch (error) {
+        console.warn(
+          `Сцена ${i + 1}: вторая картинка не вышла — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
     // Оживление кадра: клип делается из только что нарисованной картинки, она
     // идёт его первым кадром. Ссылку берём ту, что вернул Kie.ai — вход он
     // принимает только по URL, а локальный файл ему не отдать.
@@ -151,6 +185,19 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       imageFileName: illustration?.imageFileName,
       imageWidth: illustration?.imageWidth,
       imageHeight: illustration?.imageHeight,
+      swapImageFileName: swap?.fileName,
+      swapImageWidth: swap?.width,
+      swapImageHeight: swap?.height,
+      // Момент смены картинки — по тому же правилу, что и появление объекта:
+      // ищем слово реплики в таймингах озвучки. Нет второй картинки — нет и
+      // момента, иначе в данные попало бы число, за которым ничего не стоит.
+      swapStartMs: swap
+        ? overlayStartMs(
+            words ?? [],
+            scriptScene.swap?.word,
+            (durationInFrames / config.fps) * 1000,
+          )
+        : undefined,
       mascotOnly: mascotOnly || undefined,
       clipFileName: clip?.clipFileName,
       clipDurationInFrames: clip?.clipDurationInFrames,

@@ -59,6 +59,16 @@ export const sceneSchema = z.object({
   mascotOnly: z.boolean().optional(),
   // Объект поверх картинки (не заменяет её).
   overlay: overlaySchema.optional(),
+  // Вторая иллюстрация той же сцены: посреди реплики первая уезжает вниз и
+  // растворяется, а эта открывается под ней. Приём снят с референса — там
+  // внутри сцен 13 таких смен на 62 секунды, и именно из них берётся почти всё
+  // движение: у них кадр «живой» 15% времени, у нас было 4%.
+  swapImageFileName: z.string().optional(),
+  swapImageWidth: z.number().int().positive().optional(),
+  swapImageHeight: z.number().int().positive().optional(),
+  // Момент смены от начала сцены. Считается по слову из реплики, как у
+  // появляющегося объекта.
+  swapStartMs: z.number().nonnegative().optional(),
   // Слова озвучки с таймингами от начала сцены — для субтитров «по слову».
   // Необязательно: без них субтитров просто не будет.
   words: z

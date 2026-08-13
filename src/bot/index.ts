@@ -390,6 +390,50 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
         images[i] = illustration;
         previousSceneUrl = resultUrl;
         updateSession(chatId, { images });
+
+        // Вторая иллюстрация той же сцены: посреди реплики первая уезжает вниз
+        // и растворяется, а эта открывается под ней. Рисуем её ПОСЛЕ первой и
+        // от неё же: первая уходит в модель эталоном, поэтому стиль и палитра
+        // не расходятся — а расхождение здесь заметнее, чем между сценами, ведь
+        // картинки видны почти одновременно.
+        const swapScene = script.scenes[i].swap?.scene;
+        if (swapScene) {
+          await ctx.reply(`🔄 Вторая картинка сцены ${i + 1}…`);
+          try {
+            const second = await generateSceneIllustration(
+              i,
+              buildImagePrompt(
+                { ...script.scenes[i], voiceoverText: swapScene },
+                session.styleNotes,
+                false,
+              ),
+              resultUrl,
+              session.imageModel,
+              false,
+              "swap",
+            );
+            images[i] = {
+              ...illustration,
+              swapImageFileName: second.imageFileName,
+              swapImageWidth: second.imageWidth,
+              swapImageHeight: second.imageHeight,
+            };
+            previousSceneUrl = second.resultUrl;
+            updateSession(chatId, { images });
+            await ctx.replyWithPhoto(
+              new InputFile(path.resolve("public/images", second.imageFileName)),
+              { caption: `Сцена ${i + 1}, вторая картинка: ${swapScene}` },
+            );
+          } catch (error) {
+            // Не получилась — сцена остаётся с одной картинкой. Ролик из-за
+            // этого терять незачем.
+            console.warn(
+              `Вторая картинка сцены ${i + 1} не вышла: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
         await ctx.replyWithPhoto(
           new InputFile(path.resolve("public/images", imageFileName)),
           { caption: `Сцена ${i + 1}: ${script.scenes[i].caption}` },
@@ -600,6 +644,18 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         imageFileName: images[i]?.imageFileName,
         imageWidth: images[i]?.imageWidth,
         imageHeight: images[i]?.imageHeight,
+        swapImageFileName: images[i]?.swapImageFileName,
+        swapImageWidth: images[i]?.swapImageWidth,
+        swapImageHeight: images[i]?.swapImageHeight,
+        // Момент смены картинки, как и появление объекта, известен только
+        // сейчас: он привязан к слову озвучки.
+        swapStartMs: images[i]?.swapImageFileName
+          ? overlayStartMs(
+              audio[i].words ?? [],
+              script.scenes[i].swap?.word,
+              (audio[i].durationInFrames / config.fps) * 1000,
+            )
+          : undefined,
         mascotOnly: mascotScenes.has(i) || undefined,
         clipFileName: clips[i]?.clipFileName,
         clipDurationInFrames: clips[i]?.clipDurationInFrames,
@@ -611,6 +667,21 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         overlay: sceneOverlay(i),
       });
     }
+
+    // Сколько в ролике движения — видно сразу, а не после просмотра. Нужно
+    // потому, что оба приёма зависят от сценария: если модель не поставила ни
+    // одного overlay и ни одного swap, ролик выйдет статичным, и это лучше
+    // узнать здесь. Ровно так и пропустили пустые overlay в прошлый раз.
+    const withOverlay = scenes.filter((scene) => scene.overlay).length;
+    const withSwap = scenes.filter((scene) => scene.swapImageFileName).length;
+    await ctx.reply(
+      `Движение в кадре: смена картинки в ${withSwap} сцен(ах), ` +
+        `появление объекта в ${withOverlay} из ${scenes.length}.` +
+        (withSwap === 0 && withOverlay === 0
+          ? "\n\n⚠️ Ни одного — ролик выйдет статичным. Это решает сценарий: " +
+            "попросите «✏️ Правки» добавить смены картинок и появления объектов."
+          : ""),
+    );
 
     const limitSeconds = session.maxVideoSeconds ?? config.maxVideoSeconds;
     const fitted = fitToBudget(scenes, limitSeconds);

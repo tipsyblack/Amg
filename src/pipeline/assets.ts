@@ -149,13 +149,18 @@ export async function generateSceneIllustration(
   previousSceneUrl?: string,
   modelKey?: string,
   withCharacter = false,
+  // Вариант картинки внутри одной сцены. Нужен для второй иллюстрации, которая
+  // сменяет первую посреди реплики: у неё тот же индекс сцены, но свой файл.
+  variant?: string,
 ): Promise<{
   imageFileName: string;
   resultUrl: string;
   imageWidth?: number;
   imageHeight?: number;
 }> {
-  const imageFileName = `scene-${index}.png`;
+  const imageFileName = variant
+    ? `scene-${index}-${variant}.png`
+    : `scene-${index}.png`;
   const outFile = path.join(PUBLIC_IMAGES_DIR, imageFileName);
   const resultUrl = await generateSceneImage({
     prompt,

@@ -28,6 +28,11 @@ export interface SceneImage {
   resultUrl: string;
   imageWidth?: number;
   imageHeight?: number;
+  // Вторая иллюстрация той же сцены: сменяет первую посреди реплики. Лежит
+  // здесь же, чтобы при повторе сборки не рисоваться и не оплачиваться заново.
+  swapImageFileName?: string;
+  swapImageWidth?: number;
+  swapImageHeight?: number;
 }
 
 export interface SceneOverlay {
