@@ -19,21 +19,6 @@ data/music-samples/
 assets/music/*
 !assets/music/README.md
 
-# Присланные звуковые эффекты и то, что из них готовит sfx:import.
-# Синтезированные звуки (build-sfx.mjs) в репозитории остаются: лицензировать
-# в них нечего. Записанные — нет: права на них у того, кто их принёс, а
-# репозиторий публичный. Правило устроено «по умолчанию не кладём»: любой
-# новый wav в public/sfx игнорируется, пока его явно не разрешили.
-assets/sfx/*
-!assets/sfx/README.md
-public/sfx/*.wav
-!public/sfx/click.wav
-!public/sfx/clap.wav
-!public/sfx/snap.wav
-!public/sfx/impact.wav
-!public/sfx/pop.wav
-!public/sfx/hook.wav
-
 # Библиотека клипов с маскотом: генерируется один раз командой clips:build,
 # в репозиторий не кладём — это десяток видеофайлов.
 assets/clips/*
