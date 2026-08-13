@@ -6,7 +6,7 @@ import {
   SUBTITLE_BASELINE_PERCENT,
   SUBTITLE_CAP_HEIGHT_PX,
 } from "./layout";
-import { wordAt } from "./subtitleWord";
+import { captionText, wordAt } from "./subtitleWord";
 
 // Субтитры как в референсе: в кадре одно слово, крупно, чёрным по белому, без
 // плашки и без анимации. Слово меняется в такт речи — это и есть весь эффект.
@@ -51,6 +51,7 @@ export const Subtitles: React.FC<SubtitlesProps> = ({
 
   const word = wordAt(words, timeMs);
   if (!word) return null;
+  const shown = captionText(word.text);
 
   // Уходящее слово гасим быстро — за 12% стыка, а не за 40%.
   //
@@ -71,7 +72,7 @@ export const Subtitles: React.FC<SubtitlesProps> = ({
   // Числа выше сняты на 1080×1920 — на другом разрешении масштабируем, чтобы
   // пропорции кадра не поехали.
   const scale = width / REF_WIDTH;
-  const letters = word.text.replace(/[^\p{L}\p{N}]/gu, "").length;
+  const letters = shown.replace(/[^\p{L}\p{N}]/gu, "").length;
   const safeWidth = width * (1 - (SIDE_PADDING_PERCENT * 2) / 100);
   let fontSize = FONT_SIZE * scale;
   const estimated = letters * MAX_EM_PER_CHAR * fontSize;
@@ -102,7 +103,7 @@ export const Subtitles: React.FC<SubtitlesProps> = ({
         opacity,
       }}
     >
-      {word.text}
+      {shown}
     </div>
   );
 };
