@@ -20,6 +20,7 @@ import {
   listMusicTracks,
   MUSIC_LIBRARY_DIR,
   pickMusic,
+  listImportedSfx,
   writeVideoData,
 } from "../pipeline/assets";
 import {
@@ -792,6 +793,7 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       height: config.height,
       musicFileName: await pickMusic(),
       sfxEnabled: true,
+      availableSfx: await listImportedSfx(),
       scenes: fitted.scenes,
     };
     await writeVideoData(videoData);

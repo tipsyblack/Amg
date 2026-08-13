@@ -4,7 +4,9 @@ process.env.KIE_API_KEY = "k";
 
 const { fitToBudget } = await import("../src/pipeline/assets.ts");
 const { config } = await import("../src/pipeline/config.ts");
-const { sceneMotion, MOTION_CYCLE_LENGTH } = await import("../src/remotion/transitions.ts");
+const { sceneMotion, MOTION_CYCLE_LENGTH, SFX_LEAD_MS, resolveSfx } = await import(
+  "../src/remotion/transitions.ts"
+);
 
 let fails = 0;
 const check = (name, ok, extra = "") => {
@@ -154,25 +156,28 @@ const covering = motions.filter((m) => coversFrame(m));
 check("такие появления есть в цикле", covering.length >= 2, `${covering.length} из ${motions.length}`);
 check("но не большинство", covering.length * 2 < motions.length, String(covering.length));
 
-console.log("\n=== звуки стыков: файлы есть и они резкие ===");
-// Звуки на стыке должны быть щелчками и хлопками, а не наплывами: атака в
-// единицы миллисекунд и короткий спад. Проверяем по самим файлам, потому что
-// заменить их легко, а услышать разницу в тесте — нет.
+console.log("\n=== звуки стыков: файлы есть и стоят по пику ===");
+// Звуки двух родов, и требования к ним разные.
+//
+// Импульс (щелчок, хлопок, снап, удар, поп) — атака в единицы миллисекунд,
+// пик в самом начале файла, задержка до стыка нулевая.
+//
+// Вуш — разгон в десятки и сотни миллисекунд, пик в середине. Требовать от
+// него резкой атаки бессмысленно: он по построению другой. Зато у него есть
+// своё жёсткое требование — SFX_LEAD_MS должен совпадать с настоящим
+// положением пика, иначе удар не попадёт на склейку. Ровно это и проверяем,
+// по самим файлам: правка звука не должна молча разойтись с постановкой.
 const { existsSync, readFileSync } = await import("node:fs");
 const path = (await import("node:path")).default;
 const { execFileSync } = await import("node:child_process");
 const { tmpdir } = await import("node:os");
 const pathMod = await import("node:path");
-// pop звучит не на стыке, а при прилёте объекта внутри сцены, поэтому в цикл
-// переходов он не входит — и в проверки его нужно внести отдельно, иначе новый
-// звук оказался бы единственным непроверенным в наборе.
-for (const name of [...sfx, "pop"]) {
-  const file = `public/sfx/${name}.wav`;
-  if (!existsSync(file)) {
-    check(`${name}: файл на месте`, false, file);
-    continue;
-  }
-  const wav = pathMod.join(tmpdir(), `amg-sfx-${name}.wav`);
+
+const SYNTHESIZED = new Set(["click", "clap", "snap", "impact", "pop", "hook"]);
+
+/** Огибающая окнами по 5 мс: положение пика, спад, длина. */
+function sfxShape(file) {
+  const wav = pathMod.join(tmpdir(), `amg-sfx-${path.basename(file)}`);
   execFileSync("ffmpeg", ["-y", "-v", "error", "-i", file, "-ac", "1", "-ar", "44100", "-f", "wav", wav]);
   const b = readFileSync(wav);
   let off = 12;
@@ -188,14 +193,87 @@ for (const name of [...sfx, "pop"]) {
   const peak = Math.max(...env), pi = env.indexOf(peak);
   let di = env.length - 1;
   for (let i = pi; i < env.length; i++) if (env[i] < peak * 0.1) { di = i; break; }
-  const attackMs = pi * 5, decayMs = (di - pi) * 5, lengthMs = Math.round((n / sr) * 1000);
-  // Атака мгновенная (это и есть «резко»), но хвост слышимый: с совсем
-  // коротким спадом звук проскакивал под озвучкой незаметно.
-  check(
-    `${name}: атака ${attackMs} мс, спад ${decayMs} мс, длит ${lengthMs} мс`,
-    attackMs <= 15 && decayMs >= 60 && decayMs <= 320 && lengthMs >= 200 && lengthMs <= 700,
-  );
+  return { peakMs: pi * 5, decayMs: (di - pi) * 5, lengthMs: Math.round((n / sr) * 1000) };
 }
+
+// pop звучит не на стыке, а при прилёте объекта внутри сцены, поэтому в цикл
+// переходов он не входит — и в проверки его нужно внести отдельно, иначе новый
+// звук оказался бы единственным непроверенным в наборе.
+for (const name of [...sfx, "pop", "swoosh-long"]) {
+  const file = `public/sfx/${name}.wav`;
+  const imported = !SYNTHESIZED.has(name);
+  if (!existsSync(file)) {
+    // Записанных звуков в репозитории нет: права на них у того, кто их принёс.
+    // Их отсутствие — не поломка, но замена должна быть предусмотрена.
+    check(
+      `${name}: не импортирован, есть синтезированная замена`,
+      imported && resolveSfx(name, []) !== name && SYNTHESIZED.has(resolveSfx(name, [])),
+      imported ? `заменяется на ${resolveSfx(name, [])}` : file,
+    );
+    continue;
+  }
+  const { peakMs, decayMs, lengthMs } = sfxShape(file);
+  if (imported) {
+    // Пик обязан совпасть с таблицей — с точностью до кадра при 60 fps.
+    check(
+      `${name}: пик на ${peakMs} мс, в таблице ${SFX_LEAD_MS[name]} мс`,
+      Math.abs(peakMs - SFX_LEAD_MS[name]) <= 1000 / config.fps,
+      `расхождение ${Math.abs(peakMs - SFX_LEAD_MS[name])} мс`,
+    );
+    // Длина ограничена, но чем — зависит от места. Звук стыка не должен
+    // звучать половину следующей сцены; звук концовки не должен пережить саму
+    // концовку. У длинного вуша поэтому своя мерка, и она не поблажка: 1800 мс
+    // против 2000 мс концовки — запас меньше, чем у любого стыкового.
+    const maxLengthMs =
+      name === "swoosh-long" ? Math.round(config.outroSeconds * 1000) : 1500;
+    check(
+      `${name}: длина ${lengthMs} мс при пределе ${maxLengthMs}`,
+      lengthMs >= 200 && lengthMs <= maxLengthMs,
+    );
+  } else {
+    // Атака мгновенная (это и есть «резко»), но хвост слышимый: с совсем
+    // коротким спадом звук проскакивал под озвучкой незаметно.
+    check(
+      `${name}: атака ${peakMs} мс, спад ${decayMs} мс, длит ${lengthMs} мс`,
+      peakMs <= 15 && decayMs >= 60 && decayMs <= 320 && lengthMs >= 200 && lengthMs <= 700,
+    );
+    // pop в таблицу задержек не входит: он звучит не на стыке, а при прилёте
+    // объекта, и ставится по своему таймингу внутри сцены.
+    if (SFX_LEAD_MS[name] !== undefined) {
+      check(`${name}: ставится прямо на стык`, SFX_LEAD_MS[name] === 0, String(SFX_LEAD_MS[name]));
+    }
+  }
+}
+
+console.log("\n=== замена, когда записанных звуков нет ===");
+// Ролик должен собираться на машине, где sfx:import не запускали. Проверяем
+// обе стороны: и что замена находится, и что она не ломает правило «на
+// соседних стыках звук не повторяется» — иначе подстановка сама создала бы
+// два одинаковых удара подряд.
+const fallbackNames = motions.map((m) => resolveSfx(m.sfx, []));
+check(
+  "без импорта все звуки синтезированные",
+  fallbackNames.every((n) => SYNTHESIZED.has(n)),
+  [...new Set(fallbackNames)].join(", "),
+);
+check(
+  "и на соседних стыках всё равно не повторяются",
+  fallbackNames.every((n, i, arr) => i === 0 || n !== arr[i - 1]),
+  fallbackNames.join(" "),
+);
+check(
+  "с импортом берётся сам записанный звук",
+  resolveSfx("swoosh", ["swoosh"]) === "swoosh",
+);
+check(
+  "неизвестный список = старые данные: берём синтез",
+  SYNTHESIZED.has(resolveSfx("swoosh", undefined)),
+  resolveSfx("swoosh", undefined),
+);
+check(
+  "у синтезированного звука замены нет и не нужно",
+  resolveSfx("impact", []) === "impact",
+);
 
 console.log("\n=== спектр звуков: основание, а не один щелчок ===");
 // Границы сняты с присланного референса: на девяти стыках и появлениях

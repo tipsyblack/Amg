@@ -12,6 +12,7 @@ import {
   PUBLIC_AUDIO_DIR,
   fitToBudget,
   pickMusic,
+  listImportedSfx,
   writeVideoData,
 } from "./assets";
 import { config } from "./config";
@@ -238,6 +239,7 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
     height: config.height,
     musicFileName: await pickMusic(),
     sfxEnabled: true,
+    availableSfx: await listImportedSfx(),
     scenes: fitToBudget(scenes).scenes,
   };
 

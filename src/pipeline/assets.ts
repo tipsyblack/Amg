@@ -34,6 +34,7 @@ export const PUBLIC_OVERLAYS_DIR = path.resolve("public/overlays");
 export { PUBLIC_CLIPS_DIR };
 export const PUBLIC_MUSIC_DIR = path.resolve("public/music");
 export const MUSIC_LIBRARY_DIR = path.resolve("assets/music");
+export const PUBLIC_SFX_DIR = path.resolve("public/sfx");
 export const DATA_FILE = path.resolve("data/video-data.json");
 
 // Запас после конца озвучки: подпись не должна исчезать ровно на последнем
@@ -320,6 +321,42 @@ export async function deleteMusicTrack(fileName: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Какие ЗАПИСАННЫЕ звуки лежат в public/sfx.
+ *
+ * Нужно потому, что записанные вуши в репозиторий не кладутся: права на них у
+ * того, кто их принёс, а репозиторий публичный. Их готовит npm run sfx:import
+ * из assets/sfx, и на машине, где этого не делали, файлов нет. Список едет в
+ * video-data.json, и Remotion подставляет вместо недостающих синтезированную
+ * замену — ролик собирается в любом случае.
+ *
+ * Синтезированные звуки сюда не попадают: они всегда есть, их проверять не о
+ * чем.
+ */
+export async function listImportedSfx(): Promise<string[]> {
+  let files: string[];
+  try {
+    files = await readdir(PUBLIC_SFX_DIR);
+  } catch {
+    return [];
+  }
+  return files
+    .filter((f) => path.extname(f).toLowerCase() === ".wav")
+    .map((f) => path.basename(f, ".wav"))
+    .filter((name) => !SYNTHESIZED_SFX.has(name))
+    .sort();
+}
+
+// Что даёт scripts/build-sfx.mjs. Всё остальное в public/sfx — импортированное.
+const SYNTHESIZED_SFX = new Set([
+  "click",
+  "clap",
+  "snap",
+  "impact",
+  "pop",
+  "hook",
+]);
 
 /**
  * Выбирает случайный трек из assets/music и копирует его в public/music,

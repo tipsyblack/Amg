@@ -8,7 +8,13 @@ import { PersistentOverlay } from "./PersistentOverlay";
 import { Scene } from "./Scene";
 import { TransitionBlur } from "./TransitionBlur";
 import { MIX } from "./mix";
-import { coversFrame, sceneMotion, transitionFrames } from "./transitions";
+import {
+  coversFrame,
+  resolveSfx,
+  sceneMotion,
+  SFX_LEAD_MS,
+  transitionFrames,
+} from "./transitions";
 
 // Сколько сквозной объект держится уже на новой сцене и сколько гаснет.
 // Держать дольше секунды нельзя: предмет из прошлой сцены быстро перестаёт
@@ -39,6 +45,7 @@ export const VideoComposition: React.FC<VideoData> = ({
   outro,
   musicFileName,
   sfxEnabled = true,
+  availableSfx,
   // См. комментарий в types.ts: в референсе акцентов нет.
   accentsEnabled = false,
   motionBlurEnabled = true,
@@ -163,20 +170,25 @@ export const VideoComposition: React.FC<VideoData> = ({
                 />
               </Sequence>
             )}
-            {/* Звук перехода на стыке со следующей сценой. */}
-            {sfxEnabled && !isLast && (
-              <Sequence
-                from={Math.max(
-                  from + scene.durationInFrames - MIX.sfxLeadFrames,
-                  0,
-                )}
-              >
-                <Audio
-                  src={staticFile(`sfx/${sceneMotion(index).sfx}.wav`)}
-                  volume={MIX.sfx}
-                />
-              </Sequence>
-            )}
+            {/* Звук перехода на стыке со следующей сценой.
+                Ставим так, чтобы на склейку пришёлся ПИК звука, а не его
+                начало. У импульсов пик и есть начало (задержка 0), и всё
+                работает как раньше; у вуша пик наступает через 80-320 мс
+                после начала файла, и без этой поправки удар опаздывал бы к
+                склейке ровно на столько же. */}
+            {sfxEnabled && !isLast && (() => {
+              const name = resolveSfx(sceneMotion(index).sfx, availableSfx);
+              const lead =
+                Math.round((SFX_LEAD_MS[name] / 1000) * fps) +
+                MIX.sfxLeadFrames;
+              return (
+                <Sequence
+                  from={Math.max(from + scene.durationInFrames - lead, 0)}
+                >
+                  <Audio src={staticFile(`sfx/${name}.wav`)} volume={MIX.sfx} />
+                </Sequence>
+              );
+            })()}
           </React.Fragment>
         );
       })}
@@ -193,6 +205,21 @@ export const VideoComposition: React.FC<VideoData> = ({
           />
         </Sequence>
       )}
+      {/* Выезд концовки шёл в тишине: все звуки в ролике привязаны к стыкам
+          сцен, а концовка идёт ПОСЛЕ последней сцены и под это правило не
+          попадала. Здесь у длинного вуша единственное подходящее место — его
+          разгон в 0.83 с на стыке сцен залез бы в речь, а перед концовкой
+          речи уже нет. */}
+      {sfxEnabled && outro && (() => {
+        const at = scenes.reduce((sum, scene) => sum + scene.durationInFrames, 0);
+        const name = resolveSfx("swoosh-long", availableSfx);
+        const lead = Math.round((SFX_LEAD_MS[name] / 1000) * fps);
+        return (
+          <Sequence from={Math.max(at - lead, 0)}>
+            <Audio src={staticFile(`sfx/${name}.wav`)} volume={MIX.outroSfx} />
+          </Sequence>
+        );
+      })()}
 
       {/* Сквозные объекты — последними в дереве, то есть поверх всех сцен.
           Внутри карты сцен они не работали: следующая сцена — это Sequence
