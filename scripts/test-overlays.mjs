@@ -124,10 +124,11 @@ check("стиль сцен унаследован", prompt.includes("Плоск�
 check("заметки о стиле подмешиваются", buildOverlayPrompt("монета", "толстый контур").includes("толстый контур"));
 
 console.log("\n=== размещение ===");
+// Раньше углы чередовались по индексу сцены, и предмет прилетал куда-то вбок,
+// где его легко пропустить — особенно в хуке, где решают первые секунды.
 const anchors = [0, 1, 2, 3, 4].map(overlayAnchor);
-check("соседние сцены — разные углы", anchors[0] !== anchors[1] && anchors[1] !== anchors[2], anchors.join(", "));
-check("цикл повторяется", overlayAnchor(0) === overlayAnchor(4));
-check("центр не используется", !anchors.includes("center"));
+check("объект всегда по центру", anchors.every((a) => a === "center"), anchors.join(", "));
+check("по углам больше не разбрасывается", !anchors.some((a) => a.includes("Left") || a.includes("Right")));
 check("объект не закрывает кадр", OVERLAY_WIDTH_PERCENT > 20 && OVERLAY_WIDTH_PERCENT < 50, String(OVERLAY_WIDTH_PERCENT));
 
 console.log("\n=== схема данных ===");

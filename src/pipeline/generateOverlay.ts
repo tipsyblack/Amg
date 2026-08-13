@@ -80,16 +80,13 @@ export async function generateSceneOverlay(
 // Куда ставить объект: по номеру сцены, чтобы соседние сцены не показывали его
 // в одном и том же месте. Центр не используем — он перекрыл бы главное в
 // картинке.
-const ANCHORS = [
-  "topRight",
-  "bottomLeft",
-  "topLeft",
-  "bottomRight",
-] as const;
-
-export function overlayAnchor(index: number): (typeof ANCHORS)[number] {
-  return ANCHORS[index % ANCHORS.length];
+// Объект появляется В ЦЕНТРЕ кадра. Раньше углы чередовались по индексу
+// сцены, и предмет прилетал куда-то вбок, где его легко пропустить — особенно
+// в хуке, где решают первые секунды. Угловые якоря остались в схеме: они
+// осмысленны, когда объект должен не спорить с сюжетом иллюстрации, и данные
+// с ними по-прежнему рисуются правильно.
+export function overlayAnchor(_index: number): "center" {
+  return "center";
 }
 
-// Доля ширины карточки. Объект должен читаться, но не закрывать сцену.
 export const OVERLAY_WIDTH_PERCENT = 38;

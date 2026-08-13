@@ -149,6 +149,20 @@ export const VideoComposition: React.FC<VideoData> = ({
             <Sequence from={from} durationInFrames={scene.durationInFrames}>
               <Audio src={staticFile(`audio/${scene.audioFileName}`)} />
             </Sequence>
+            {/* Прилёт объекта: звук ставится здесь, а не внутри Overlay —
+                там кадр отсчитывается от начала сцены, и вложенная Sequence
+                со звуком жила бы в другой системе координат. Здесь же всё в
+                абсолютных кадрах, как и остальные звуки. */}
+            {sfxEnabled && scene.overlay && (
+              <Sequence
+                from={from + Math.round((scene.overlay.startMs / 1000) * fps)}
+              >
+                <Audio
+                  src={staticFile("sfx/pop.wav")}
+                  volume={MIX.overlaySfx}
+                />
+              </Sequence>
+            )}
             {/* Звук перехода на стыке со следующей сценой. */}
             {sfxEnabled && !isLast && (
               <Sequence

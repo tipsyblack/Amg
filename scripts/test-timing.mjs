@@ -153,7 +153,10 @@ const path = (await import("node:path")).default;
 const { execFileSync } = await import("node:child_process");
 const { tmpdir } = await import("node:os");
 const pathMod = await import("node:path");
-for (const name of sfx) {
+// pop звучит не на стыке, а при прилёте объекта внутри сцены, поэтому в цикл
+// переходов он не входит — и в проверки его нужно внести отдельно, иначе новый
+// звук оказался бы единственным непроверенным в наборе.
+for (const name of [...sfx, "pop"]) {
   const file = `public/sfx/${name}.wav`;
   if (!existsSync(file)) {
     check(`${name}: файл на месте`, false, file);
@@ -234,7 +237,7 @@ function sfxSpectrum(name) {
   return { centroid: sumWeighted / sumAll, lowShare: (100 * sumLow) / sumAll };
 }
 
-for (const name of ["click", "clap", "snap", "impact"]) {
+for (const name of ["click", "clap", "snap", "impact", "pop"]) {
   const { centroid, lowShare } = sfxSpectrum(name);
   check(
     `${name}: центр ${Math.round(centroid)} Гц, низ ${lowShare.toFixed(1)}%`,
@@ -246,7 +249,7 @@ for (const name of ["click", "clap", "snap", "impact"]) {
 // на подобранных вручную volume= в каждом звуке и разъезжалась при любой
 // правке фильтров — после добавления низа разброс дошёл до 5 dB, то есть один
 // стык бил, а другой еле шелестел.
-const levels = ["click", "clap", "snap", "impact", "hook"].map((name) => {
+const levels = ["click", "clap", "snap", "impact", "pop", "hook"].map((name) => {
   const b = readFileSync(path.resolve("public/sfx", `${name}.wav`));
   const n = (b.length - 44) / 2;
   let sum = 0;
@@ -280,6 +283,13 @@ check(
   "подложка садится на 16-20 дБ ниже речи",
   bedUnderVoiceDb >= 16 && bedUnderVoiceDb <= 20,
   `${bedUnderVoiceDb.toFixed(1)} дБ (трек ${MUSIC_LUFS} LUFS, множитель ${MIX.music})`,
+);
+// Прилёт объекта — внутри сцены, а не на склейке. Громкий как стык, он бы
+// читался как склейка там, где её нет; неслышный — не выполнял бы работу.
+check(
+  "звук объекта тише стыка, но слышен",
+  MIX.overlaySfx < MIX.sfx && MIX.overlaySfx >= 0.4,
+  `объект ${MIX.overlaySfx}, стык ${MIX.sfx}`,
 );
 check("стык слышен поверх озвучки", MIX.sfx >= 0.6, String(MIX.sfx));
 check("но не перебивает её совсем", MIX.sfx <= 0.85, String(MIX.sfx));
