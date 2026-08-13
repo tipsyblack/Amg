@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { Outro, Scene, VideoData } from "../types";
 import { getAudioDurationInSeconds, getClipDurationInSeconds } from "./audioDuration";
 import {
@@ -10,6 +12,8 @@ import {
   PUBLIC_CLIPS_DIR,
 } from "./clipLibrary";
 import { config } from "./config";
+
+const execFileAsync = promisify(execFile);
 import { generateSceneClip } from "./generateClip";
 import {
   generateSceneImage,
@@ -32,10 +36,15 @@ export const PUBLIC_MUSIC_DIR = path.resolve("public/music");
 export const MUSIC_LIBRARY_DIR = path.resolve("assets/music");
 export const DATA_FILE = path.resolve("data/video-data.json");
 
-// Небольшой запас после конца озвучки, чтобы подпись не исчезала мгновенно.
-const SCENE_PADDING_SECONDS = 0.4;
+// Запас после конца озвучки: подпись не должна исчезать ровно на последнем
+// звуке. Держали 0.4 с ради перехода — считалось, что стык обязан лечь в
+// тишину после реплики. Референс это опроверг: из девяти его стыков СЕМЬ
+// приходятся на речь, диктор в этот момент говорит на 12-25 дБ громче своего
+// же фона. Именно поэтому там речь льётся непрерывно, а у нас набегало 10
+// секунд тишины на ролик — 13% времени против примерно 2% у них.
+const SCENE_PADDING_SECONDS = 0.15;
 // До какого значения запас можно урезать, если ролик не влезает в лимит.
-const MIN_SCENE_PADDING_SECONDS = 0.12;
+const MIN_SCENE_PADDING_SECONDS = 0.08;
 
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 
@@ -127,6 +136,11 @@ export async function generateSceneAudio(
     modelOverride,
     providerOverride,
   );
+  // Хвост тишины, который добавил сам синтезатор, срезаем: он приходит поверх
+  // нашего запаса и складывается с ним. Режем только КОНЕЦ — начало трогать
+  // нельзя, к нему привязаны тайминги слов от провайдера, и сдвиг развалил бы
+  // субтитры.
+  await trimTrailingSilence(audioPath);
   const speechSeconds = await getAudioDurationInSeconds(audioPath);
   const durationSeconds = speechSeconds + SCENE_PADDING_SECONDS;
   // Тайминги от провайдера точные; без них раскладываем слова по длительности
@@ -336,6 +350,36 @@ export async function pickMusic(): Promise<string | undefined> {
  * незаметно, — и сообщает, сколько осталось лишнего, если пауз не хватило.
  * Сцены не выбрасываем: в последней призыв к действию, а в остальных сюжет.
  */
+/**
+ * Срезает тишину в конце дорожки. Порог −45 дБ: тише этого у синтезатора идёт
+ * цифровой ноль с редкими всплесками кодека, а живое дыхание в конце фразы
+ * заметно громче и остаётся на месте.
+ *
+ * Оставляем 60 мс хвоста: срез вплотную к последнему звуку слышен как обрубание
+ * слова.
+ */
+export async function trimTrailingSilence(file: string): Promise<void> {
+  const temporary = `${file}.trim.mp3`;
+  try {
+    await execFileAsync("ffmpeg", [
+      "-y", "-hide_banner", "-loglevel", "error",
+      "-i", file,
+      // areverse + silenceremove начала — способ убрать тишину именно с конца:
+      // у silenceremove режим stop_periods на некоторых сборках ffmpeg молча
+      // ничего не делает, а разворот работает везде одинаково.
+      "-af",
+      "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.06,areverse",
+      "-b:a", "192k",
+      temporary,
+    ], { timeout: 60_000 });
+    await rename(temporary, file);
+  } catch {
+    // Не получилось — оставляем как есть: лишняя тишина хуже, чем её отсутствие,
+    // но куда лучше, чем сцена без звука.
+    await rm(temporary, { force: true });
+  }
+}
+
 export function fitToBudget(
   scenes: Scene[],
   // Лимит длины можно задать на чат командой /length — тогда он приходит сюда,

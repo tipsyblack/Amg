@@ -38,9 +38,19 @@ console.log("\n=== чуть длиннее лимита: сжимаем пауз
 const slightlyFrames = sec(62.5 / 15);
 const slightly = Array.from({ length: 15 }, () => scene(slightlyFrames));
 const slightlyFit = fitToBudget(slightly);
-check("уложились в лимит", slightlyFit.overBudgetSeconds === 0, `осталось лишних ${slightlyFit.overBudgetSeconds} с`);
-check("итог не больше 60 с", slightlyFit.totalSeconds <= 60.01, String(slightlyFit.totalSeconds));
 check("сцены стали короче", slightlyFit.scenes[0].durationInFrames < slightlyFrames, String(slightlyFit.scenes[0].durationInFrames));
+check("превышение уменьшилось", slightlyFit.overBudgetSeconds < 2.5, `${slightlyFit.overBudgetSeconds.toFixed(1)} с сверх лимита вместо 2.5`);
+// Раньше здесь стояло «уложились в лимит»: запас после реплики был 0.4 с, и
+// подгонка могла снять по 0.28 с со сцены — 4.2 с на пятнадцати сценах.
+// Теперь запас 0.15 с, потому что в референсе стыки идут ПОВЕРХ речи и держать
+// под них тишину незачем. Амортизатора больше нет, и это правильно: лишние
+// секунды надо убирать из сценария, а не растягивать паузами. Ровно это и
+// делает проверка ритма — она ловит перебор слов ДО генерации.
+check(
+  "но чудес не обещает: остаток честно показан",
+  slightlyFit.overBudgetSeconds > 0,
+  `${slightlyFit.overBudgetSeconds.toFixed(1)} с`,
+);
 
 console.log("\n=== сильно длиннее: паузы не спасают, честно сообщаем ===");
 const longFrames = sec(100 / 15);
@@ -266,6 +276,36 @@ check(
   spread <= 2,
   levels.map((l) => `${l.name} ${l.db.toFixed(1)}`).join(", "),
 );
+
+console.log("\n=== хвост тишины у озвучки ===");
+// Синтезатор дописывает тишину в конец реплики, и она складывалась с нашим
+// запасом: в ролике набегало 10 секунд пауз (13% времени) против примерно 2%
+// у референса.
+{
+  const os2 = await import("node:os");
+  const fsp = await import("node:fs/promises");
+  const dir = await fsp.mkdtemp(pathMod.join(os2.tmpdir(), "amg-trim-"));
+  const file = pathMod.join(dir, "speech.mp3");
+  execFileSync("ffmpeg", ["-y", "-loglevel", "error",
+    "-f", "lavfi", "-i", "sine=frequency=200:duration=1.5",
+    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=0.9",
+    "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1",
+    "-ar", "44100", "-b:a", "192k", file]);
+  const dur = (f) =>
+    Number(execFileSync("ffprobe", ["-v", "error", "-show_entries",
+      "format=duration", "-of", "csv=p=0", f]).toString().trim());
+  const before = dur(file);
+  const { trimTrailingSilence } = await import("../src/pipeline/assets.ts");
+  await trimTrailingSilence(file);
+  const after = dur(file);
+  check(
+    `хвост тишины срезан: ${before.toFixed(2)} → ${after.toFixed(2)} с`,
+    after < before - 0.6 && after > 1.4,
+  );
+  // Речь трогать нельзя: полторы секунды тона должны остаться целыми.
+  check("сама речь не обрезана", after >= 1.5, `${after.toFixed(2)} с`);
+  await fsp.rm(dir, { recursive: true, force: true });
+}
 
 console.log("\n=== уровни слоёв в миксе ===");
 const { MIX } = await import("../src/remotion/mix.ts");
