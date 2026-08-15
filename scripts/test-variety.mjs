@@ -211,5 +211,64 @@ check("нет описания кадра — не повод останавли
 check("одинаковые кадры останавливают", !isSoftProblem(String(frameProblem(sameFrame))));
 check("повтор речи останавливает", !isSoftProblem("ролик повторяется: сцены 1 и 3 говорят одно и то же"));
 
+console.log("\n=== замер разнообразия на настоящих картинках ===");
+// Замер должен отличать ролик, где все кадры одного цвета, от ролика, где они
+// разные. Проверяем на нарисованных картинках, а не на числах: считает его
+// ffmpeg, и ошибка в кропе или в порядке каналов иначе не видна.
+const { execFile } = await import("node:child_process");
+const { promisify } = await import("node:util");
+const { mkdtempSync, rmSync } = await import("node:fs");
+const { tmpdir } = await import("node:os");
+const nodePath = (await import("node:path")).default;
+const run = promisify(execFile);
+const { measureImages, varietyReport, varietyLines } = await import(
+  "../src/pipeline/variety.ts"
+);
+
+const dir = mkdtempSync(nodePath.join(tmpdir(), "amg-variety-"));
+const draw = async (name, color) =>
+  run("ffmpeg", [
+    "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", `color=c=${color}:s=64x64`,
+    "-frames:v", "1", nodePath.join(dir, name),
+  ]);
+
+// Ровно та беда, которую нашли замером: все картинки в песочном беже.
+const SAND = ["0xC8A87A", "0xD2B48C", "0xBFA06B", "0xC9AE83", "0xD8BE95", "0xB99C6E"];
+for (const [i, c] of SAND.entries()) await draw(`same-${i}.png`, c);
+const same = varietyReport(await measureImages(dir));
+check("одинаковые по тону картинки пойманы", same.failed.length > 0, `не дотянуло: ${same.failed.length}`);
+check(
+  "и названы числом: все в одном секторе",
+  same.measured.sector === 1,
+  `${Math.round(same.measured.sector * 100)}% в секторе ${same.topSector.from}°`,
+);
+check("в тексте для чата сказано, что похожи", /похожи друг на друга/.test(varietyLines(same)[0]), varietyLines(same)[0]);
+
+rmSync(dir, { recursive: true, force: true });
+const dir2 = mkdtempSync(nodePath.join(tmpdir(), "amg-variety2-"));
+const draw2 = async (name, color) =>
+  run("ffmpeg", [
+    "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", `color=c=${color}:s=64x64`,
+    "-frames:v", "1", nodePath.join(dir2, name),
+  ]);
+// А так выглядит набор тонов из sceneLook: песочный, стальной, мятный,
+// ночной, бумажный, закатный.
+const VARIED = ["0xD2B48C", "0x7E97A8", "0x8FCFC0", "0x2B2A5E", "0xF2F0E8", "0xE08A6A"];
+for (const [i, c] of VARIED.entries()) await draw2(`mix-${i}.png`, c);
+const mixed = varietyReport(await measureImages(dir2));
+check("разные тона проходят замер", mixed.failed.length === 0, mixed.failed.map((f) => f.title).join(", "));
+check("разброс тона вырос", mixed.measured.hue > same.measured.hue, `${mixed.measured.hue.toFixed(0)}° против ${same.measured.hue.toFixed(0)}°`);
+check("разброс светлоты вырос", mixed.measured.light > same.measured.light, `${mixed.measured.light.toFixed(2)} против ${same.measured.light.toFixed(2)}`);
+check("в тексте для чата сказано, что хватает", /хватает/.test(varietyLines(mixed)[0]), varietyLines(mixed)[0]);
+check("пустая папка не роняет замер", (await measureImages(nodePath.join(dir2, "нет-такой"))).length === 0);
+// Папка между роликами не чистится: от прошлого ролика остаются лишние
+// картинки, если сцен в нём было больше. В замер они попадать не должны.
+const onlyTwo = await measureImages(dir2, ["mix-0.png", "mix-3.png"]);
+check("замеряются только картинки этого ролика", onlyTwo.length === 2, `${onlyTwo.length} из 6`);
+check("список несуществующих файлов даёт пусто", (await measureImages(dir2, ["чужой.png"])).length === 0);
+rmSync(dir2, { recursive: true, force: true });
+
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

@@ -17,6 +17,7 @@ import {
   sceneClip,
   generateSceneAudio,
   PUBLIC_AUDIO_DIR,
+  PUBLIC_IMAGES_DIR,
   generateSceneIllustration,
   listMusicTracks,
   MUSIC_LIBRARY_DIR,
@@ -48,6 +49,7 @@ import {
 } from "../pipeline/generateOverlay";
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { lookLabel, sceneLook, seedFromTitle } from "../pipeline/sceneLook";
+import { measureImages, varietyLines, varietyReport } from "../pipeline/variety";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import { describeSpeed, parseSpeed, setSpeechSpeed } from "../pipeline/speech";
 import { DIRECT_TTS_MODELS, directModelNote } from "../pipeline/ttsModels";
@@ -623,6 +625,12 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
       }
 
       updateSession(chatId, { step: "idle", images, overlays });
+
+      // Замер разнообразия — здесь, а не после сборки: если картинки вышли
+      // одинаковыми, узнать об этом надо ДО того, как оплачена озвучка, и
+      // пока сцену ещё можно перерисовать одной кнопкой.
+      for (const line of await varietyMessage(chatId)) await ctx.reply(line);
+
       if (autopilotOn(chatId)) {
         await ctx.reply("🤖 Автопилот: картинки готовы, собираю видео.");
         return;
@@ -635,6 +643,49 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
   // Та же причина, что и в шаге сценария: цепочка идёт снаружи withGeneration.
   if (autopilotContinues({ ok, session: getSession(chatId) })) {
     await runAssembleStep(ctx, chatId);
+  }
+}
+
+/**
+ * Картинки ИМЕННО ЭТОГО ролика. Папка между роликами не чистится, а имена в
+ * ней постоянные — от прошлого ролика останутся лишние файлы, если сцен в нём
+ * было больше.
+ */
+function sceneImageFiles(chatId: number): string[] {
+  const images = getSession(chatId).images ?? [];
+  return images.flatMap((image) =>
+    image
+      ? [image.imageFileName, image.swapImageFileName].filter(
+          (name): name is string => Boolean(name),
+        )
+      : [],
+  );
+}
+
+/**
+ * Итог замера разнообразия одной строкой (или несколькими, если что-то не
+ * дотянуло). Ничего не бросает: замер — это справка, и ронять из-за него шаг,
+ * где уже оплачены картинки, нельзя.
+ */
+async function varietyMessage(chatId: number): Promise<string[]> {
+  try {
+    const images = await measureImages(PUBLIC_IMAGES_DIR, sceneImageFiles(chatId));
+    // Одна-две картинки — сравнивать не с чем.
+    if (images.length < 3) return [];
+    const report = varietyReport(images);
+    const lines = varietyLines(report);
+    if (report.failed.length === 0) return [lines[0]];
+    return [
+      lines.join("\n"),
+      "Перерисовка сцены меняет тон и план кадра — «🔄 Перегенерировать сцену».",
+    ];
+  } catch (error) {
+    console.warn(
+      `Замер разнообразия не вышел: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return [];
   }
 }
 
@@ -1098,6 +1149,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/ttsmodel — модель озвучки\n" +
       "/length — лимит длины ролика в секундах\n" +
       "/speed — скорость речи\n" +
+      "/variety — замер: не похожи ли картинки сцен друг на друга\n" +
       "/clips — сколько сцен оживлять видео (по умолчанию ни одной)\n" +
       "/library — библиотека клипов с маскотом (генерируется один раз)\n" +
       "/rules — чек-лист, по которому критик проверяет сценарий\n" +
@@ -1311,6 +1363,37 @@ bot.command("speed", async (ctx) => {
     `Скорость: ${describeSpeed(parsed)}.\n\n` +
       "Действует со следующей озвучки. Бюджет слов пересчитывается вместе с " +
       "ней: быстрее речь — больше слов влезает в те же секунды.",
+  );
+});
+
+bot.command("variety", async (ctx) => {
+  // Тот же замер, что бот показывает сам после отрисовки, — но по запросу и
+  // подробно. Нужен, когда картинки уже нарисованы, а решить надо сейчас:
+  // перерисовывать сцену или собирать как есть.
+  const images = await measureImages(
+    PUBLIC_IMAGES_DIR,
+    sceneImageFiles(ctx.chat.id),
+  );
+  if (images.length < 3) {
+    await ctx.reply(
+      "Замерять нечего: картинок меньше трёх. Нарисуйте сцены — /new.",
+    );
+    return;
+  }
+  const report = varietyReport(images);
+  const rows = images
+    .map(
+      (s) =>
+        `${s.name.replace(/\.png$/, "").padEnd(16)} ${String(Math.round(s.hue)).padStart(4)}°  ` +
+        `светлота ${s.lum.toFixed(2)}  занято ${(s.fill * 100).toFixed(0)}%`,
+    )
+    .join("\n");
+  await ctx.reply(
+    `${varietyLines(report).join("\n")}\n\n<pre>${rows}</pre>\n\n` +
+      "Тон 30-45° — песочный беж, 160-190° — зелёно-бирюзовый, " +
+      "200-220° — сине-стальной. Если почти все картинки в одном секторе, " +
+      "ролик и выглядит стоящим на месте.",
+    { parse_mode: "HTML" },
   );
 });
 
