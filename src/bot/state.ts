@@ -33,6 +33,10 @@ export interface SceneImage {
   swapImageFileName?: string;
   swapImageWidth?: number;
   swapImageHeight?: number;
+  // Какая это по счёту попытка нарисовать сцену. По ней сдвигается тон и план
+  // кадра при перерисовке: повторять задание, которое уже не понравилось,
+  // смысла нет.
+  attempt?: number;
 }
 
 export interface SceneOverlay {

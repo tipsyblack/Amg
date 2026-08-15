@@ -30,6 +30,7 @@ import {
   overlayAnchor,
   OVERLAY_WIDTH_PERCENT,
 } from "./generateOverlay";
+import { sceneLook, seedFromTitle } from "./sceneLook";
 import { overlayStartMs } from "./wordTimings";
 
 // Текст описания под пост — рядом с готовым роликом.
@@ -106,11 +107,15 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
 
     const mascotOnly = mascotScenes.has(i);
     const withCharacter = sceneWithCharacter(i, script.scenes.length);
+    // Тон и план кадра — по номеру сцены, чтобы соседние картинки заведомо
+    // отличались цветом и плотностью. Замер, из-за которого это появилось,
+    // описан в sceneLook.ts.
+    const look = sceneLook(i, { withCharacter, seed: seedFromTitle(script.title) });
     const illustration = mascotOnly
       ? undefined
       : await generateSceneIllustration(
           i,
-          buildImagePrompt(scriptScene, undefined, withCharacter),
+          buildImagePrompt(scriptScene, undefined, withCharacter, look),
           undefined,
           undefined,
           withCharacter,
@@ -126,9 +131,15 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
         const second = await generateSceneIllustration(
           i,
           buildImagePrompt(
-            { ...scriptScene, voiceoverText: scriptScene.swap.scene },
+            // Вторая картинка описана в swap.scene — это уже описание кадра,
+            // поэтому оно идёт вместо visual, а не рядом с ним.
+            { ...scriptScene, visual: scriptScene.swap.scene },
             undefined,
             false,
+            // Тон и план — те же, что у первой картинки сцены: они видны почти
+            // одновременно, и разный цвет здесь читался бы как сбой, а не как
+            // разнообразие.
+            look,
           ),
           illustration.resultUrl,
           undefined,

@@ -35,6 +35,8 @@
     "test:publish": "tsx scripts/test-publish.mjs",
     "test:calendar": "tsx scripts/test-calendar.mjs",
     "test:speed": "tsx scripts/test-speed.mjs",
+    "test:variety": "tsx scripts/test-variety.mjs",
+    "variety:check": "node scripts/check-variety.mjs",
     "sfx:import": "node scripts/import-sfx.mjs",
     "clips:build": "tsx scripts/build-clip-library.mjs",
     "character:ref": "node scripts/build-character-reference.mjs"

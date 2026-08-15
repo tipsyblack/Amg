@@ -47,6 +47,7 @@ import {
   OVERLAY_WIDTH_PERCENT,
 } from "../pipeline/generateOverlay";
 import { overlayStartMs } from "../pipeline/wordTimings";
+import { lookLabel, sceneLook, seedFromTitle } from "../pipeline/sceneLook";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import { describeSpeed, parseSpeed, setSpeechSpeed } from "../pipeline/speech";
 import { DIRECT_TTS_MODELS, directModelNote } from "../pipeline/ttsModels";
@@ -125,7 +126,7 @@ import {
 } from "../pipeline/analyzeMusic";
 import { config } from "../pipeline/config";
 import { generateDescription } from "../pipeline/generateDescription";
-import { generateCheckedScript } from "../pipeline/generateScript";
+import { generateCheckedScript, isSoftProblem } from "../pipeline/generateScript";
 import {
   readChecklist,
   resetChecklist,
@@ -320,13 +321,16 @@ async function withGeneration(
 
 function formatScript(script: {
   title: string;
-  scenes: { caption: string; voiceoverText: string }[];
+  scenes: { caption: string; voiceoverText: string; visual?: string }[];
 }): string {
   const scenes = script.scenes
     .map(
       (scene, i) =>
         // Первая сцена — хук, помечаем: по нему решается, досмотрят ли ролик.
-        `${i + 1}. ${i === 0 ? "🪝 " : ""}${scene.caption}\n   🎙 ${scene.voiceoverText}`,
+        `${i + 1}. ${i === 0 ? "🪝 " : ""}${scene.caption}\n   🎙 ${scene.voiceoverText}` +
+        // Что будет в кадре — видно ДО отрисовки. Картинки стоят денег, и
+        // «во всех сценах человек за ноутбуком» дешевле заметить здесь.
+        (scene.visual ? `\n   🖼 ${scene.visual}` : ""),
     )
     .join("\n\n");
   return `📋 «${script.title}»\n\n${scenes}`;
@@ -427,13 +431,17 @@ async function runScriptStep(
       if (autopilotOn(chatId)) {
         // На автопилоте кнопок нет, но замечания всё равно показываем: ролик
         // потом смотреть, и знать, с чем он вышел, полезно.
-        if (remaining.length > 0) {
+        //
+        // Останавливают не все замечания: см. isSoftProblem. Модель, не
+        // осилившая новое поле сценария, — это не повод класть завод.
+        const blocking = remaining.filter((p) => !isSoftProblem(p));
+        if (blocking.length > 0) {
           // Единственное, что автопилот останавливает: объективные проверки не
           // прошли ПОСЛЕ правки. Дальше пошли бы деньги на картинки и озвучку
           // ради ролика, который заведомо не годится.
           await ctx.reply(
             "🛑 Автопилот остановлен: после правки в сценарии осталось — " +
-              `${remaining.join("; ")}.\n\nПопросите «✏️ Правки» или ` +
+              `${blocking.join("; ")}.\n\nПопросите «✏️ Правки» или ` +
               "перегенерируйте: /new",
             { reply_markup: scriptKeyboard },
           );
@@ -497,11 +505,25 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
         }
         // Уже сгенерированные при прошлой попытке сцены пропускаем.
         if (images[i]) continue;
-        await ctx.reply(`🎨 Сцена ${i + 1} из ${script.scenes.length}…`);
         const withCharacter = sceneWithCharacter(i, script.scenes.length);
+        // Тон и план кадра — по номеру сцены. Без этого все картинки ролика
+        // выходили одного цвета: 12 из 15 в замере попали в один сектор тона.
+        // Подробности замера — в sceneLook.ts.
+        const look = sceneLook(i, {
+          withCharacter,
+          seed: seedFromTitle(script.title),
+        });
+        await ctx.reply(
+          `🎨 Сцена ${i + 1} из ${script.scenes.length} — ${lookLabel(look)}…`,
+        );
         const illustration = await generateSceneIllustration(
           i,
-          buildImagePrompt(script.scenes[i], session.styleNotes, withCharacter),
+          buildImagePrompt(
+            script.scenes[i],
+            session.styleNotes,
+            withCharacter,
+            look,
+          ),
           undefined,
           session.imageModel,
           withCharacter,
@@ -522,9 +544,13 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
             const second = await generateSceneIllustration(
               i,
               buildImagePrompt(
-                { ...script.scenes[i], voiceoverText: swapScene },
+                // swap.scene — уже описание кадра, поэтому оно идёт вместо
+                // visual. Тон и план те же, что у первой картинки: обе видны
+                // почти одновременно, и разный цвет читался бы как сбой.
+                { ...script.scenes[i], visual: swapScene },
                 session.styleNotes,
                 false,
+                look,
               ),
               resultUrl,
               session.imageModel,
@@ -628,23 +654,37 @@ async function regenerateScene(
         throw new Error("Нет данных сцены — начните заново: /new");
       }
 
-      await ctx.reply(`🎨 Перегенерирую сцену ${index + 1}…`);
       // Перегенерация одной сцены должна дать тот же тип кадра, что и общий
       // проход, иначе в середине ролика внезапно появится маскот.
       const regenWithCharacter = sceneWithCharacter(index, script.scenes.length);
+      // Картинку просят перерисовать, потому что она НЕ понравилась. Значит,
+      // повторять то же задание бессмысленно: сдвигаем тон и план. Шаг по
+      // тону чётный, поэтому новый тон не совпадёт ни с предыдущей сценой, ни
+      // со следующей — см. sceneLook.ts.
+      const attempt = (images[index]?.attempt ?? 0) + 1;
+      const look = sceneLook(index, {
+        withCharacter: regenWithCharacter,
+        seed: seedFromTitle(script.title),
+        attempt,
+      });
+      await ctx.reply(`🎨 Перегенерирую сцену ${index + 1} — ${lookLabel(look)}…`);
       const illustration = await generateSceneIllustration(
         index,
         buildImagePrompt(
           script.scenes[index],
           session.styleNotes,
           regenWithCharacter,
+          look,
         ),
-        images[index - 1]?.resultUrl,
+        // Картинка предыдущей сцены НЕ передаётся: как референс она заставляет
+        // модель повторить её композицию, и перерисованная сцена выходит
+        // похожей на соседнюю — ровно то, от чего её просили избавить.
+        undefined,
         session.imageModel,
         regenWithCharacter,
       );
       const { imageFileName } = illustration;
-      images[index] = illustration;
+      images[index] = { ...illustration, attempt };
       updateSession(chatId, { step: "idle", images });
 
       await ctx.replyWithPhoto(

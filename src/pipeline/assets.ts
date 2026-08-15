@@ -23,6 +23,7 @@ import {
   STYLE_PROMPT,
 } from "./generateImage";
 import { synthesizeSpeech, type TtsProvider } from "./generateVoiceover";
+import { lookPrompt, type SceneLook } from "./sceneLook";
 import { getImageSize } from "./imageDimensions";
 import { wordsForScene } from "./wordTimings";
 
@@ -96,23 +97,35 @@ export function buildOutro(): Outro | undefined {
 }
 
 export function buildImagePrompt(
-  scene: { caption: string; voiceoverText: string },
+  scene: { caption: string; voiceoverText: string; visual?: string },
   styleNotes?: string,
   withCharacter = false,
+  // Тон и план кадра. Без него все картинки ролика выходят одного цвета и
+  // одной плотности — см. замер в sceneLook.ts.
+  look?: SceneLook,
 ): string {
   const styleAddition = styleNotes
     ? `\n\nДополнительные заметки о стиле из референса пользователя (учитывай их, не ломая описанный выше стиль и персонажа): ${styleNotes}`
     : "";
+  // Что рисовать: описание кадра, если сценарист его дал, иначе — реплика.
+  //
+  // Реплика в этой роли работает плохо: половина фраз ролика ничего не
+  // показывает («казалось бы, рука проще лица»), и на таком входе модель
+  // рисует своё среднее представление о стиле. Отсюда и одинаковые кадры.
+  // Поле visual необязательное: сценарий мог прийти и от старой модели, и
+  // тогда пусть будет прежнее поведение, а не пустая картинка.
+  const what = scene.visual?.trim() || scene.voiceoverText;
   // Запрет надписей идёт последним, после заметок из референса: те могут
   // упоминать текст в кадре (в референсе он есть), а запрет должен остаться
   // последним словом.
   //
-  // Сцена описывается только текстом озвучки: подпись — это готовая фраза для
-  // экрана, и, попав в промпт, она провоцирует модель эту фразу нарисовать.
+  // Подпись сцены в промпт не идёт вовсе: это готовая фраза для экрана, и,
+  // попав в промпт, она провоцирует модель эту фразу нарисовать.
   return (
     `${STYLE_PROMPT}${styleAddition}` +
     `\n\n${withCharacter ? CHARACTER_PROMPT : NO_CHARACTER_PROMPT}` +
-    `\n\nЧто происходит в сцене: ${scene.voiceoverText}` +
+    `\n\nЧто происходит в сцене: ${what}` +
+    (look ? `\n\n${lookPrompt(look)}` : "") +
     `\n\n${NO_TEXT_RULE}`
   );
 }

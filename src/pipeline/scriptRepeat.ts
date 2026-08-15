@@ -113,6 +113,57 @@ const MIN_DISTANCE = 2;
  * говорить «нейросеть» в разных сценах, и ставить это в вину — значит
  * требовать синонимов там, где нужен один термин.
  */
+/**
+ * Одна и та же картинка в разных сценах.
+ *
+ * Отдельно от повтора речи, потому что правила противоположные. У речи общие
+ * слова у СОСЕДЕЙ — признак связности: фраза сознательно продолжается из кадра
+ * в кадр. У картинки наоборот: два соседних кадра с одним и тем же предметом —
+ * это ролик, стоящий на месте, и заметно это сильнее всего именно у соседей.
+ * Поэтому здесь MIN_DISTANCE не применяется.
+ *
+ * Сцены без описания кадра тоже считаются проблемой: без него картинка
+ * рисуется по реплике, а половина реплик ничего не показывает — на них модель
+ * выдаёт своё среднее представление о стиле, и кадры выходят одинаковыми.
+ */
+export function frameProblem(script: GeneratedScript): string | undefined {
+  const missing = script.scenes
+    .map((scene, i) => (scene.visual?.trim() ? undefined : i + 1))
+    .filter((n): n is number => n !== undefined);
+  if (missing.length > 0) {
+    return (
+      `нет описания кадра (visual) у сцен: ${missing.join(", ")}. ` +
+      "Без него картинку рисуют по реплике, и кадры выходят одинаковыми"
+    );
+  }
+
+  const titleStems = contentStems(script.title ?? "");
+  const frames = script.scenes.map((scene) => {
+    const stems = contentStems(scene.visual ?? "");
+    // Слова темы не в счёт: ролик про руки законно показывает руку не раз.
+    // Повтор — это когда совпадает ВСЁ остальное.
+    for (const t of titleStems) stems.delete(t);
+    return stems;
+  });
+
+  for (let i = 0; i < frames.length; i++) {
+    for (let j = i + 1; j < frames.length; j++) {
+      const shared = [...frames[i]].filter((s) => frames[j].has(s));
+      const smaller = Math.min(frames[i].size, frames[j].size);
+      if (smaller === 0) continue;
+      const share = shared.length / smaller;
+      if (shared.length >= SHARED_STEMS_LIMIT && share >= SHARED_SHARE_LIMIT) {
+        return (
+          `кадры сцен ${i + 1} и ${j + 1} — это одна и та же картинка ` +
+          `(общие слова: ${shared.slice(0, 4).join(", ")}). ` +
+          "Каждая сцена должна показывать своё"
+        );
+      }
+    }
+  }
+  return undefined;
+}
+
 export function repeatProblem(script: GeneratedScript): string | undefined {
   const titleStems = contentStems(script.title ?? "");
   const scenes = script.scenes.map((scene) => {
