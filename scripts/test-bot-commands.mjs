@@ -48,6 +48,9 @@ bot.command('topicsreset', (ctx) => { hits.push(['topicsreset', ctx.match]); });
 bot.command('link', (ctx) => { hits.push(['link', ctx.match]); });
 bot.command('library', (ctx) => { hits.push(['library2', ctx.match]); });
 bot.command('accounts', (ctx) => { hits.push(['accounts', ctx.match]); });
+bot.command('keys', (ctx) => { hits.push(['keys', ctx.match]); });
+bot.command('setkey', (ctx) => { hits.push(['setkey', ctx.match]); });
+bot.command('restart', (ctx) => { hits.push(['restart', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -257,5 +260,14 @@ await bot.handleUpdate(upd('/link'));
 check('/link не достался /library', hits.at(-1)?.[0] === 'link', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/accounts'));
 check('/accounts распознан', hits.at(-1)?.[0] === 'accounts');
+
+// Ключи из чата. /keys и /setkey тоже делят префикс.
+await bot.handleUpdate(upd('/keys'));
+check('/keys не достался /setkey', hits.at(-1)?.[0] === 'keys', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/setkey ZERNIO_API_KEY zk_секрет'));
+check('/setkey распознан', hits.at(-1)?.[0] === 'setkey');
+check('аргумент дошёл целиком', hits.at(-1)?.[1] === 'ZERNIO_API_KEY zk_секрет', String(hits.at(-1)?.[1]));
+await bot.handleUpdate(upd('/restart'));
+check('/restart распознан', hits.at(-1)?.[0] === 'restart');
 
 process.exit(fails === 0 ? 0 : 1);

@@ -141,6 +141,13 @@ import {
 } from "./videoSize";
 import { masterLoudness, measureLoudness } from "./masterAudio";
 import { autopilotContinues, parseAutopilotArg } from "./autopilot";
+import {
+  EDITABLE_KEYS,
+  getEnvValue,
+  maskSecret,
+  parseSetKey,
+  setEnvValue,
+} from "./envFile";
 import { extractStyleNotes } from "./referenceStyle";
 import {
   deleteProfile,
@@ -986,6 +993,9 @@ bot.command(["start", "help"], async (ctx) => {
       "/link — привязать аккаунт соцсети\n" +
       "/unlink — отвязать аккаунт\n" +
       "/zprofiles — профили Zernio\n" +
+      "/keys — какие ключи API заданы на сервере\n" +
+      "/setkey — задать ключ прямо из чата (без ssh)\n" +
+      "/restart — перезапустить бота, чтобы подхватить .env\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
@@ -2160,6 +2170,136 @@ bot.callbackQuery("topic_more", async (ctx) => {
     return;
   }
   await sendTopics(ctx, ctx.chat!.id);
+});
+
+// ——— Ключи API из чата, без SSH ———
+//
+// Ключи живут только в .env на сервере: репозиторий публичный. Раньше это
+// означало «зайдите по ssh и откройте nano», а весь смысл этого бота в том,
+// что заходить никуда не надо.
+//
+// Опасность понятна: ключ, набранный в чат, остаётся в истории Telegram.
+// Поэтому сообщение удаляется сразу, в ответ уходит только хвост из четырёх
+// знаков, менять можно лишь перечисленные переменные, и всё это работает
+// только при заданном TELEGRAM_ALLOWED_CHAT_ID — иначе бот открыт всем, кто
+// его найдёт, и правка ключей из чата была бы дырой, а не удобством.
+
+function keyEditingBlocked(): string | undefined {
+  if (!process.env.TELEGRAM_ALLOWED_CHAT_ID) {
+    return (
+      "Правка ключей из чата выключена: не задан TELEGRAM_ALLOWED_CHAT_ID.\n\n" +
+      "Пока он пуст, бот отвечает любому, кто его найдёт, — и любой мог бы " +
+      "переписать ключи. Задайте его на сервере один раз (это тот самый случай, " +
+      "когда без ssh не обойтись), после чего остальные ключи можно будет " +
+      "менять отсюда.\n\n" +
+      `Ваш chat id: смотрите /diag`
+    );
+  }
+  return undefined;
+}
+
+bot.command("keys", async (ctx) => {
+  const blocked = keyEditingBlocked();
+  if (blocked) {
+    await ctx.reply(blocked);
+    return;
+  }
+  const lines = EDITABLE_KEYS.map((name) => {
+    const inFile = getEnvValue(name);
+    const live = process.env[name] ?? "";
+    const pending =
+      inFile && inFile !== live ? " ⏳ записан, но нужен перезапуск" : "";
+    return `• ${name}: ${maskSecret(inFile)}${pending}`;
+  });
+  await ctx.reply(
+    "Ключи в .env на сервере:\n\n" +
+      lines.join("\n") +
+      "\n\nЗадать: /setkey ИМЯ значение\n" +
+      "Сообщение с ключом я удалю сразу, в ответе будет только хвост.",
+  );
+});
+
+bot.command("setkey", async (ctx) => {
+  const blocked = keyEditingBlocked();
+  if (blocked) {
+    await ctx.reply(blocked);
+    return;
+  }
+  if (ctx.chat.type !== "private") {
+    await ctx.reply(
+      "Ключи принимаю только в личном чате: в группе сообщение видно всем, " +
+        "и удаление уже не спасает.",
+    );
+    return;
+  }
+
+  const parsed = parseSetKey(ctx.match);
+
+  // Удаляем сообщение с ключом ДО любых ответов и до записи на диск: если
+  // дальше что-то упадёт, ключ всё равно не останется висеть в истории.
+  let deleted = true;
+  try {
+    await ctx.api.deleteMessage(ctx.chat.id, ctx.message!.message_id);
+  } catch {
+    // Telegram не даёт удалять сообщения старше 48 часов и в некоторых
+    // случаях чужие. Молчать об этом нельзя — человек должен знать, что ключ
+    // остался в переписке.
+    deleted = false;
+  }
+
+  if ("error" in parsed) {
+    await ctx.reply(parsed.error);
+    return;
+  }
+
+  try {
+    setEnvValue(parsed.name, parsed.value);
+  } catch (error) {
+    await ctx.reply(
+      `Не смог записать в .env: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return;
+  }
+
+  await ctx.reply(
+    `${parsed.name} записан: ${maskSecret(parsed.value)}\n\n` +
+      (deleted
+        ? "Сообщение с ключом удалил.\n\n"
+        : "⚠️ Удалить ваше сообщение не получилось — удалите его вручную, " +
+          "ключ виден в переписке.\n\n") +
+      "Чтобы ключ заработал, нужен перезапуск: /restart\n" +
+      "Проверить, что записалось: /keys",
+  );
+});
+
+bot.command("restart", async (ctx) => {
+  if (generationRunning) {
+    await ctx.reply("Идёт генерация — перезапущусь, когда закончится.");
+    return;
+  }
+  await ctx.reply(
+    "Перезапускаюсь, чтобы подхватить .env. Буду на связи через несколько " +
+      "секунд — проверьте /keys",
+  );
+  try {
+    // Тем же способом, что и деплой: отдельный юнит systemd переживает смерть
+    // самого бота. Без systemd (запуск через npm run bot) перезапустить себя
+    // нечем — об этом честно говорим.
+    await execFileAsync("systemd-run", [
+      "--collect",
+      `--unit=amg-restart-${Date.now()}`,
+      "/bin/bash",
+      "-c",
+      "sleep 1; systemctl restart amg-bot.service",
+    ]);
+  } catch {
+    await ctx.reply(
+      "Автоматически перезапуститься не вышло: бот запущен не как systemd-сервис. " +
+        "Перезапустите его тем способом, которым запускали.",
+    );
+  }
 });
 
 // ——— Привязка аккаунтов соцсетей через Zernio ———
