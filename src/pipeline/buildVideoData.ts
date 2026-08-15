@@ -46,9 +46,16 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
   }
 
   const scenes: Scene[] = [];
-  // Ссылка на картинку предыдущей сцены передаётся следующей генерации как
-  // референс — так окружение и палитра держатся из сцены в сцену.
-  let previousSceneUrl: string | undefined;
+  // РАНЬШЕ здесь картинка предыдущей сцены передавалась следующей генерации
+  // как референс — ради единой палитры. Замер присланного ролика показал, чем
+  // это кончается: соседние иллюстрации совпадали на 93% и 77% при медиане 39%
+  // по всем парам. Модель копирует не палитру, а композицию: тот же пейзаж,
+  // та же комната, тот же ноутбук — менялся только предмет на переднем плане.
+  // Тема сцены сменилась, а картинка нет, и ролик выглядит стоящим на месте.
+  //
+  // Между сценами сцепки больше нет: стиль держит STYLE_PROMPT, он для того и
+  // написан. Внутри сцены сцепка ОСТАЛАСЬ — там вторая картинка обязана быть
+  // похожей на первую, они видны почти одновременно.
   // Какие сцены оживляем клипом. Считаем заранее: список зависит от общего
   // числа сцен, а решение нужно уже внутри цикла.
   // Платные генерации — по счётчику /clips. Библиотечные клипы бесплатны и
@@ -104,11 +111,10 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
       : await generateSceneIllustration(
           i,
           buildImagePrompt(scriptScene, undefined, withCharacter),
-          previousSceneUrl,
+          undefined,
           undefined,
           withCharacter,
         );
-    if (illustration) previousSceneUrl = illustration.resultUrl;
     if (mascotOnly) console.log(`Сцена ${i + 1}: маскот во весь кадр, без карточки`);
 
     // Вторая иллюстрация сцены: рисуется от первой, чтобы стиль не разошёлся —
@@ -134,7 +140,6 @@ export async function buildVideoData(brief: string): Promise<VideoData> {
           width: second.imageWidth,
           height: second.imageHeight,
         };
-        previousSceneUrl = second.resultUrl;
         console.log(`Сцена ${i + 1}: вторая картинка — ${scriptScene.swap.scene}`);
       } catch (error) {
         console.warn(

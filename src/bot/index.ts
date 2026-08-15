@@ -407,7 +407,12 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
 
       const images = [...(session.images ?? [])];
       const overlays = [...(session.overlays ?? [])];
-      let previousSceneUrl: string | undefined;
+      // Картинка предыдущей сцены БОЛЬШЕ НЕ передаётся следующей как референс.
+      // Замер присланного ролика: соседние иллюстрации совпадали на 93% и 77%
+      // при медиане 39% по всем парам — модель копировала композицию, а не
+      // палитру, и на смене темы картинка оставалась прежней. Стиль держит
+      // STYLE_PROMPT. Внутри сцены сцепка осталась: вторая картинка обязана
+      // быть похожей на первую, они видны почти одновременно.
       // Сцены без карточки: маскот во весь рост на белом. Картинка им не
       // нужна — рисовать её было бы и тратой денег, и путаницей: она попала
       // бы в согласование, а в ролик не вошла.
@@ -423,29 +428,25 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
           continue;
         }
         // Уже сгенерированные при прошлой попытке сцены пропускаем.
-        if (images[i]) {
-          previousSceneUrl = images[i].resultUrl;
-          continue;
-        }
+        if (images[i]) continue;
         await ctx.reply(`🎨 Сцена ${i + 1} из ${script.scenes.length}…`);
         const withCharacter = sceneWithCharacter(i, script.scenes.length);
         const illustration = await generateSceneIllustration(
           i,
           buildImagePrompt(script.scenes[i], session.styleNotes, withCharacter),
-          previousSceneUrl,
+          undefined,
           session.imageModel,
           withCharacter,
         );
         const { imageFileName, resultUrl } = illustration;
         images[i] = illustration;
-        previousSceneUrl = resultUrl;
         updateSession(chatId, { images });
 
         // Вторая иллюстрация той же сцены: посреди реплики первая уезжает вниз
         // и растворяется, а эта открывается под ней. Рисуем её ПОСЛЕ первой и
-        // от неё же: первая уходит в модель эталоном, поэтому стиль и палитра
-        // не расходятся — а расхождение здесь заметнее, чем между сценами, ведь
-        // картинки видны почти одновременно.
+        // ОТ НЕЁ ЖЕ — это единственное место, где сцепка нужна: обе картинки
+        // видны почти одновременно, и расхождение стиля здесь бросается в
+        // глаза. Между разными сценами такой сцепки, наоборот, быть не должно.
         const swapScene = script.scenes[i].swap?.scene;
         if (swapScene) {
           await ctx.reply(`🔄 Вторая картинка сцены ${i + 1}…`);
@@ -468,7 +469,6 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
               swapImageWidth: second.imageWidth,
               swapImageHeight: second.imageHeight,
             };
-            previousSceneUrl = second.resultUrl;
             updateSession(chatId, { images });
             await ctx.replyWithPhoto(
               new InputFile(path.resolve("public/images", second.imageFileName)),
