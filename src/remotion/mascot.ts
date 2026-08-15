@@ -1,3 +1,9 @@
+import {
+  CARD_TO_TEXT_GAP_PERCENT,
+  REF_HEIGHT,
+  subtitleTopPx,
+} from "./layout";
+
 // Геометрия сцены-маскота: кадр без карточки, персонаж стоит прямо на белом.
 //
 // Это отдельный приём из присланного референса, и он у нас отсутствовал: мы
@@ -16,6 +22,19 @@ export const MASCOT_TOP_PERCENT = 14.4;
 // подогнать обе стороны разом нельзя. Ведём по высоте: она задаёт, насколько
 // крупно читается лицо, а по ширине просто не даём упереться в края кадра.
 export const MASCOT_MAX_WIDTH_PERCENT = 86;
+
+// Ниже этой доли кадра фигура опускаться не должна: там субтитры.
+//
+// В присланном ролике слова «НАШ», «ПОПРОБУЙ», «БЕСПЛАТНО» напечатаны прямо
+// по синему хвосту джина. Это не случайность, а арифметика: фигура кончается
+// на 75.0% высоты (14.4 + 60.6), а верх заглавных букв — на 73.0%
+// (100 − 23 − 77/1920). Пересечение 2% высоты кадра, то есть 38 px на 1920,
+// и оно повторялось бы в каждой сцене с маскотом.
+//
+// У карточек такая защита есть давно (minCardAspect в layout.ts): карточке не
+// дают вытянуться до субтитров. Маскот рисуется в обход неё — здесь то же
+// правило и тот же просвет.
+const MIN_TOP_PERCENT = 6;
 
 // Сколько занимает сам персонаж внутри public/characters/shamil.png: файл
 // собран с полями (scripts/build-character-reference.mjs), и без поправки на
@@ -51,11 +70,32 @@ export function mascotBox(width: number, height: number): MascotBox {
     imageHeight *= k;
   }
 
+  // Теперь опускаем фигуру так, чтобы она не наехала на субтитры.
+  //
+  // Сначала пробуем поднять её выше: размер важнее верхнего отступа — от него
+  // зависит, насколько крупно читается лицо, а над головой всё равно пусто.
+  // Если подъёма не хватает (упёрлись в MIN_TOP_PERCENT), только тогда
+  // уменьшаем саму фигуру.
+  const gap = (CARD_TO_TEXT_GAP_PERCENT / 100) * height;
+  const maxBottom = (subtitleTopPx() / REF_HEIGHT) * height - gap;
+  let figureTop = (MASCOT_TOP_PERCENT / 100) * height;
+  let figureHeight = imageHeight * FIGURE_HEIGHT_SHARE;
+
+  if (figureTop + figureHeight > maxBottom) {
+    figureTop = Math.max((MIN_TOP_PERCENT / 100) * height, maxBottom - figureHeight);
+    if (figureTop + figureHeight > maxBottom) {
+      const k = (maxBottom - figureTop) / figureHeight;
+      imageWidth *= k;
+      imageHeight *= k;
+      figureHeight *= k;
+    }
+  }
+
   // Верх задан для фигуры, а поле над ней внутри картинки тоже надо учесть.
   const padTop = imageHeight * ((1 - FIGURE_HEIGHT_SHARE) * 0.99);
   return {
     width: imageWidth,
     height: imageHeight,
-    top: (MASCOT_TOP_PERCENT / 100) * height - padTop,
+    top: figureTop - padTop,
   };
 }

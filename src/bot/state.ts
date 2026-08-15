@@ -128,6 +128,18 @@ export interface Session {
 interface Store {
   sessions: Record<string, Session>;
   profiles: Record<string, Profile[]>;
+  /**
+   * Темы уже снятых роликов — по чату, новые в начале.
+   *
+   * Нужно, чтобы контент-завод не топтался на одном месте: два ролика подряд
+   * вышли про «нейросети рисуют картинки» и «нейросети делают контент», а для
+   * зрителя это один ролик, снятый дважды. Список уходит в подбор тем как
+   * запрет, а рядом стоит быстрая проверка похожести.
+   *
+   * Живёт вне сессии: /new чистит диалог, а память о снятом обязана
+   * пережить и его, и перезапуск бота.
+   */
+  shotTopics?: Record<string, string[]>;
 }
 
 const STATE_FILE = path.resolve("data/bot-state.json");
@@ -137,15 +149,23 @@ function loadStore(): Store {
   try {
     raw = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
   } catch {
-    return { sessions: {}, profiles: {} };
+    return { sessions: {}, profiles: {}, shotTopics: {} };
   }
 
   if (raw && typeof raw === "object" && "sessions" in raw) {
     const store = raw as Partial<Store>;
-    return { sessions: store.sessions ?? {}, profiles: store.profiles ?? {} };
+    return {
+      sessions: store.sessions ?? {},
+      profiles: store.profiles ?? {},
+      shotTopics: store.shotTopics ?? {},
+    };
   }
   // Старый формат: файл был просто картой сессий. Переносим как есть.
-  return { sessions: (raw as Record<string, Session>) ?? {}, profiles: {} };
+  return {
+    sessions: (raw as Record<string, Session>) ?? {},
+    profiles: {},
+    shotTopics: {},
+  };
 }
 
 const store = loadStore();
@@ -229,4 +249,38 @@ export function deleteProfile(chatId: number, id: string): boolean {
   store.profiles[String(chatId)] = rest;
   persist();
   return true;
+}
+
+
+// Сколько тем помним. Достаточно, чтобы не повториться в пределах пары
+// месяцев ежедневного выпуска, и мало, чтобы список запретов не разрастался
+// в промпте подбора тем.
+const SHOT_TOPICS_KEPT = 60;
+
+/** Темы уже снятых роликов, новые первыми. */
+export function listShotTopics(chatId: number): string[] {
+  return store.shotTopics?.[String(chatId)] ?? [];
+}
+
+/**
+ * Запоминает тему как снятую. Повтор той же строки не плодит дублей — иначе
+ * повторная сборка одного ролика забила бы всю память одной темой.
+ */
+export function rememberShotTopic(chatId: number, topic: string): void {
+  const title = topic.trim();
+  if (!title) return;
+  store.shotTopics ??= {};
+  const key = String(chatId);
+  const kept = (store.shotTopics[key] ?? []).filter(
+    (t) => t.toLowerCase() !== title.toLowerCase(),
+  );
+  store.shotTopics[key] = [title, ...kept].slice(0, SHOT_TOPICS_KEPT);
+  persist();
+}
+
+/** Забыть снятые темы — на случай смены ниши канала. */
+export function forgetShotTopics(chatId: number): void {
+  store.shotTopics ??= {};
+  store.shotTopics[String(chatId)] = [];
+  persist();
 }

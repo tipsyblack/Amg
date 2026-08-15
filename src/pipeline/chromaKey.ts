@@ -16,6 +16,17 @@ const execFileAsync = promisify(execFile);
 // Зелёный выбран не случайно: палитра сцен пастельная, чистого #00FF00 в ней
 // не бывает, поэтому вырезание не съедает части объекта.
 export const KEY_COLOR = "0x00FF00";
+
+// Насколько цвет угла может отличаться от чистого зелёного, чтобы считаться
+// зелёным экраном. 0.18 по нормированному расстоянию RGB — модель редко даёт
+// ровно #00FF00, но и не путает зелёный с чем-то ещё.
+const GREEN_TOLERANCE = 0.18;
+// Насколько углы должны совпадать между собой, чтобы считать фон однотонным.
+const CORNER_TOLERANCE = 0.08;
+// Доля кадра, выше которой считаем, что фон не вырезался вовсе. Промпт просит
+// рисовать предмет С ОТСТУПОМ ОТ КРАЁВ, поэтому объект во весь кадр — это не
+// большой объект, а невырезанный фон.
+const FULL_FRAME_SHARE = 0.92;
 // Насколько далеко от эталонного цвета считать пиксель фоном, и насколько
 // плавно уводить края. Подобрано так, чтобы не оставалось зелёной каймы, но и
 // не выгрызались тени.
@@ -30,6 +41,23 @@ export async function keyOutBackground(
   inFile: string,
   outFile: string,
 ): Promise<{ width: number; height: number }> {
+  // Вырезаем НЕ обязательно зелёный, а тот цвет, который модель реально
+  // положила в фон.
+  //
+  // Промпт требует зелёный экран, но модель его не всегда слушает. В готовом
+  // ролике объект «рука с жестом ок» приехал на ЧЁРНОМ фоне: зелёного в кадре
+  // не было, вырезать было нечего, и чёрный прямоугольник уехал в видео как
+  // есть. Раньше код умел ловить только обратный случай — когда весь кадр
+  // залит зелёным и объекта нет вовсе.
+  //
+  // Поэтому смотрим на углы картинки. Совпали между собой — это фон, и
+  // вырезаем именно его. Зелёный при этом остаётся предпочтительным: despill
+  // снимает зелёный отсвет с краёв объекта, и для других цветов такого шага
+  // нет.
+  const corner = await cornerColor(inFile);
+  const green = corner === undefined || isGreen(corner);
+  const key = green ? KEY_COLOR : hex(corner);
+
   const keyed = `${outFile}.keyed.png`;
   await execFileAsync("ffmpeg", [
     "-y", "-hide_banner", "-loglevel", "error",
@@ -38,18 +66,39 @@ export async function keyOutBackground(
     // despill снимает зелёный отсвет с краёв объекта. Наоборот не работает —
     // despill перекрашивает сам фон, и colorkey уже не находит зелёный.
     "-vf",
-    `colorkey=${KEY_COLOR}:${SIMILARITY}:${BLEND},despill=type=green:mix=0.4:expand=0,format=rgba`,
+    `colorkey=${key}:${SIMILARITY}:${BLEND}` +
+      (green ? ",despill=type=green:mix=0.4:expand=0" : "") +
+      ",format=rgba",
     keyed,
   ]);
 
   const box = await alphaBoundingBox(keyed);
   if (!box) {
-    // Совсем прозрачная картинка означает, что модель залила зелёным весь
+    // Совсем прозрачная картинка означает, что модель залила фоном весь
     // кадр — объекта нет, и накладывать нечего.
     await rm(keyed, { force: true });
     throw new Error(
       "После вырезания фона не осталось изображения: модель, видимо, нарисовала " +
-        "один зелёный фон. Попробуйте перегенерировать объект.",
+        "один фон без предмета. Попробуйте перегенерировать объект.",
+    );
+  }
+
+  // Обратная беда: не вырезалось НИЧЕГО. Промпт просит предмет с отступом от
+  // краёв, поэтому непрозрачный кадр целиком — это не большой предмет, а фон,
+  // который остался на месте. Раньше такой кадр молча уезжал в ролик чёрным
+  // прямоугольником; теперь это ошибка, и бот предложит перерисовать.
+  const size = await imageSize(keyed);
+  if (
+    size &&
+    box.width >= size.width * FULL_FRAME_SHARE &&
+    box.height >= size.height * FULL_FRAME_SHARE
+  ) {
+    await rm(keyed, { force: true });
+    throw new Error(
+      `Фон объекта не вырезался: после обработки непрозрачен весь кадр ` +
+        `(${box.width}×${box.height} из ${size.width}×${size.height}). ` +
+        "Модель нарисовала предмет на фоне, который не удалось отделить. " +
+        "Попробуйте перегенерировать объект.",
     );
   }
 
@@ -121,5 +170,84 @@ export async function alphaBoundingBox(
     y,
     width: Math.min(maxX + pad, width - 1) - x + 1,
     height: Math.min(maxY + pad, height - 1) - y + 1,
+  };
+}
+
+/** Размер картинки в пикселях. */
+async function imageSize(
+  file: string,
+): Promise<{ width: number; height: number } | undefined> {
+  const { stdout } = await execFileAsync("ffprobe", [
+    "-v", "error", "-select_streams", "v:0",
+    "-show_entries", "stream=width,height", "-of", "csv=p=0", file,
+  ]);
+  const [width, height] = stdout.trim().split(",").map(Number);
+  return width && height ? { width, height } : undefined;
+}
+
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/** Нормированное расстояние между цветами: 0 — совпали, 1 — чёрный и белый. */
+export function colorDistance(a: Rgb, b: Rgb): number {
+  return (
+    Math.sqrt(
+      (a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2,
+    ) / (255 * Math.sqrt(3))
+  );
+}
+
+export function isGreen(color: Rgb): boolean {
+  return colorDistance(color, { r: 0, g: 255, b: 0 }) <= GREEN_TOLERANCE;
+}
+
+export function hex(color: Rgb): string {
+  const part = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+  return `0x${part(color.r)}${part(color.g)}${part(color.b)}`;
+}
+
+/**
+ * Цвет фона по углам картинки.
+ *
+ * Берём по одному пикселю из каждого угла с небольшим отступом внутрь: точно
+ * в углу у некоторых моделей встречается кайма от сжатия. Если четыре угла
+ * совпали между собой — это однотонный фон, и его цвет возвращаем. Не
+ * совпали — фон неоднородный, вырезать по цвету нечего, и решение остаётся за
+ * зелёным по умолчанию.
+ */
+export async function cornerColor(file: string): Promise<Rgb | undefined> {
+  const size = await imageSize(file);
+  if (!size) return undefined;
+  const { width, height } = size;
+
+  const { stdout } = await execFileAsync(
+    "ffmpeg",
+    ["-v", "error", "-i", file, "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+    { maxBuffer: 256 * 1024 * 1024, encoding: "buffer" },
+  );
+  const pixels = stdout as unknown as Buffer;
+
+  const inset = Math.max(2, Math.round(Math.min(width, height) * 0.02));
+  const at = (x: number, y: number): Rgb => {
+    const i = (y * width + x) * 4;
+    return { r: pixels[i], g: pixels[i + 1], b: pixels[i + 2] };
+  };
+  const corners = [
+    at(inset, inset),
+    at(width - 1 - inset, inset),
+    at(inset, height - 1 - inset),
+    at(width - 1 - inset, height - 1 - inset),
+  ];
+
+  for (let i = 1; i < corners.length; i++) {
+    if (colorDistance(corners[0], corners[i]) > CORNER_TOLERANCE) return undefined;
+  }
+  return {
+    r: corners.reduce((s, c) => s + c.r, 0) / corners.length,
+    g: corners.reduce((s, c) => s + c.g, 0) / corners.length,
+    b: corners.reduce((s, c) => s + c.b, 0) / corners.length,
   };
 }

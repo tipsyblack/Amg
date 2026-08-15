@@ -43,6 +43,8 @@ bot.command('stems', (ctx) => { hits.push(['stems', ctx.match]); });
 bot.command('music', (ctx) => { hits.push(['music', ctx.match]); });
 bot.command('addmusic', (ctx) => { hits.push(['addmusic', ctx.match]); });
 bot.command('autopilot', (ctx) => { hits.push(['autopilot', ctx.match]); });
+bot.command('topics', (ctx) => { hits.push(['topics', ctx.match]); });
+bot.command('topicsreset', (ctx) => { hits.push(['topicsreset', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -235,5 +237,15 @@ check('«on» включает', parseAutopilotArg('on', false) === true);
 check('«вкл» включает', parseAutopilotArg('вкл', false) === true);
 check('«ON» с заглавными включает', parseAutopilotArg('ON', false) === true);
 check('мусор трактуется как выключить', parseAutopilotArg('пиво', true) === false);
+
+// Темы дня. /topics и /topicsreset делят префикс — ровно та пара, на которой
+// раньше ломались /library с /length и /stems с /start. Проверяем на настоящем
+// grammY, а не рассуждением.
+await bot.handleUpdate(upd('/topics'));
+check('/topics не перехвачен другой командой', hits.at(-1)?.[0] === 'topics', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/topicsreset'));
+check('/topicsreset не достался /topics', hits.at(-1)?.[0] === 'topicsreset', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/topics', [{ type: 'code', offset: 0, length: 7 }]));
+check('/topics распознан и скопированным как код', hits.at(-1)?.[0] === 'topics');
 
 process.exit(fails === 0 ? 0 : 1);

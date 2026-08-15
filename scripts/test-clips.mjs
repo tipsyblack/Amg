@@ -482,14 +482,36 @@ const FIGURE_TOP_SHARE = 0.081;   // поле над фигурой внутри
 const figureTop = box.top + box.height * FIGURE_TOP_SHARE;
 const figureHeight = box.height * 0.918;
 check(
-  `верх фигуры на ${(100 * figureTop / 1920).toFixed(1)}% высоты`,
-  Math.abs((100 * figureTop) / 1920 - MASCOT_TOP_PERCENT) < 1.5,
-);
-check(
   `высота фигуры ${(100 * figureHeight / 1920).toFixed(1)}% кадра`,
   Math.abs((100 * figureHeight) / 1920 - MASCOT_HEIGHT_PERCENT) < 1.5,
 );
 check("фигура не упирается в края кадра", box.width * 0.812 < 1080 * 0.9);
+
+// Главное требование к положению — НЕ наехать на субтитры. В присланном
+// ролике слова «НАШ», «ПОПРОБУЙ», «БЕСПЛАТНО» были напечатаны прямо по синему
+// хвосту джина: фигура кончалась на 75.0% высоты, а буквы начинались на 73.0%.
+// Поэтому фигура теперь поднимается настолько, насколько нужно, а измеренный
+// верх (MASCOT_TOP_PERCENT) — только исходная точка, от которой считаем.
+const { subtitleTopPx, CARD_TO_TEXT_GAP_PERCENT } = await import(
+  "../src/remotion/layout.ts"
+);
+const subTop = subtitleTopPx();
+check(
+  `низ фигуры на ${(100 * (figureTop + figureHeight) / 1920).toFixed(1)}% — выше субтитров (${(100 * subTop / 1920).toFixed(1)}%)`,
+  figureTop + figureHeight <= subTop,
+  `зазор ${Math.round(subTop - figureTop - figureHeight)} px`,
+);
+check(
+  "и с тем же просветом, что у карточки",
+  subTop - (figureTop + figureHeight) >= (CARD_TO_TEXT_GAP_PERCENT / 100) * 1920 - 1,
+);
+check(
+  "фигура поднята, а не уменьшена — размер важнее верхнего отступа",
+  Math.abs((100 * figureHeight) / 1920 - MASCOT_HEIGHT_PERCENT) < 1.5 &&
+    (100 * figureTop) / 1920 < MASCOT_TOP_PERCENT,
+  `верх ${(100 * figureTop / 1920).toFixed(1)}% вместо ${MASCOT_TOP_PERCENT}%`,
+);
+check("но не выше разумного поля сверху", (100 * figureTop) / 1920 >= 6);
 check(
   "на другом разрешении доли те же",
   Math.abs(mascotBox(2160, 3840).height / 3840 - box.height / 1920) < 0.001,

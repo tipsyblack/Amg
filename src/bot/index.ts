@@ -48,6 +48,12 @@ import {
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import {
+  isFreshTopic,
+  suggestNewsTopics,
+  topicBrief,
+  type NewsTopic,
+} from "../pipeline/newsTopics";
+import {
   createInstantVoiceClone,
   downloadVoiceSample,
   editInstantVoiceClone,
@@ -125,9 +131,12 @@ import { autopilotContinues, parseAutopilotArg } from "./autopilot";
 import { extractStyleNotes } from "./referenceStyle";
 import {
   deleteProfile,
+  forgetShotTopics,
   getProfile,
   getSession,
   listProfiles,
+  listShotTopics,
+  rememberShotTopic,
   resetSession,
   saveProfile,
   updateSession,
@@ -938,6 +947,7 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
 bot.command(["start", "help"], async (ctx) => {
   await ctx.reply(
     "Бот собирает короткие вертикальные ролики с Шамилем.\n\n" +
+      "/topics — темы дня из мира нейросетей (повестка + защита от повторов)\n" +
       "/new — начать новый ролик\n" +
       "/profiles — профили продуктов (роль + стиль референса)\n" +
       "/newprofile — создать профиль\n" +
@@ -958,10 +968,13 @@ bot.command(["start", "help"], async (ctx) => {
       "/clonemore — добавить материал в уже созданный клон\n" +
       "/stems — разобрать чужую дорожку: что играет под речью\n" +
       "/autopilot — генерация без подтверждений на каждом шаге\n" +
+      "/topicsreset — забыть снятые темы (смена ниши канала)\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
       "картинки с перегенерацией → озвучка и сборка.\n\n" +
+      "Для потока проще: /topics → выбрать тему кнопкой → дальше как обычно. " +
+      "Снятые темы бот помнит и второй раз не предлагает.\n\n" +
       `Автопилот: ${autopilotOn(ctx.chat.id) ? "включён" : "выключен"}\n` +
       `Версия кода: ${botVersion}`,
   );
@@ -2005,6 +2018,133 @@ bot.callbackQuery("music_like", async (ctx) => {
  * как раз то, из-за чего ролик может оказаться бесполезным при всех пройденных
  * проверках. Поэтому текст сообщения об этом и говорит: решение осознанное.
  */
+// Темы дня: что происходит в мире нейросетей прямо сейчас.
+//
+// Контент-завод на одной теме перестаёт собирать охваты — два ролика подряд
+// вышли про то, как нейросети делают картинки и контент, и для зрителя это
+// один ролик, снятый дважды. Здесь тема берётся из новостей, а уже снятые
+// уходят в запрос запретом.
+//
+// Предложенные темы держим в памяти процесса, а не в состоянии: они живут до
+// нажатия кнопки, и переживать перезапуск бота им незачем.
+const topicOffers = new Map<number, NewsTopic[]>();
+
+async function sendTopics(ctx: Context, chatId: number): Promise<void> {
+  const used = listShotTopics(chatId);
+  await ctx.reply(
+    used.length > 0
+      ? `🗞 Смотрю повестку. Уже снятые темы (${used.length}) исключаю из подбора…`
+      : "🗞 Смотрю, что сегодня в мире нейросетей…",
+  );
+
+  let result;
+  try {
+    result = await suggestNewsTopics(
+      used,
+      undefined,
+      true,
+      getSession(chatId).scriptModel ?? config.openRouterModel,
+    );
+  } catch (error) {
+    await ctx.reply(
+      `Не вышло подобрать темы: ${
+        error instanceof Error ? error.message : String(error)
+      }\n\nТему можно задать и руками: /new`,
+    );
+    return;
+  }
+
+  // Модель может предложить то же самое другими словами — отсеиваем до того,
+  // как на теме будут потрачены сценарий и картинки.
+  const fresh = result.topics.filter((t) => isFreshTopic(t.title, used));
+  const dropped = result.topics.length - fresh.length;
+  const offer = fresh.length > 0 ? fresh : result.topics;
+  topicOffers.set(chatId, offer);
+
+  const keyboard = new InlineKeyboard();
+  offer.forEach((topic, i) => {
+    keyboard.text(`${i + 1}. ${topic.title.slice(0, 48)}`, `topic_${i}`).row();
+  });
+  keyboard.text("Другие темы", "topic_more");
+
+  const lines = offer.map(
+    (t, i) =>
+      `${i + 1}. ${t.title}` +
+      (t.what ? `\n    ${t.what}` : "") +
+      (t.why ? `\n    Чем цепляет: ${t.why}` : ""),
+  );
+  await ctx.reply(
+    (result.webSearchUnavailable
+      ? "⚠️ Веб-поиск не сработал — темы из памяти модели, за свежесть не ручаюсь.\n\n"
+      : "") +
+      lines.join("\n\n") +
+      (dropped > 0
+        ? `\n\nЕщё ${dropped} — про то, что уже снимали, их убрал.`
+        : "") +
+      (fresh.length === 0 && result.topics.length > 0
+        ? "\n\n⚠️ Все предложенные темы похожи на уже снятые. Показываю как есть — " +
+          "возможно, пора сменить нишу или почистить память: /topicsreset"
+        : ""),
+    { reply_markup: keyboard },
+  );
+}
+
+bot.command("topics", async (ctx) => {
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  await sendTopics(ctx, ctx.chat.id);
+});
+
+bot.command("topicsreset", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const had = listShotTopics(chatId).length;
+  forgetShotTopics(chatId);
+  await ctx.reply(
+    had === 0
+      ? "Память тем и так пуста."
+      : `Забыл ${had} снятых тем. Теперь подбор их не исключает.`,
+  );
+});
+
+bot.callbackQuery(/^topic_(\d+)$/, async (ctx) => {
+  const chatId = ctx.chat!.id;
+  const topic = topicOffers.get(chatId)?.[Number(ctx.match![1])];
+  await ctx.answerCallbackQuery();
+  if (!topic) {
+    await ctx.reply("Список тем устарел — соберите заново: /topics");
+    return;
+  }
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+
+  const session = getSession(chatId);
+  // Роль из профиля сохраняем: тема дня ложится ПОВЕРХ неё, как и ручная тема.
+  const base = session.profileId ? session.brief ?? "" : "";
+  const brief = base
+    ? `${base}\n\nТема этого ролика: ${topicBrief(topic)}`
+    : topicBrief(topic);
+  updateSession(chatId, { brief, step: "idle" });
+  // Запоминаем СРАЗУ, а не после удачной сборки: если ролик не вышел, тема всё
+  // равно уже обдумана, и предлагать её завтра снова незачем. Вернуть можно
+  // через /topicsreset.
+  rememberShotTopic(chatId, topic.title);
+  await ctx.reply(`Тема: ${topic.title}\n\nПишу сценарий…`);
+  await runScriptStep(ctx, chatId);
+});
+
+bot.callbackQuery("topic_more", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  await sendTopics(ctx, ctx.chat!.id);
+});
+
 bot.command("autopilot", async (ctx) => {
   const chatId = ctx.chat.id;
   const next = parseAutopilotArg(ctx.match, autopilotOn(chatId));

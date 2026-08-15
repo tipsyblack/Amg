@@ -23,6 +23,16 @@ import {
   cardAspect,
 } from "./layout";
 import { mascotBox } from "./mascot";
+
+// Дыхание маскота: период и размах. Период длиннее, чем у покачивания
+// объектов (1.33 с) — персонаж крупный, и быстрое колебание на нём читалось бы
+// как дрожь, а не как дыхание.
+const MASCOT_BREATH_SECONDS = 3.2;
+// Размах по вертикали в процентах высоты кадра и добавка к масштабу.
+// Держим на грани заметности: движение должно ощущаться, а не бросаться в
+// глаза — иначе персонаж начинает плавать по кадру.
+const MASCOT_BREATH_PERCENT = 0.45;
+const MASCOT_BREATH_SCALE = 0.006;
 import { MIX } from "./mix";
 import { coversFrame, sceneMotion } from "./transitions";
 import type { Overlay as OverlayData } from "../types";
@@ -363,6 +373,24 @@ export const Scene: React.FC<SceneProps> = ({
   // входа и ухода берём то же самое — оно применяется к фигуре вместо
   // карточки, поэтому стыки читаются как обычно.
   const mascot = mascotOnly ? mascotBox(width, height) : undefined;
+  // Тихое дыхание маскота.
+  //
+  // Движение входа и ухода у него есть и всегда было — на замере присланного
+  // ролика появление джина в финале даёт 37-42 единицы покадровой разницы
+  // против 7-15 у хука. А вот МЕЖДУ входом и уходом он стоит совершенно
+  // неподвижно: 2.0 единицы, то есть кадр не меняется вовсе, и три секунды
+  // подряд зритель смотрит на картинку. Ровно та же беда была у появляющихся
+  // объектов, и лечится она тем же: замерший персонаж читается как наклейка,
+  // а не как герой.
+  //
+  // Амплитуда нарочно маленькая. Это не анимация персонажа (её нам взять
+  // неоткуда — эталон один-единственный PNG), а признак жизни: плавное
+  // покачивание вверх-вниз с едва заметным изменением масштаба, как дыхание.
+  const breath = mascotOnly
+    ? Math.sin((frame / fps / MASCOT_BREATH_SECONDS) * Math.PI * 2)
+    : 0;
+  const breathY = breath * MASCOT_BREATH_PERCENT * 0.01 * height;
+  const breathScale = 1 + breath * MASCOT_BREATH_SCALE;
   const card = mascot ? (
     <Img
       src={staticFile("characters/shamil.png")}
@@ -373,9 +401,9 @@ export const Scene: React.FC<SceneProps> = ({
         height: mascot.height,
         opacity: cardOpacity,
         transform:
-          `translate(${cardX}px, ${cardY}px) ` +
+          `translate(${cardX}px, ${cardY + breathY}px) ` +
           `rotate(${cardRotate}deg) skewY(${crumpleSkew}deg) ` +
-          `scale(${cardScale * squeezeX}, ${cardScale})`,
+          `scale(${cardScale * squeezeX * breathScale}, ${cardScale * breathScale})`,
       }}
     />
   ) : (

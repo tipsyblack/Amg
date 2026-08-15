@@ -86,9 +86,71 @@ try {
   await keyOutBackground(allGreen, path.join(dir, "nope.png"));
   check("должно было упасть", false);
 } catch (e) {
-  check("объяснено, что объекта нет", e.message.includes("один зелёный фон"), e.message.split("\n")[0]);
+  check("объяснено, что объекта нет", e.message.includes("один фон без предмета"), e.message.split("\n")[0]);
 }
 check("пустая картинка не даёт рамку", (await alphaBoundingBox(allGreen)) !== undefined || true);
+
+console.log("\n=== фон не зелёный: вырезаем тот, что нарисован ===");
+// Ровно тот случай, что вышел в готовом ролике: объект «рука с жестом ок»
+// приехал на ЧЁРНОМ фоне. Зелёного в кадре не было, вырезать было нечего, и
+// чёрный прямоугольник уехал в видео как есть.
+const blackBg = path.join(dir, "black.png");
+execFileSync("ffmpeg", [
+  "-y", "-hide_banner", "-loglevel", "error",
+  "-f", "lavfi", "-i", "color=c=black:s=600x600:d=1",
+  "-vf", "drawbox=x=190:y=130:w=180:h=180:color=0x3366E0@1:t=fill",
+  "-frames:v", "1", blackBg,
+]);
+const blackOut = path.join(dir, "black-alpha.png");
+const blackBox = await keyOutBackground(blackBg, blackOut);
+check(
+  "чёрный фон вырезан, остался предмет",
+  Math.abs(blackBox.width - 188) <= 6 && Math.abs(blackBox.height - 188) <= 6,
+  `${blackBox.width}×${blackBox.height} при предмете 180×180`,
+);
+const blackRaw = execFileSync(
+  "ffmpeg",
+  ["-v", "error", "-i", blackOut, "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+  { maxBuffer: 64 * 1024 * 1024 },
+);
+const bAlpha = (x, y) => blackRaw[(y * blackBox.width + x) * 4 + 3];
+check("угол стал прозрачным", bAlpha(1, 1) < 40, `альфа ${bAlpha(1, 1)}`);
+check(
+  "предмет остался непрозрачным",
+  bAlpha(Math.floor(blackBox.width / 2), Math.floor(blackBox.height / 2)) > 200,
+);
+
+console.log("\n=== фон пёстрый: вырезать нечего, но и молчать нельзя ===");
+// Если фон не однотонный, цвет угла ни о чём не говорит. Раньше такой кадр
+// уходил в ролик как есть — прямоугольником поверх картинки сцены. Теперь это
+// ошибка, и бот предложит перерисовать объект.
+const busy = path.join(dir, "busy.png");
+execFileSync("ffmpeg", [
+  "-y", "-hide_banner", "-loglevel", "error",
+  "-f", "lavfi", "-i", "testsrc=s=600x600:d=1",
+  "-frames:v", "1", busy,
+]);
+try {
+  await keyOutBackground(busy, path.join(dir, "busy-out.png"));
+  check("должно было упасть", false);
+} catch (e) {
+  check("сказано, что фон не вырезался", /не вырезался/.test(e.message), e.message.split("\n")[0]);
+}
+
+console.log("\n=== определение цвета фона ===");
+const { cornerColor, isGreen, colorDistance } = await import(
+  "../src/pipeline/chromaKey.ts"
+);
+const cGreen = await cornerColor(green);
+check("у зелёного кадра углы зелёные", cGreen !== undefined && isGreen(cGreen), JSON.stringify(cGreen));
+const cBlack = await cornerColor(blackBg);
+check("у чёрного — чёрные и не зелёные", cBlack !== undefined && !isGreen(cBlack), JSON.stringify(cBlack));
+check("у пёстрого углы не совпадают", (await cornerColor(busy)) === undefined);
+check("одинаковые цвета совпадают", colorDistance({ r: 10, g: 20, b: 30 }, { r: 10, g: 20, b: 30 }) === 0);
+check(
+  "чёрный и белый — максимально далеки",
+  Math.abs(colorDistance({ r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }) - 1) < 1e-9,
+);
 
 console.log("\n=== момент появления по слову ===");
 const line = "Поэтому ставят радиатор размером с полспутника, он сбрасывает тепло";
