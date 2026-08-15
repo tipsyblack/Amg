@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -47,6 +48,18 @@ import {
 } from "../pipeline/generateOverlay";
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
+import {
+  buildPostBody,
+  createPost,
+  getPost,
+  parseWhen,
+  postStateLines,
+  publishableTargets,
+  retryPost,
+  uploadVideo,
+  validatePost,
+  isSettled,
+} from "../pipeline/zernioPost";
 import {
   accountLine,
   connectUrl,
@@ -153,6 +166,10 @@ import { extractStyleNotes } from "./referenceStyle";
 import {
   deleteProfile,
   forgetShotTopics,
+  getLastPostId,
+  getLastVideo,
+  rememberPostId,
+  rememberVideo,
   getProfile,
   getSession,
   listProfiles,
@@ -894,6 +911,10 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       }
     }
 
+    // Для соцсетей берём ролик ДО сжатия под Telegram: сжатие нужно только
+    // чтобы файл пролез в чат, а на площадку надо отдавать лучшее, что есть.
+    const publishFile = videoFile;
+
     const renderedBytes = await fileSizeBytes(videoFile);
     if (renderedBytes > SAFE_VIDEO_BYTES) {
       await ctx.reply(
@@ -951,6 +972,17 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         "Новый ролик — /new",
       ].filter(Boolean);
       await ctx.reply(notes.join(" "));
+      rememberVideo(chatId, {
+        file: publishFile,
+        title: script.title,
+        description,
+        at: new Date().toISOString(),
+      });
+      if (isZernioConfigured()) {
+        await ctx.reply(
+          "Опубликовать: /publish — сразу, /schedule 18:00 — на время.",
+        );
+      }
     } catch (error) {
       // Видео уже отправлено — из-за описания ролик терять нельзя.
       await ctx.reply(
@@ -993,6 +1025,10 @@ bot.command(["start", "help"], async (ctx) => {
       "/accounts — подключённые аккаунты соцсетей (Zernio)\n" +
       "/link — привязать аккаунт соцсети\n" +
       "/unlink — отвязать аккаунт\n" +
+      "/publish — опубликовать последний ролик сразу\n" +
+      "/schedule 18:00 — опубликовать по времени\n" +
+      "/poststatus — что с последней публикацией\n" +
+      "/retrypost — повторить неудачные площадки\n" +
       "/zprofiles — профили Zernio\n" +
       "/keys — какие ключи API заданы на сервере\n" +
       "/setkey — задать ключ прямо из чата (без ssh)\n" +
@@ -2303,6 +2339,186 @@ bot.command("restart", async (ctx) => {
       "Автоматически перезапуститься не вышло: бот запущен не как systemd-сервис. " +
         "Перезапустите его тем способом, которым запускали.",
     );
+  }
+});
+
+// ——— Публикация ролика в соцсети ———
+//
+// Порядок один и тот же для «сразу» и «на время»: берём последний собранный
+// ролик, заливаем файл, прогоняем через проверку форматов Zernio и только
+// потом создаём пост. Проверка стоит ДО заливки на площадку намеренно: отказ
+// по формату после публикации разгребать дороже.
+
+async function publishFlow(
+  ctx: Context,
+  chatId: number,
+  when: { publishNow: true } | { scheduledFor: string; timezone: string },
+): Promise<void> {
+  const video = getLastVideo(chatId);
+  if (!video) {
+    await ctx.reply(
+      "Публиковать нечего: собранного ролика нет. Сделайте ролик — /topics или /new.",
+    );
+    return;
+  }
+  if (!existsSync(video.file)) {
+    await ctx.reply(
+      `Файл ролика не найден на сервере (${path.basename(video.file)}). ` +
+        "Скорее всего, папка out очищена — соберите ролик заново.",
+    );
+    return;
+  }
+
+  let targets;
+  try {
+    const profileId = await resolveProfileId();
+    const accounts = await listAccounts(profileId);
+    targets = publishableTargets(accounts);
+    if (targets.length === 0) {
+      await ctx.reply(
+        accounts.length === 0
+          ? "Нет подключённых аккаунтов. Подключить: /link"
+          : "Все подключённые аккаунты требуют повторной привязки: /link",
+      );
+      return;
+    }
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+    return;
+  }
+
+  const where = targets.map((t) => platformTitle(t.platform)).join(", ");
+  await ctx.reply(`Публикую «${video.title}» в: ${where}\n\nЗаливаю файл…`);
+
+  try {
+    const url = await uploadVideo(video.file);
+    const body = buildPostBody(video, url, targets, when);
+
+    // Прогон без публикации: их проверка знает пределы площадок лучше, чем
+    // любые наши зашитые числа, и всегда свежее.
+    try {
+      const { errors, warnings } = await validatePost(body);
+      if (errors.length > 0) {
+        await ctx.reply(
+          "Проверка форматов не пропустила:\n\n" +
+            errors
+              .map((e) => `• ${e.platform ? `${platformTitle(e.platform)}: ` : ""}${e.message}`)
+              .join("\n") +
+            "\n\nПубликацию не начинал.",
+        );
+        return;
+      }
+      if (warnings.length > 0) {
+        await ctx.reply(
+          "Замечания (публикую всё равно):\n" +
+            warnings
+              .map((w) => `• ${w.platform ? `${platformTitle(w.platform)}: ` : ""}${w.message}`)
+              .join("\n"),
+        );
+      }
+    } catch (error) {
+      // Проверка — подстраховка, а не условие. Её сбой не повод не публиковать,
+      // но и молчать о нём нельзя.
+      await ctx.reply(
+        `Проверку форматов сделать не вышло (${
+          error instanceof Error ? error.message : String(error)
+        }) — публикую без неё.`,
+      );
+    }
+
+    const state = await createPost(video, url, targets, when);
+    rememberPostId(chatId, state.id);
+
+    if ("scheduledFor" in when) {
+      const at = new Date(when.scheduledFor).toLocaleString("ru-RU", {
+        timeZone: when.timezone,
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+      await ctx.reply(
+        `📅 Запланировано на ${at} (${when.timezone}).\n\n` +
+          "Состояние — /poststatus",
+      );
+      return;
+    }
+
+    await ctx.reply(
+      postStateLines(state, platformTitle).join("\n\n") +
+        (isSettled(state)
+          ? ""
+          : "\n\nЧасть площадок ещё публикует — /poststatus"),
+    );
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+  }
+}
+
+bot.command("publish", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  await publishFlow(ctx, ctx.chat.id, { publishNow: true });
+});
+
+bot.command("schedule", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  const when = parseWhen(ctx.match ?? "");
+  if ("error" in when) {
+    await ctx.reply(
+      `${when.error}\n\nВремя понимается по часовому поясу канала: ${config.postTimezone}`,
+    );
+    return;
+  }
+  await publishFlow(ctx, ctx.chat.id, when);
+});
+
+bot.command("poststatus", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  const postId = getLastPostId(ctx.chat.id);
+  if (!postId) {
+    await ctx.reply("Постов ещё не было. Опубликовать: /publish");
+    return;
+  }
+  try {
+    const state = await getPost(postId);
+    const failed = state.platforms.filter((p) => p.status === "failed");
+    await ctx.reply(
+      `Пост: ${state.status}` +
+        (state.scheduledFor
+          ? ` (на ${new Date(state.scheduledFor).toLocaleString("ru-RU", {
+              timeZone: config.postTimezone,
+              dateStyle: "short",
+              timeStyle: "short",
+            })})`
+          : "") +
+        "\n\n" +
+        postStateLines(state, platformTitle).join("\n\n") +
+        (failed.length > 0 ? "\n\nПовторить неудачные — /retrypost" : ""),
+    );
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+  }
+});
+
+bot.command("retrypost", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  const postId = getLastPostId(ctx.chat.id);
+  if (!postId) {
+    await ctx.reply("Повторять нечего: постов ещё не было.");
+    return;
+  }
+  await ctx.reply("Повторяю публикацию…");
+  try {
+    const state = await retryPost(postId);
+    await ctx.reply(postStateLines(state, platformTitle).join("\n\n"));
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
   }
 });
 

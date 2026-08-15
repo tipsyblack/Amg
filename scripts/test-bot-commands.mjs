@@ -51,6 +51,11 @@ bot.command('accounts', (ctx) => { hits.push(['accounts', ctx.match]); });
 bot.command('keys', (ctx) => { hits.push(['keys', ctx.match]); });
 bot.command('setkey', (ctx) => { hits.push(['setkey', ctx.match]); });
 bot.command('restart', (ctx) => { hits.push(['restart', ctx.match]); });
+bot.command('publish', (ctx) => { hits.push(['publish', ctx.match]); });
+bot.command('schedule', (ctx) => { hits.push(['schedule', ctx.match]); });
+bot.command('poststatus', (ctx) => { hits.push(['poststatus', ctx.match]); });
+bot.command('retrypost', (ctx) => { hits.push(['retrypost', ctx.match]); });
+bot.command('profiles', (ctx) => { hits.push(['profiles', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -269,6 +274,21 @@ check('/setkey распознан', hits.at(-1)?.[0] === 'setkey');
 check('аргумент дошёл целиком', hits.at(-1)?.[1] === 'ZERNIO_API_KEY zk_секрет', String(hits.at(-1)?.[1]));
 await bot.handleUpdate(upd('/restart'));
 check('/restart распознан', hits.at(-1)?.[0] === 'restart');
+
+// Публикация. /publish и /poststatus рядом с /profiles и /post-чем-угодно —
+// проверяем, что ничего не перехватывает друг друга.
+await bot.handleUpdate(upd('/publish'));
+check('/publish распознан', hits.at(-1)?.[0] === 'publish', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/schedule 18:00'));
+check('/schedule получил время', hits.at(-1)?.[0] === 'schedule' && hits.at(-1)?.[1] === '18:00', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/schedule завтра 09:30'));
+check('и «завтра 09:30» целиком', hits.at(-1)?.[1] === 'завтра 09:30', String(hits.at(-1)?.[1]));
+await bot.handleUpdate(upd('/poststatus'));
+check('/poststatus не достался /publish', hits.at(-1)?.[0] === 'poststatus');
+await bot.handleUpdate(upd('/retrypost'));
+check('/retrypost распознан', hits.at(-1)?.[0] === 'retrypost');
+await bot.handleUpdate(upd('/profiles'));
+check('/profiles не перехвачен /publish', hits.at(-1)?.[0] === 'profiles');
 
 // Кнопки отвязки аккаунта: «Отмена» не должна попадать в обработчик,
 // который ждёт id аккаунта. Раньше она называлась zunlink_cancel и попадала —

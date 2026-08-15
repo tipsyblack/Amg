@@ -140,6 +140,24 @@ interface Store {
    * пережить и его, и перезапуск бота.
    */
   shotTopics?: Record<string, string[]>;
+  /**
+   * Последний собранный ролик — то, что можно опубликовать.
+   *
+   * Живёт вне сессии намеренно: /new чистит диалог, а готовый ролик остаётся
+   * готовым. Иначе опубликовать вчерашнее было бы нечем.
+   */
+  lastVideo?: Record<string, LastVideo>;
+  /** Последний пост в соцсети: по нему смотрим состояние и повторяем. */
+  lastPostId?: Record<string, string>;
+}
+
+export interface LastVideo {
+  /** Путь к файлу НА СЕРВЕРЕ — в качестве для площадок, не сжатом под Telegram. */
+  file: string;
+  title: string;
+  description: string;
+  /** Когда собран, ISO. */
+  at: string;
 }
 
 const STATE_FILE = path.resolve("data/bot-state.json");
@@ -149,7 +167,7 @@ function loadStore(): Store {
   try {
     raw = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
   } catch {
-    return { sessions: {}, profiles: {}, shotTopics: {} };
+    return { sessions: {}, profiles: {}, shotTopics: {}, lastVideo: {}, lastPostId: {} };
   }
 
   if (raw && typeof raw === "object" && "sessions" in raw) {
@@ -158,6 +176,8 @@ function loadStore(): Store {
       sessions: store.sessions ?? {},
       profiles: store.profiles ?? {},
       shotTopics: store.shotTopics ?? {},
+      lastVideo: store.lastVideo ?? {},
+      lastPostId: store.lastPostId ?? {},
     };
   }
   // Старый формат: файл был просто картой сессий. Переносим как есть.
@@ -165,6 +185,8 @@ function loadStore(): Store {
     sessions: (raw as Record<string, Session>) ?? {},
     profiles: {},
     shotTopics: {},
+    lastVideo: {},
+    lastPostId: {},
   };
 }
 
@@ -283,4 +305,26 @@ export function forgetShotTopics(chatId: number): void {
   store.shotTopics ??= {};
   store.shotTopics[String(chatId)] = [];
   persist();
+}
+
+
+/** Запоминает собранный ролик как готовый к публикации. */
+export function rememberVideo(chatId: number, video: LastVideo): void {
+  store.lastVideo ??= {};
+  store.lastVideo[String(chatId)] = video;
+  persist();
+}
+
+export function getLastVideo(chatId: number): LastVideo | undefined {
+  return store.lastVideo?.[String(chatId)];
+}
+
+export function rememberPostId(chatId: number, postId: string): void {
+  store.lastPostId ??= {};
+  store.lastPostId[String(chatId)] = postId;
+  persist();
+}
+
+export function getLastPostId(chatId: number): string | undefined {
+  return store.lastPostId?.[String(chatId)];
 }
