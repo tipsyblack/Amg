@@ -2184,22 +2184,25 @@ bot.callbackQuery("topic_more", async (ctx) => {
 // только при заданном TELEGRAM_ALLOWED_CHAT_ID — иначе бот открыт всем, кто
 // его найдёт, и правка ключей из чата была бы дырой, а не удобством.
 
-function keyEditingBlocked(): string | undefined {
+function keyEditingBlocked(chatId: number): string | undefined {
   if (!process.env.TELEGRAM_ALLOWED_CHAT_ID) {
+    // Chat id печатаем прямо здесь. Раньше в этом сообщении стояло «смотрите
+    // /diag», а /diag его не показывает вовсе — человек оставался с задачей
+    // «узнайте число» без способа его узнать.
     return (
       "Правка ключей из чата выключена: не задан TELEGRAM_ALLOWED_CHAT_ID.\n\n" +
       "Пока он пуст, бот отвечает любому, кто его найдёт, — и любой мог бы " +
       "переписать ключи. Задайте его на сервере один раз (это тот самый случай, " +
-      "когда без ssh не обойтись), после чего остальные ключи можно будет " +
-      "менять отсюда.\n\n" +
-      `Ваш chat id: смотрите /diag`
+      "когда без ssh не обойтись), после чего остальные ключи меняются отсюда.\n\n" +
+      `Вписать в .env на сервере:\nTELEGRAM_ALLOWED_CHAT_ID=${chatId}\n\n` +
+      "Потом: systemctl restart amg-bot"
     );
   }
   return undefined;
 }
 
 bot.command("keys", async (ctx) => {
-  const blocked = keyEditingBlocked();
+  const blocked = keyEditingBlocked(ctx.chat.id);
   if (blocked) {
     await ctx.reply(blocked);
     return;
@@ -2220,7 +2223,7 @@ bot.command("keys", async (ctx) => {
 });
 
 bot.command("setkey", async (ctx) => {
-  const blocked = keyEditingBlocked();
+  const blocked = keyEditingBlocked(ctx.chat.id);
   if (blocked) {
     await ctx.reply(blocked);
     return;
