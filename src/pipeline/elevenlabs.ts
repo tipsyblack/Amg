@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import type { Caption } from "@remotion/captions";
 import { config } from "./config";
+import { speechSpeed } from "./speech";
 import { resolveVoiceId } from "./voices";
 import { charactersToWords, type AlignmentPayload } from "./wordTimings";
 
@@ -103,6 +104,15 @@ export async function synthesizeSpeechDirect(
         similarity_boost: config.ttsSimilarityBoost,
         style: config.ttsStyle,
         use_speaker_boost: config.ttsSpeakerBoost,
+        // Скорость речи. Раньше её тут не было вовсе: настройка уходила
+        // только через прокси Kie.ai, а единая озвучка идёт прямым путём —
+        // и говорила всегда с обычной скоростью, что бы ни стояло в .env.
+        //
+        // Важно, что ускоряет САМ синтезатор, а не мы постфактум: тайминги
+        // слов приходят уже пересчитанными, и субтитры остаются на месте.
+        // Ускорение через ffmpeg этого не даёт — там пришлось бы
+        // пересчитывать выравнивание руками и надеяться, что не разъедется.
+        speed: speechSpeed(config.ttsSpeed),
       },
     }),
   });

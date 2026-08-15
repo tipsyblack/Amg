@@ -1,0 +1,82 @@
+/**
+ * Скорость речи: одно место, где она понимается и ограничивается.
+ *
+ * Зачем отдельным файлом: скорость влияет на две разные вещи — на сам синтез
+ * и на бюджет слов сценария. Если ускорить речь и не тронуть бюджет, ролик
+ * станет короче лимита, и мы просто потеряем секунды, за которые могли бы
+ * что-то рассказать.
+ */
+
+// Пределы. ElevenLabs в SDK описывает `speed` без диапазона («меньше 1 —
+// медленнее, больше — быстрее»), а числовые границы лежат в документации,
+// которая из среды разработки недоступна. Поэтому границы здесь — наша
+// осторожность, а не выверенный предел сервиса: за ними речь заметно «плывёт»
+// у любого синтезатора, и упереться в отказ API дешевле, чем выпустить ролик
+// с кряканьем.
+export const MIN_SPEED = 0.7;
+export const MAX_SPEED = 1.2;
+
+/**
+ * Скорость текущего прогона.
+ *
+ * Почему не параметром через всю цепочку: скорость нужна в четырёх местах —
+ * в двух путях синтеза и в двух расчётах бюджета слов, — и шестой позиционный
+ * аргумент в каждой функции читался бы хуже, чем одно явное значение здесь.
+ *
+ * Общее изменяемое состояние безопасно ровно потому, что бот и так собирает
+ * ролики по одному: параллельных прогонов нет (generationRunning), и значение
+ * выставляется один раз в начале.
+ */
+let runSpeed: number | undefined;
+
+/** Скорость для этого ролика. undefined — вернуться к значению из .env. */
+export function setSpeechSpeed(value: number | undefined): void {
+  runSpeed = value === undefined ? undefined : clampSpeed(value);
+}
+
+/** Скорость, с которой сейчас работаем. */
+export function speechSpeed(fallback: number): number {
+  return runSpeed ?? clampSpeed(fallback);
+}
+
+/** Скорость в допустимых пределах. Мусор считаем обычной скоростью. */
+export function clampSpeed(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(Math.max(value, MIN_SPEED), MAX_SPEED);
+}
+
+/**
+ * Разбор аргумента команды: «1.13», «1,13» или «113%».
+ *
+ * Проценты понимаем потому, что «на 13% быстрее» — это то, как человек об
+ * этом думает, а «1.13» приходится переводить в уме.
+ */
+export function parseSpeed(input: string | undefined): number | { error: string } {
+  const text = (input ?? "").trim().replace(",", ".");
+  if (!text) return { error: "" };
+
+  const percent = text.match(/^(\d{2,3})\s*%$/);
+  const value = percent ? Number(percent[1]) / 100 : Number(text);
+  if (!Number.isFinite(value) || value <= 0) {
+    return {
+      error:
+        "Не разобрал скорость. Примеры: /speed 1.13, /speed 113%, " +
+        "/speed 1 — обычная.",
+    };
+  }
+  if (value < MIN_SPEED || value > MAX_SPEED) {
+    return {
+      error:
+        `Скорость ${value} за пределами ${MIN_SPEED}–${MAX_SPEED}. ` +
+        "Дальше речь начинает плыть, и синтезатор может просто отказать.",
+    };
+  }
+  return value;
+}
+
+/** Человеческое описание: во сколько раз и на сколько процентов. */
+export function describeSpeed(speed: number): string {
+  const percent = Math.round((speed - 1) * 100);
+  if (percent === 0) return `${speed} — обычная скорость`;
+  return `${speed} — на ${Math.abs(percent)}% ${percent > 0 ? "быстрее" : "медленнее"} обычной`;
+}

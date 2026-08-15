@@ -1,5 +1,6 @@
 import type { Caption } from "@remotion/captions";
 import { config } from "./config";
+import { speechSpeed } from "./speech";
 import {
   isElevenLabsAvailable,
   listVoices,
@@ -33,7 +34,7 @@ export function buildTtsInput(
     stability: config.ttsStability,
     similarity_boost: config.ttsSimilarityBoost,
     style: config.ttsStyle,
-    speed: config.kieTtsSpeed,
+    speed: speechSpeed(config.ttsSpeed),
     timestamps: false,
   };
   if (config.kieTtsLanguageCode) {

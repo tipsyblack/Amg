@@ -39,6 +39,7 @@ bot.command('clone', (ctx) => { hits.push(['clone', ctx.match]); });
 bot.command('library', (ctx) => { hits.push(['library', ctx.match]); });
 bot.command('rules', (ctx) => { hits.push(['rules', ctx.match]); });
 bot.command('length', (ctx) => { hits.push(['length', ctx.match]); });
+bot.command('speed', (ctx) => { hits.push(['speed', ctx.match]); });
 bot.command('stems', (ctx) => { hits.push(['stems', ctx.match]); });
 bot.command('music', (ctx) => { hits.push(['music', ctx.match]); });
 bot.command('addmusic', (ctx) => { hits.push(['addmusic', ctx.match]); });
@@ -278,6 +279,11 @@ check('/restart распознан', hits.at(-1)?.[0] === 'restart');
 
 // Публикация. /publish и /poststatus рядом с /profiles и /post-чем-угодно —
 // проверяем, что ничего не перехватывает друг друга.
+await bot.handleUpdate(upd('/speed 1.2'));
+check('/speed получил число', hits.at(-1)?.[0] === 'speed' && hits.at(-1)?.[1] === '1.2', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/speed 115%'));
+check('и проценты тоже', hits.at(-1)?.[1] === '115%', String(hits.at(-1)?.[1]));
+
 await bot.handleUpdate(upd('/publish'));
 check('/publish распознан', hits.at(-1)?.[0] === 'publish', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/caption Новый текст поста #нейросети'));

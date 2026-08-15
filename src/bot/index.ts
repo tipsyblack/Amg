@@ -48,6 +48,7 @@ import {
 } from "../pipeline/generateOverlay";
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
+import { describeSpeed, parseSpeed, setSpeechSpeed } from "../pipeline/speech";
 import {
   dayLabel,
   hourCells,
@@ -367,6 +368,9 @@ async function runScriptStep(
   chatId: number,
   feedback?: string,
 ): Promise<void> {
+  // Скорость речи этого чата — до всего остального: от неё зависит и
+  // бюджет слов сценария, и сам синтез.
+  setSpeechSpeed(getSession(chatId).ttsSpeed);
   const ok = await withGeneration(
     ctx,
     chatId,
@@ -653,6 +657,9 @@ async function regenerateScene(
 }
 
 async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
+  // Скорость речи этого чата — до всего остального: от неё зависит и
+  // бюджет слов сценария, и сам синтез.
+  setSpeechSpeed(getSession(chatId).ttsSpeed);
   await withGeneration(
     ctx,
     chatId,
@@ -1049,6 +1056,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/model — модель, которая пишет сценарий\n" +
       "/ttsmodel — модель озвучки\n" +
       "/length — лимит длины ролика в секундах\n" +
+      "/speed — скорость речи\n" +
       "/clips — сколько сцен оживлять видео (по умолчанию ни одной)\n" +
       "/library — библиотека клипов с маскотом (генерируется один раз)\n" +
       "/rules — чек-лист, по которому критик проверяет сценарий\n" +
@@ -1236,6 +1244,34 @@ bot.command("voiceforce", async (ctx) => {
 // одной цифры неудобно.
 const MIN_LENGTH_SECONDS = 15;
 const MAX_LENGTH_SECONDS = 120;
+
+bot.command("speed", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const current = getSession(chatId).ttsSpeed ?? config.ttsSpeed;
+  const arg = (ctx.match ?? "").trim();
+
+  if (!arg) {
+    await ctx.reply(
+      `Скорость речи: ${describeSpeed(current)}.\n\n` +
+        "Поменять: /speed 1.2 или /speed 120%. Обычная — /speed 1.\n\n" +
+        "Ускоряет сам синтезатор, а не мы после записи: тайминги слов " +
+        "приходят уже пересчитанными, и субтитры остаются на месте.",
+    );
+    return;
+  }
+
+  const parsed = parseSpeed(arg);
+  if (typeof parsed !== "number") {
+    await ctx.reply(parsed.error);
+    return;
+  }
+  updateSession(chatId, { ttsSpeed: parsed });
+  await ctx.reply(
+    `Скорость: ${describeSpeed(parsed)}.\n\n` +
+      "Действует со следующей озвучки. Бюджет слов пересчитывается вместе с " +
+      "ней: быстрее речь — больше слов влезает в те же секунды.",
+  );
+});
 
 bot.command("length", async (ctx) => {
   const chatId = ctx.chat.id;

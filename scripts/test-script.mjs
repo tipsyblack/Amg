@@ -310,7 +310,14 @@ const prompt = requests[0].messages[0].content;
 check("в промпте есть блок про хук", prompt.includes("ПЕРВАЯ СЦЕНА — ХУК"));
 check("приветствия запрещены прямо в промпте", prompt.includes("НИКАКИХ приветствий"));
 check("лимит слов хука назван", /не больше 20 слов/i.test(prompt), prompt.match(/не больше 20 слов.{0,24}/i)?.[0]);
-check("бюджет слов на ролик назван", /не больше 126 слов озвучки/i.test(prompt), prompt.match(/не больше \d+ слов озвучки.{0,20}/i)?.[0]);
+// Число не вшито: бюджет зависит от скорости речи, и после её изменения
+// вшитая цифра ловила бы не ошибку, а сам факт правки.
+const { wordBudget: budgetFor } = await import("../src/pipeline/generateScript.ts");
+check(
+  "бюджет слов на ролик назван",
+  new RegExp(`не больше ${budgetFor(60)} слов озвучки`, "i").test(prompt),
+  prompt.match(/не больше \d+ слов озвучки.{0,20}/i)?.[0],
+);
 check("жанр задан как рассказ, а не инструкция", prompt.includes("рассказываю интересное"));
 // «Не телеграфом» переформулировано: раньше это было про длину и толкало
 // модель к сценам на 25-45 слов, то есть к кадру, висящему по 15 секунд.
@@ -341,7 +348,14 @@ check("запрещён пустой восторг", prompt.includes("Пуст�
 check("запрещены проценты и «за N минут»", prompt.includes("«за N минут»"));
 check("запрещено вставлять ссылки в текст", prompt.includes("Ссылки, адреса сайтов"));
 check("названа норма слов на кадр", /8-14 слов озвучки/.test(prompt), prompt.match(/В каждой сцене .{0,24}/)?.[0]);
-check("названа нижняя граница числа сцен", /От 9 до 15 сцен/.test(prompt), prompt.match(/От \d+ до \d+ сцен/)?.[0]);
+// Нижняя граница считается из бюджета, а бюджет — из скорости речи. Вшитое
+// число здесь ловило бы правку скорости, а не ошибку.
+const { minSceneCount: minScenesFor } = await import("../src/pipeline/generateScript.ts");
+check(
+  "названа нижняя граница числа сцен",
+  new RegExp(`От ${minScenesFor(60)} до 15 сцен`).test(prompt),
+  prompt.match(/От \d+ до \d+ сцен/)?.[0],
+);
 
 console.log("\n=== ответ модели разбирается, даже если это не чистый JSON ===");
 // Так это и может сломаться при смене модели: response_format — параметр из
@@ -426,10 +440,24 @@ const { rhythmProblem, minSceneCount, wordBudget, STYLE_EXAMPLE } = await import
 const sc = (n) => ({ caption: "c", voiceoverText: Array(n).fill("слово").join(" ") });
 
 check(
-  "бюджет слов считается от длины ролика",
-  wordBudget(60) === 126 && wordBudget(30) === 63,
+  "бюджет слов пропорционален длине ролика",
+  Math.abs(wordBudget(60) / wordBudget(30) - 2) < 0.05,
   `${wordBudget(60)} / ${wordBudget(30)}`,
 );
+// Скорость речи входит в бюджет: ускорили синтезатор — в те же секунды влезает
+// больше слов. Не учесть это значит выпускать ролики короче лимита.
+const { setSpeechSpeed } = await import("../src/pipeline/speech.ts");
+setSpeechSpeed(1);
+const atNormal = wordBudget(60);
+setSpeechSpeed(1.2);
+const atFast = wordBudget(60);
+setSpeechSpeed(undefined);
+check(
+  "и растёт вместе со скоростью речи",
+  Math.abs(atFast / atNormal - 1.2) < 0.02,
+  `${atNormal} → ${atFast}`,
+);
+check("на обычной скорости это 126 слов на минуту", atNormal === 126, String(atNormal));
 check(
   "подсказка о числе кадров растёт вместе с длиной ролика",
   minSceneCount(60) > minSceneCount(30),

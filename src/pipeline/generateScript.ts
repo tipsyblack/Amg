@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { repeatProblem } from "./scriptRepeat";
+import { speechSpeed } from "./speech";
 import { extractJson } from "./extractJson";
 import { formatReviewProblem, reviewScript } from "./reviewScript";
 
@@ -403,7 +404,20 @@ export function staleProblem(script: GeneratedScript): string | undefined {
 // Ошибаться в эту сторону дороже, чем в обратную: недобор длины никому не
 // мешает, а перебор ломает лимит, и подрезать его уже нечем — fitToBudget
 // умеет только урезать паузы, а это доли секунды на сцену.
+// Слов в секунду при ОБЫЧНОЙ скорости синтезатора. Замер на готовых роликах:
+// 2.06. Округляем до 2.1.
 const WORDS_PER_SECOND = 2.1;
+
+/**
+ * Сколько слов помещается в секунду при текущей скорости речи.
+ *
+ * Ускорили синтезатор — в те же 60 секунд влезает больше слов, и не учесть
+ * это значит просто потерять секунды: ролик выйдет короче лимита, а
+ * рассказать в нём можно было больше.
+ */
+function wordsPerSecond(): number {
+  return WORDS_PER_SECOND * speechSpeed(config.ttsSpeed);
+}
 
 // Ритм. В присланном референсе картинка меняется каждые полторы-три секунды;
 // у нас же сцена была «законченной мыслью» на 25-45 слов, то есть 12-20
@@ -423,7 +437,7 @@ const CTA_WORDS_FACTOR = 2;
 
 /** Сколько слов озвучки укладывается в ролик заданной длины. */
 export function wordBudget(maxVideoSeconds: number): number {
-  return Math.floor(maxVideoSeconds * WORDS_PER_SECOND);
+  return Math.floor(maxVideoSeconds * wordsPerSecond());
 }
 
 /**
@@ -543,7 +557,7 @@ export const STYLE_EXAMPLE = JSON.stringify({
 
 function buildSystemPrompt(maxVideoSeconds: number): string {
   const { maxScenes } = config;
-  const totalWords = Math.floor(maxVideoSeconds * WORDS_PER_SECOND);
+  const totalWords = wordBudget(maxVideoSeconds);
   // Нижнюю границу считаем из бюджета: столько сцен нужно, чтобы кадр не
   // висел дольше нескольких секунд. Но не больше верхней границы — иначе
   // при MAX_SCENES=6 промпт просил бы невозможного.
@@ -896,7 +910,7 @@ export function rhythmProblem(
   if (total > budget) {
     return (
       `в сценарии ${total} слов при бюджете ${budget} — ролик выйдет ` +
-      `примерно ${Math.round(total / 2.1)} с вместо ${maxVideoSeconds}`
+      `примерно ${Math.round(total / wordsPerSecond())} с вместо ${maxVideoSeconds}`
     );
   }
   // Последней сцене можно вдвое больше: там призыв к действию, и рвать его

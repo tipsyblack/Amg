@@ -91,6 +91,8 @@ export interface Session {
   voice?: string;
   ttsModel?: string;
   ttsProvider?: "kie" | "elevenlabs";
+  /** Скорость речи для этого чата: перекрывает TTS_SPEED из .env. */
+  ttsSpeed?: number;
   imageModel?: string;
   // Модель оживления кадра (команда /vidmodel): ключ из VIDEO_MODELS.
   videoModel?: string;
@@ -214,6 +216,7 @@ export function resetSession(chatId: number): void {
     voice,
     ttsModel,
     ttsProvider,
+    ttsSpeed,
     imageModel,
     videoModel,
     clipScenes,
@@ -226,6 +229,7 @@ export function resetSession(chatId: number): void {
     voice,
     ttsModel,
     ttsProvider,
+    ttsSpeed,
     imageModel,
     videoModel,
     clipScenes,
