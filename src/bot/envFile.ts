@@ -39,6 +39,28 @@ export const EDITABLE_KEYS = [
 
 export type EditableKey = (typeof EDITABLE_KEYS)[number];
 
+/**
+ * Что значит незаполненная переменная.
+ *
+ * Пустой ZERNIO_PROFILE_ID — это норма: профиль тогда берётся по умолчанию из
+ * личного кабинета. Но в списке он стоял рядом с ключами и словом «не задан»,
+ * и читалось это как «чего-то не хватает» — заказчик так и спросил, нужен ли
+ * он вообще. Необязательные настройки не должны выглядеть как недоделка.
+ */
+export const OPTIONAL_KEYS: Partial<Record<EditableKey, string>> = {
+  ZERNIO_PROFILE_ID:
+    "необязательно — без него берётся профиль по умолчанию (/zprofiles)",
+  ELEVENLABS_API_KEY:
+    "необязательно — нужен только для прямой озвучки и клонирования голоса",
+};
+
+/** Строка для списка ключей: значение плюс пояснение, если оно нужно. */
+export function keyStatusLine(name: EditableKey, value: string): string {
+  if (value) return `${name}: ${maskSecret(value)}`;
+  const note = OPTIONAL_KEYS[name];
+  return note ? `${name}: не задан (${note})` : `${name}: не задан`;
+}
+
 export function isEditableKey(name: string): name is EditableKey {
   return (EDITABLE_KEYS as readonly string[]).includes(name);
 }

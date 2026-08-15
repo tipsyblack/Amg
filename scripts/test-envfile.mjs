@@ -16,7 +16,7 @@ const check = (name, ok, extra = "") => {
 const dir = mkdtempSync(path.join(tmpdir(), "amg-env-"));
 process.chdir(dir);
 
-const { parseSetKey, maskSecret, setEnvValue, getEnvValue, EDITABLE_KEYS, isEditableKey } =
+const { parseSetKey, maskSecret, setEnvValue, getEnvValue, EDITABLE_KEYS, isEditableKey, keyStatusLine, OPTIONAL_KEYS } =
   await import("/home/user/Amg/src/bot/envFile.ts");
 
 console.log("=== разбор команды ===");
@@ -52,6 +52,34 @@ check("показан только хвост", maskSecret("zk_verysecret1234") 
 check("сам ключ не виден", !maskSecret("zk_verysecret1234").includes("verysecret"));
 check("пустое значение названо явно", maskSecret("") === "не задан");
 check("короткое значение не раскрывается", !maskSecret("ab").includes("ab"), maskSecret("ab"));
+
+console.log("\n=== необязательное не выглядит как недоделка ===");
+// Пустой ZERNIO_PROFILE_ID — норма: профиль берётся по умолчанию. Но в списке
+// он стоял рядом с ключами со словом «не задан», и заказчик спросил, нужен ли
+// он вообще. Значит формулировка была плохая, а не настройка.
+check(
+  "у необязательной переменной сказано, что она необязательная",
+  /необязательно/.test(keyStatusLine("ZERNIO_PROFILE_ID", "")),
+  keyStatusLine("ZERNIO_PROFILE_ID", ""),
+);
+check(
+  "и объяснено, что будет без неё",
+  /по умолчанию/.test(keyStatusLine("ZERNIO_PROFILE_ID", "")),
+);
+check(
+  "обязательный ключ такой пометки не получает",
+  keyStatusLine("ZERNIO_API_KEY", "") === "ZERNIO_API_KEY: не задан",
+  keyStatusLine("ZERNIO_API_KEY", ""),
+);
+check(
+  "заполненное значение показывается хвостом и без пометок",
+  keyStatusLine("ZERNIO_PROFILE_ID", "abcdef12") === "ZERNIO_PROFILE_ID: …ef12 (8 знаков)",
+  keyStatusLine("ZERNIO_PROFILE_ID", "abcdef12"),
+);
+check(
+  "все помеченные необязательными есть в списке правимых",
+  Object.keys(OPTIONAL_KEYS).every((k) => EDITABLE_KEYS.includes(k)),
+);
 
 console.log("\n=== запись в файл ===");
 writeFileSync(

@@ -144,6 +144,7 @@ import { autopilotContinues, parseAutopilotArg } from "./autopilot";
 import {
   EDITABLE_KEYS,
   getEnvValue,
+  keyStatusLine,
   maskSecret,
   parseSetKey,
   setEnvValue,
@@ -2212,7 +2213,7 @@ bot.command("keys", async (ctx) => {
     const live = process.env[name] ?? "";
     const pending =
       inFile && inFile !== live ? " ⏳ записан, но нужен перезапуск" : "";
-    return `• ${name}: ${maskSecret(inFile)}${pending}`;
+    return `• ${keyStatusLine(name, inFile)}${pending}`;
   });
   await ctx.reply(
     "Ключи в .env на сервере:\n\n" +
