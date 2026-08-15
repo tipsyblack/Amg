@@ -51,6 +51,13 @@ import { overlayStartMs } from "../pipeline/wordTimings";
 import { lookLabel, sceneLook, seedFromTitle } from "../pipeline/sceneLook";
 import { measureImages, varietyLines, varietyReport } from "../pipeline/variety";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
+import {
+  countSlang,
+  parseSlangCommand,
+  readSlang,
+  SLANG_LIMIT,
+  writeSlang,
+} from "../pipeline/slang";
 import { DEFAULT_SPEED, describeSpeed, parseSpeed, setSpeechSpeed } from "../pipeline/speech";
 import { DIRECT_TTS_MODELS, directModelNote } from "../pipeline/ttsModels";
 import {
@@ -478,6 +485,25 @@ async function runScriptStep(
         );
       }
       await ctx.reply(formatScript(script));
+
+      // Сколько говора получилось. Ни к чему не обязывает — это просто
+      // видимость: ровно так же молча не работала настройка скорости речи,
+      // и заметили это только через несколько роликов. Ноль тоже честный
+      // ответ: значит, модель словечки проигнорировала.
+      const slang = readSlang();
+      if (slang.on && slang.words.length > 0) {
+        const used = script.scenes.reduce(
+          (sum, scene) => sum + countSlang(scene.voiceoverText, slang.words),
+          0,
+        );
+        await ctx.reply(
+          used === 0
+            ? "🗣 Говора в этом сценарии нет. Поправить — «✏️ Правки», " +
+              "посмотреть список словечек — /slang."
+            : `🗣 Говор: ${used} ${used === 1 ? "словечко" : "словечка"} на ` +
+              `${script.scenes.length} сцен (потолок ${SLANG_LIMIT}).`,
+        );
+      }
       // Единственное, чего автоматика проверить не может: ведёт ли тема к
       // продукту. Ролик про энергопотребление дата-центров с финалом «попробуй
       // наш бот для картинок» проходит все проверки и при этом не продаёт —
@@ -1158,8 +1184,10 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       });
       if (isZernioConfigured()) {
         await ctx.reply(
-          "Это же описание уйдёт текстом поста. Поменять — /caption, " +
-            "опубликовать — /publish или /schedule 18:00",
+          "Это же описание уйдёт текстом поста. Поменять — /caption.\n\n" +
+            "Опубликовать сейчас — /publish. По расписанию — /schedule: " +
+            "без аргумента откроется календарь с выбором дня и часа, а если " +
+            "время известно, короче написать сразу — /schedule 18:00.",
         );
       }
     } catch (error) {
@@ -1215,6 +1243,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/clips — сколько сцен оживлять видео (по умолчанию ни одной)\n" +
       "/library — библиотека клипов с маскотом (генерируется один раз)\n" +
       "/rules — чек-лист, по которому критик проверяет сценарий\n" +
+      "/slang — говор Шамиля: словечки в озвучке\n" +
       "/vidmodel — модель оживления кадра\n" +
       "/tts — провайдер озвучки (kie или elevenlabs)\n" +
       "/music — фоновая музыка: библиотека, загрузка и генерация\n" +
@@ -1231,7 +1260,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/unlink — отвязать аккаунт\n" +
       "/caption — посмотреть или заменить текст поста\n" +
       "/publish — опубликовать последний ролик сразу\n" +
-      "/schedule — календарь публикации (или /schedule 18:00)\n" +
+      "/schedule — календарь публикации: день и час кнопками\n" +
       "/poststatus — что с последней публикацией\n" +
       "/retrypost — повторить неудачные площадки\n" +
       "/zprofiles — профили Zernio\n" +
@@ -1569,6 +1598,32 @@ bot.command("clips", async (ctx) => {
 // не в коде, потому что правила вкуса меняются вместе с продуктом и
 // площадкой: на контент-заводе правка правила не должна упираться в
 // программиста и деплой.
+bot.command("slang", async (ctx) => {
+  const current = readSlang();
+  const parsed = parseSlangCommand(ctx.match, current);
+  if ("error" in parsed) {
+    await ctx.reply(parsed.error);
+    return;
+  }
+  if (parsed.message) writeSlang(parsed.state);
+
+  const list = parsed.state.words.length
+    ? parsed.state.words.join(", ")
+    : "пусто";
+  await ctx.reply(
+    `${parsed.message ? `${parsed.message}\n\n` : ""}` +
+      `🗣 Говор Шамиля: ${parsed.state.on ? "включён" : "выключен"}.\n` +
+      `Словечки: ${list}\n\n` +
+      `Больше ${SLANG_LIMIT} на ролик бот не пропустит: два слова — это ` +
+      "характер, десять — пародия. В объяснениях и в призыве говора не будет " +
+      "вовсе — там нужна простая речь.\n\n" +
+      "Правка: /slang add лее, брат · /slang del чальянка · /slang off · " +
+      "/slang on · /slang reset\n\n" +
+      "Как слово звучит вслух — слышно только на готовой озвучке. Если " +
+      "синтезатор его коверкает, уберите: /slang del <слово>.",
+  );
+});
+
 bot.command("rules", async (ctx) => {
   const chatId = ctx.chat.id;
   const argument = ctx.match.trim();
@@ -2926,7 +2981,8 @@ bot.command("caption", async (ctx) => {
   }
   rememberVideo(chatId, { ...video, description: text });
   await ctx.reply(
-    `Готово, ${text.length} символов. Публиковать: /publish или /schedule 18:00`,
+    `Готово, ${text.length} символов.\n\nОпубликовать сейчас — /publish. ` +
+      "По расписанию — /schedule (календарь) или сразу /schedule 18:00.",
   );
 });
 

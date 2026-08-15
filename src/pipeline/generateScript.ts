@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { contentStems, frameProblem, repeatProblem } from "./scriptRepeat";
+import { readSlang, slangPrompt, slangProblem } from "./slang";
 import { speechSpeed } from "./speech";
 import { extractJson } from "./extractJson";
 import { formatReviewProblem, reviewScript } from "./reviewScript";
@@ -807,6 +808,7 @@ function buildSystemPrompt(maxVideoSeconds: number): string {
 ТОН: живой разговорный, на «ты», с риторическими вопросами и обращением к
 зрителю («смотри», «прикол в том», «затестить»). Сленг уместен. Но живой тон —
 это конкретика, сказанная по-человечески, а не восторг вместо содержания.
+${slangPrompt(readSlang())}
 
 ЧЕГО НЕЛЬЗЯ:
 - Превращать ролик в перечисление сервисов: «Midjourney сделает раскадровку,
@@ -1061,6 +1063,7 @@ function structuralProblems(
     repeatProblem(script),
     frameProblem(script),
     exampleFrameProblem(script),
+    slangProblem(script),
     promoProblem(script),
     toolListProblem(script),
     fillerProblem(script),
@@ -1106,7 +1109,9 @@ export function scriptProblems(
  * картинки к сценарию, который заведомо не годится.
  */
 export function isSoftProblem(problem: string): boolean {
-  return problem.includes("описания кадра");
+  // Перебор жаргона сюда же: ролик от лишнего «лее» становится хуже, но
+  // остаётся роликом, и класть из-за этого весь поток — не по размеру беды.
+  return problem.includes("описания кадра") || problem.includes("жаргон");
 }
 
 // Что просить у модели по каждой найденной проблеме. Ключ ищется в тексте
@@ -1147,6 +1152,14 @@ const FIX_INSTRUCTIONS: { key: string; instruction: string }[] = [
       "кадре: предметы, место, действие. Это не пересказ реплики: реплику " +
       "слышно, а visual — то, что нарисует художник. Кадры соседних сцен " +
       "должны отличаться предметом.",
+  },
+  {
+    key: "жаргон",
+    instruction:
+      "Убери лишние словечки говора: на весь ролик их должно остаться не " +
+      "больше трёх и не больше одного в сцене. Оставь те, что стоят в живой " +
+      "фразе и звучат реакцией; из объяснений механики и из призыва убери " +
+      "все — там нужна простая речь.",
   },
   {
     key: "переписан из примера",
