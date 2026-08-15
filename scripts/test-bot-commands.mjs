@@ -213,9 +213,8 @@ check('/addmusic не перехвачен /autopilot', hits.at(-1)?.[0] === 'ad
 // 16) Логика автопилота: продолжать цепочку или нет. Два условия, и оба
 // неочевидны — withGeneration ошибки не выбрасывает, а шаг сценария может
 // остановить автопилот сам.
-const { autopilotContinues, parseAutopilotArg } = await import(
-  '../src/bot/autopilot.ts'
-);
+const { autopilotContinues, parseAutopilotArg, scheduleAutopilotStep } =
+  await import('../src/bot/autopilot.ts');
 const S = (autopilot, step) => ({ autopilot, step });
 check(
   'идёт дальше: шаг прошёл, автопилот включён, диалог свободен',
@@ -251,6 +250,66 @@ check('«on» включает', parseAutopilotArg('on', false) === true);
 check('«вкл» включает', parseAutopilotArg('вкл', false) === true);
 check('«ON» с заглавными включает', parseAutopilotArg('ON', false) === true);
 check('мусор трактуется как выключить', parseAutopilotArg('пиво', true) === false);
+
+// Почему цепочка автопилота вообще откладывается. grammY обрабатывает
+// обновления строго по очереди — в его исходниках так и написано, «handle
+// updates sequentially (!)». Пока сценарий, картинки и сборка шли внутри
+// одного обработчика, команда «стоп» лежала на серверах Telegram до конца
+// сборки. Проверяем это на настоящем grammY, а не рассуждением.
+let firstDone;
+const order = [];
+const seq = new Bot('123:FAKE', { botInfo: bot.botInfo });
+seq.command('slow', async () => {
+  order.push('начал долгий шаг');
+  await new Promise((resolve) => { firstDone = resolve; });
+  order.push('закончил долгий шаг');
+});
+seq.command('stop', () => { order.push('стоп'); });
+const cmd = (text) => upd(text, [{ type: 'bot_command', offset: 0, length: text.length }]);
+const handling = seq.handleUpdates([cmd('/slow'), cmd('/stop')]);
+await new Promise((resolve) => setTimeout(resolve, 20));
+check(
+  'вторая команда ждёт окончания первой',
+  order.join(' → ') === 'начал долгий шаг',
+  order.join(' → '),
+);
+firstDone();
+await handling;
+check(
+  'и доходит только после неё',
+  order.join(' → ') === 'начал долгий шаг → закончил долгий шаг → стоп',
+  order.join(' → '),
+);
+
+// Поэтому следующий шаг ставится в очередь, а обработчик заканчивается.
+const calls = [];
+let fire;
+scheduleAutopilotStep(
+  async () => { calls.push('шаг'); },
+  () => { calls.push('ошибка'); },
+  (fn) => { fire = fn; },
+);
+check('шаг не начался сразу — управление вернулось опросу', calls.length === 0);
+fire();
+await new Promise((resolve) => setImmediate(resolve));
+check('но начался, когда очередь дошла', calls.join() === 'шаг', calls.join());
+
+// Обработчик обновления к этому моменту уже закончился, и bot.catch до задачи
+// не дотянется — ошибку обязан поймать сам планировщик.
+let caught;
+scheduleAutopilotStep(
+  async () => { throw new Error('шаг упал'); },
+  (error) => { caught = error; },
+  (fn) => fn(),
+);
+await new Promise((resolve) => setImmediate(resolve));
+check('ошибка отложенного шага поймана', caught?.message === 'шаг упал', String(caught));
+
+// Ради чего всё: между шагами автопилот можно выключить, и цепочка встанет.
+check(
+  'выключенный между шагами автопилот не продолжает',
+  autopilotContinues({ ok: true, session: S(false, 'idle') }) === false,
+);
 
 // Темы дня. /topics и /topicsreset делят префикс — ровно та пара, на которой
 // раньше ломались /library с /length и /stems с /start. Проверяем на настоящем

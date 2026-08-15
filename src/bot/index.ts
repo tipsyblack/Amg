@@ -174,7 +174,11 @@ import {
   SAFE_VIDEO_BYTES,
 } from "./videoSize";
 import { masterLoudness, measureLoudness } from "./masterAudio";
-import { autopilotContinues, parseAutopilotArg } from "./autopilot";
+import {
+  autopilotContinues,
+  parseAutopilotArg,
+  scheduleAutopilotStep,
+} from "./autopilot";
 import {
   EDITABLE_KEYS,
   getEnvValue,
@@ -371,6 +375,53 @@ function autopilotOn(chatId: number): boolean {
   return getSession(chatId).autopilot === true;
 }
 
+/**
+ * Выключает автопилот. Возвращает true, если он был включён — по этому видно,
+ * говорить ли об этом в чате.
+ */
+function stopAutopilot(chatId: number): boolean {
+  if (!autopilotOn(chatId)) return false;
+  updateSession(chatId, { autopilot: false });
+  return true;
+}
+
+/**
+ * Следующий шаг цепочки — если автопилот всё ещё включён.
+ *
+ * Флаг проверяется ДВАЖДЫ: сейчас и ещё раз, когда шаг реально начнётся. Между
+ * этими моментами обработчик обновления успевает закончиться, бот забирает
+ * накопившиеся сообщения, и /start может выключить автопилот — ради этого всё
+ * и затевалось.
+ */
+function continueAutopilot(
+  ctx: Context,
+  chatId: number,
+  ok: boolean,
+  next: () => Promise<void>,
+): void {
+  if (!autopilotContinues({ ok, session: getSession(chatId) })) return;
+  scheduleAutopilotStep(
+    async () => {
+      if (!autopilotContinues({ ok: true, session: getSession(chatId) })) {
+        await ctx.reply("🛑 Автопилот выключен — дальше не иду.");
+        return;
+      }
+      await next();
+    },
+    async (error) => {
+      // Обработчик обновления уже завершился, bot.catch сюда не дотянется.
+      console.error(error);
+      await ctx
+        .reply(
+          `Ошибка автопилота: ${
+            error instanceof Error ? error.message : String(error)
+          }\n\nПродолжить можно вручную — /new или кнопкой в последнем шаге.`,
+        )
+        .catch(() => undefined);
+    },
+  );
+}
+
 async function runScriptStep(
   ctx: Context,
   chatId: number,
@@ -469,9 +520,7 @@ async function runScriptStep(
 
   // Продолжение автопилота — СНАРУЖИ withGeneration: внутри флаг генерации ещё
   // поднят, и вложенный шаг ответил бы «уже идёт другая генерация».
-  if (autopilotContinues({ ok, session: getSession(chatId) })) {
-    await runImagesStep(ctx, chatId);
-  }
+  continueAutopilot(ctx, chatId, ok, () => runImagesStep(ctx, chatId));
 }
 
 async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
@@ -642,9 +691,7 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
   );
 
   // Та же причина, что и в шаге сценария: цепочка идёт снаружи withGeneration.
-  if (autopilotContinues({ ok, session: getSession(chatId) })) {
-    await runAssembleStep(ctx, chatId);
-  }
+  continueAutopilot(ctx, chatId, ok, () => runAssembleStep(ctx, chatId));
 }
 
 /**
@@ -1137,6 +1184,20 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
 }
 
 bot.command(["start", "help"], async (ctx) => {
+  // /start — кнопка «стоп»: её жмут первой, когда нужно остановиться. /help
+  // делит с ней обработчик, но это просто просьба показать справку — читать
+  // справку и терять из-за этого режим было бы неожиданно.
+  const isStart = /^\/start\b/i.test(ctx.message?.text ?? "");
+  if (isStart && stopAutopilot(ctx.chat.id)) {
+    await ctx.reply(
+      "🛑 Автопилот выключен." +
+        (generationRunning
+          ? " Текущий шаг доработает — обрывать его нельзя, там уже " +
+            "оплаченные картинки и озвучка, — а следующий не начнётся."
+          : " Следующий шаг сам не начнётся.") +
+        "\n\nВключить обратно — /autopilot on.",
+    );
+  }
   await ctx.reply(
     "Бот собирает короткие вертикальные ролики с Шамилем.\n\n" +
       "/topics — темы дня из мира нейросетей (повестка + защита от повторов)\n" +
@@ -1162,6 +1223,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/clonemore — добавить материал в уже созданный клон\n" +
       "/stems — разобрать чужую дорожку: что играет под речью\n" +
       "/autopilot — генерация без подтверждений на каждом шаге\n" +
+      "/start — остановить автопилот (текущий шаг доработает)\n" +
       "/topicback — вернуть тему в подбор (ролик не доснят)\n" +
       "/topicsreset — забыть снятые темы (смена ниши канала)\n" +
       "/accounts — подключённые аккаунты соцсетей (Zernio)\n" +
