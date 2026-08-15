@@ -118,6 +118,29 @@ check("модель из настройки ушла в запрос", sent.body
 await synthesizeSpeechDirect("текст", path.join(dir, "c.mp3"), undefined, undefined, true);
 check("без настройки — модель из .env", sent.body.model_id === config.elevenLabsModelId, String(sent.body.model_id));
 
+console.log("\n=== старый ключ в .env перебивает умолчание ===");
+// Это случилось на живом сервере: в .env с прошлой установки осталась строка
+// KIE_TTS_SPEED=1, ролики шли на обычной скорости, а бюджет слов считался
+// 126 вместо 142 — и сценарий на 132 слова автопилот забраковал как длинный.
+// Поддержку старого имени убирать нельзя, а вот молчать об этом — можно было
+// зря: теперь /speed говорит, откуда взято значение.
+const { execFile } = await import("node:child_process");
+const speedIn = (env) =>
+  new Promise((resolve) => {
+    execFile(
+      "npx",
+      ["tsx", "-e", "import {config} from './src/pipeline/config';import {wordBudget} from './src/pipeline/generateScript';console.log(config.ttsSpeed, wordBudget(60));"],
+      { env: { ...process.env, ...env } },
+      (error, stdout) => resolve(error ? "" : stdout.trim()),
+    );
+  });
+const legacy = await speedIn({ TTS_SPEED: "", KIE_TTS_SPEED: "1" });
+const fresh = await speedIn({ TTS_SPEED: "", KIE_TTS_SPEED: "" });
+check("старое имя всё ещё действует", legacy.startsWith("1 "), legacy);
+check("и это даёт бюджет 126 слов", legacy.endsWith("126"), legacy);
+check("без него берётся замеренная скорость", fresh.startsWith("1.13"), fresh);
+check("и бюджет становится 142", fresh.endsWith("142"), fresh);
+
 console.log("\n=== бюджет слов растёт вместе со скоростью ===");
 // Ускорили речь и не тронули бюджет — ролик выйдет короче лимита, и мы просто
 // потеряем секунды, за которые могли бы что-то рассказать.

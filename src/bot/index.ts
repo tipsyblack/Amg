@@ -51,7 +51,7 @@ import { overlayStartMs } from "../pipeline/wordTimings";
 import { lookLabel, sceneLook, seedFromTitle } from "../pipeline/sceneLook";
 import { measureImages, varietyLines, varietyReport } from "../pipeline/variety";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
-import { describeSpeed, parseSpeed, setSpeechSpeed } from "../pipeline/speech";
+import { DEFAULT_SPEED, describeSpeed, parseSpeed, setSpeechSpeed } from "../pipeline/speech";
 import { DIRECT_TTS_MODELS, directModelNote } from "../pipeline/ttsModels";
 import {
   dayLabel,
@@ -1344,11 +1344,26 @@ bot.command("speed", async (ctx) => {
   const arg = (ctx.match ?? "").trim();
 
   if (!arg) {
+    // Откуда значение — половина ответа. Скорость 1.13 стоит умолчанием в
+    // коде, но старый ключ KIE_TTS_SPEED=1 в .env её перебивает, и снаружи
+    // это выглядит так, будто настройка не работает. Видно должно быть сразу.
+    const source =
+      getSession(chatId).ttsSpeed !== undefined
+        ? "задана в этом чате"
+        : `из .env (в коде по умолчанию ${DEFAULT_SPEED})`;
+    const stale =
+      getSession(chatId).ttsSpeed === undefined && current !== DEFAULT_SPEED
+        ? `\n\n⚠️ В .env стоит ${current}, а замер по референсу даёт ` +
+          `${DEFAULT_SPEED}. Скорее всего там остался старый ключ ` +
+          "KIE_TTS_SPEED=1 — он перебивает умолчание. Поправить можно прямо " +
+          `отсюда: /speed ${DEFAULT_SPEED}.`
+        : "";
     await ctx.reply(
-      `Скорость речи: ${describeSpeed(current)}.\n\n` +
+      `Скорость речи: ${describeSpeed(current)} — ${source}.\n\n` +
         "Поменять: /speed 1.2 или /speed 120%. Обычная — /speed 1.\n\n" +
         "Ускоряет сам синтезатор, а не мы после записи: тайминги слов " +
-        "приходят уже пересчитанными, и субтитры остаются на месте.",
+        "приходят уже пересчитанными, и субтитры остаются на месте." +
+        stale,
     );
     return;
   }

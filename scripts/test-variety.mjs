@@ -203,6 +203,43 @@ const sameTopic = {
 check("слова темы не считаются повтором", frameProblem(sameTopic) === undefined, String(frameProblem(sameTopic)));
 check("пустой сценарий не роняет проверку", frameProblem({ title: "", scenes: [] }) === undefined);
 
+console.log("\n=== кадр, переписанный из примера в промпте ===");
+// Это пришло с живой генерации: ролик про региональные ограничения Gemini, а
+// в финальной сцене кадр «три рисунка одной руки… у каждого свой набор
+// пальцев» — дословно из примера про шесть пальцев. Руки там ни при чём.
+const { exampleFrameProblem } = await import("../src/pipeline/generateScript.ts");
+const leaked = {
+  title: "Gemini не работает в регионе",
+  scenes: [
+    { caption: "ПЕРЕКЛЮЧИСЬ НА БОТЫ", voiceoverText: "Переключись на нейросети в Telegram-ботах.", visual: "рука листает список контактов в мессенджере, выбирая бота" },
+    { caption: "ПОПРОБУЙ БЕСПЛАТНО", voiceoverText: "Открой бота по ссылке в профиле и протестируй бесплатно.", visual: "три рисунка одной руки лежат рядом на столе, у каждого свой набор пальцев" },
+  ],
+};
+check("переписанный кадр пойман", /переписан из примера/.test(String(exampleFrameProblem(leaked))), String(exampleFrameProblem(leaked)));
+check("названа сцена и сам кадр", /сцены 2/.test(String(exampleFrameProblem(leaked))));
+check("остальные кадры не трогаем", !/мессенджер/.test(String(exampleFrameProblem(leaked))));
+// Ролик РОВНО на тему примера — единственный случай, когда похожий кадр
+// законен: там ладонь под лупой и правда к месту.
+check(
+  "ролик на тему примера не бракуется",
+  exampleFrameProblem({
+    title: "Почему нейросеть путает пальцы",
+    scenes: [{ caption: "A", voiceoverText: "x", visual: "ладонь под увеличительным стеклом, пальцы пересчитаны" }],
+  }) === undefined,
+);
+// Но одного общего слова мало: «нейросеть» есть почти в каждом нашем ролике.
+check(
+  "другой ролик про нейросети — всё равно утечка",
+  exampleFrameProblem({
+    title: "Нейросеть считает токены",
+    scenes: [{ caption: "A", voiceoverText: "x", visual: "ладонь под увеличительным стеклом, все пальцы пересчитаны и на месте" }],
+  }) !== undefined,
+);
+check("сам пример себя не бракует", exampleFrameProblem(example) === undefined, String(exampleFrameProblem(example)));
+check("обычный кадр проходит", exampleFrameProblem({ title: "т", scenes: [{ caption: "A", voiceoverText: "x", visual: "конвейер везёт коробки мимо окна" }] }) === undefined);
+// Утечка примера — дефект, а не мелочь: кадр не про то, о чём ролик.
+check("останавливает автопилот", !isSoftProblem(String(exampleFrameProblem(leaked))));
+
 console.log("\n=== что останавливает автопилот, а что нет ===");
 // Модель, не осилившая новое поле сценария, не должна класть завод: картинку
 // тогда рисуют по реплике — как раньше, хуже задуманного, но не брак.

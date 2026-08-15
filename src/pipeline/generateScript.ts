@@ -1,5 +1,5 @@
 import { config } from "./config";
-import { frameProblem, repeatProblem } from "./scriptRepeat";
+import { contentStems, frameProblem, repeatProblem } from "./scriptRepeat";
 import { speechSpeed } from "./speech";
 import { extractJson } from "./extractJson";
 import { formatReviewProblem, reviewScript } from "./reviewScript";
@@ -217,6 +217,59 @@ export function fillerProblem(script: GeneratedScript): string | undefined {
   });
   if (found.length === 0) return undefined;
   return `в сценах есть вода вместо конкретики (${found.slice(0, 5).join("; ")})`;
+}
+
+/**
+ * Кадр, переписанный из примера в промпте.
+ *
+ * Пример стиля — образец для копирования, и модель копирует его буквально. На
+ * первом же ролике с полем visual это выстрелило: в сценарии про региональные
+ * ограничения Gemini финальная сцена получила кадр «три рисунка одной руки
+ * лежат рядом на столе, у каждого свой набор пальцев» — дословно из примера
+ * про шесть пальцев. Руки там ни при чём вообще.
+ *
+ * Заметить это на согласовании трудно: описание кадра выглядит осмысленным
+ * само по себе, а к теме оно не относится совсем.
+ *
+ * Проверяются ТОЛЬКО кадры. Призыв к действию похож на пример намеренно — это
+ * наш призыв, и повторять его формулу можно.
+ */
+export function exampleFrameProblem(
+  script: GeneratedScript,
+): string | undefined {
+  const example = JSON.parse(STYLE_EXAMPLE) as GeneratedScript;
+
+  // Ролик РОВНО на тему примера — единственный случай, когда похожие кадры
+  // законны: пример про то, как нейросеть путает пальцы, и в таком ролике
+  // ладонь под лупой уместна. Тему узнаём по заголовку; одного общего слова
+  // мало — «нейросеть» есть почти у всех наших роликов.
+  const titleStems = contentStems(script.title ?? "");
+  const exampleTitle = contentStems(example.title ?? "");
+  const sameTopic = [...titleStems].filter((s) => exampleTitle.has(s));
+  if (sameTopic.length >= 2) return undefined;
+
+  const sample = example.scenes
+    .map((scene) => contentStems(scene.visual ?? ""))
+    .filter((stems) => stems.size > 0);
+
+  for (const [index, scene] of script.scenes.entries()) {
+    const stems = contentStems(scene.visual ?? "");
+    if (stems.size === 0) continue;
+    for (const example of sample) {
+      const shared = [...stems].filter((s) => example.has(s));
+      const share = shared.length / Math.min(stems.size, example.size);
+      // Порог высокий намеренно: ловим переписанное, а не совпавшее слово.
+      // Ролик про руки имеет полное право показывать руку.
+      if (shared.length >= 4 && share >= 0.7) {
+        return (
+          `кадр сцены ${index + 1} переписан из примера в промпте ` +
+          `(«${scene.visual}»). Пример — образец устройства, а не набор ` +
+          "картинок: кадр должен быть про эту тему"
+        );
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -713,6 +766,9 @@ function buildSystemPrompt(maxVideoSeconds: number): string {
 - Абстрактное показывай через предмет и действие: «данные» — это коробки на
   ленте, «ошибка» — это дымящийся тостер, «выбор» — это две двери.
 - Персонажа-маскота в visual не описывай: где он нужен, он добавляется сам.
+- КАДРЫ ИЗ ПРИМЕРА НЕ ПЕРЕПИСЫВАЙ. Пример ниже показывает, КАК устроен
+  сценарий, а не что рисовать. Ладони, пальцы и мольберт оттуда в ролике на
+  другую тему выглядят случайным набором картинок.
 
 ПОЯВЛЯЮЩИЙСЯ ОБЪЕКТ (поле overlay). Картинка сцены не меняется, но в момент,
 когда ты называешь что-то конкретное, этот предмет может появиться в кадре
@@ -1004,6 +1060,7 @@ function structuralProblems(
     rhythmProblem(script, maxVideoSeconds),
     repeatProblem(script),
     frameProblem(script),
+    exampleFrameProblem(script),
     promoProblem(script),
     toolListProblem(script),
     fillerProblem(script),
@@ -1090,6 +1147,13 @@ const FIX_INSTRUCTIONS: { key: string; instruction: string }[] = [
       "кадре: предметы, место, действие. Это не пересказ реплики: реплику " +
       "слышно, а visual — то, что нарисует художник. Кадры соседних сцен " +
       "должны отличаться предметом.",
+  },
+  {
+    key: "переписан из примера",
+    instruction:
+      "Перепиши visual названной сцены: он взят из примера в промпте и к теме " +
+      "ролика отношения не имеет. Пример показывает, КАК устроен сценарий, а " +
+      "не что рисовать. Кадр должен быть про то, о чём эта сцена.",
   },
   {
     key: "одна и та же картинка",
