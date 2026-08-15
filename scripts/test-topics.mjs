@@ -120,9 +120,8 @@ check(
 );
 
 console.log("\n=== память снятых тем ===");
-const { rememberShotTopic, listShotTopics, forgetShotTopics } = await import(
-  "../src/bot/state.ts"
-);
+const { rememberShotTopic, listShotTopics, forgetShotTopics, forgetShotTopic } =
+  await import("../src/bot/state.ts");
 const chat = -777001;
 forgetShotTopics(chat);
 rememberShotTopic(chat, "Первая тема");
@@ -137,6 +136,26 @@ check(
 check("и поднимается наверх", listShotTopics(chat)[0] === "первая ТЕМА");
 rememberShotTopic(chat, "   ");
 check("пустая тема не запоминается", listShotTopics(chat).length === 2);
+console.log("\n=== вернуть одну тему в подбор ===");
+// Тема запоминается сразу при выборе, а не после сборки. Обратная сторона
+// нашлась в работе: ролик не доснят, идея понравилась, а тема уже занята.
+// Стирать ради этого всю память — терять защиту от повторов за два месяца.
+forgetShotTopics(chat);
+for (const t of ["Старая тема", "Средняя тема", "Свежая тема"]) rememberShotTopic(chat, t);
+check("без аргумента возвращается последняя", forgetShotTopic(chat) === "Свежая тема");
+check("остальные на месте", listShotTopics(chat).length === 2, listShotTopics(chat).join(" | "));
+check("и порядок не сбился", listShotTopics(chat)[0] === "Средняя тема");
+check("по номеру из списка", forgetShotTopic(chat, 1) === "Старая тема");
+rememberShotTopic(chat, "Почему нейросеть рисует шесть пальцев");
+check("по части названия", forgetShotTopic(chat, "шесть пальцев") === "Почему нейросеть рисует шесть пальцев");
+check("регистр не важен", (() => {
+  rememberShotTopic(chat, "Токены и деньги");
+  return forgetShotTopic(chat, "ТОКЕНЫ") === "Токены и деньги";
+})());
+check("чего нет — не возвращается", forgetShotTopic(chat, "такого не было") === undefined);
+check("номер за пределами списка — тоже", forgetShotTopic(chat, 99) === undefined);
+check("пустая память не роняет", forgetShotTopic(-777002) === undefined);
+
 forgetShotTopics(chat);
 check("сброс очищает память", listShotTopics(chat).length === 0);
 

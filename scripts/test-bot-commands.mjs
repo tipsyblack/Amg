@@ -46,6 +46,7 @@ bot.command('addmusic', (ctx) => { hits.push(['addmusic', ctx.match]); });
 bot.command('autopilot', (ctx) => { hits.push(['autopilot', ctx.match]); });
 bot.command('topics', (ctx) => { hits.push(['topics', ctx.match]); });
 bot.command('topicsreset', (ctx) => { hits.push(['topicsreset', ctx.match]); });
+bot.command('topicback', (ctx) => { hits.push(['topicback', ctx.match]); });
 bot.command('link', (ctx) => { hits.push(['link', ctx.match]); });
 bot.command('library', (ctx) => { hits.push(['library2', ctx.match]); });
 bot.command('accounts', (ctx) => { hits.push(['accounts', ctx.match]); });
@@ -260,6 +261,13 @@ await bot.handleUpdate(upd('/topicsreset'));
 check('/topicsreset не достался /topics', hits.at(-1)?.[0] === 'topicsreset', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/topics', [{ type: 'code', offset: 0, length: 7 }]));
 check('/topics распознан и скопированным как код', hits.at(-1)?.[0] === 'topics');
+// Третья из того же семейства: /topicback возвращает одну тему в подбор.
+await bot.handleUpdate(upd('/topicback'));
+check('/topicback не достался /topics', hits.at(-1)?.[0] === 'topicback', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/topicback 2'));
+check('и аргумент до него доходит', hits.at(-1)?.[1] === '2', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/topicback шесть пальцев'));
+check('название с пробелами тоже', hits.at(-1)?.[1] === 'шесть пальцев', JSON.stringify(hits.at(-1)));
 
 // Привязка аккаунтов. /link и /library начинаются одинаково — та же ловушка,
 // на которой раньше ломались /library с /length.

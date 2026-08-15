@@ -308,6 +308,38 @@ export function rememberShotTopic(chatId: number, topic: string): void {
   persist();
 }
 
+/**
+ * Вернуть одну тему в подбор.
+ *
+ * Тема запоминается сразу при выборе, а не после удачной сборки — иначе она
+ * предлагалась бы снова назавтра. Обратная сторона нашлась в работе: ролик не
+ * доснят, идея понравилась, а тема уже занята. Стирать ради этого всю память
+ * (`/topicsreset`) — потерять защиту от повторов за два месяца.
+ *
+ * @param which номер в списке (0 — самая свежая) или часть названия
+ * @returns что именно убрали, либо undefined, если не нашли
+ */
+export function forgetShotTopic(
+  chatId: number,
+  which: number | string = 0,
+): string | undefined {
+  const key = String(chatId);
+  const topics = store.shotTopics?.[key] ?? [];
+  const index =
+    typeof which === "number"
+      ? which
+      : topics.findIndex((t) =>
+          t.toLowerCase().includes(which.trim().toLowerCase()),
+        );
+  if (index < 0 || index >= topics.length) return undefined;
+
+  const [removed] = topics.splice(index, 1);
+  store.shotTopics ??= {};
+  store.shotTopics[key] = topics;
+  persist();
+  return removed;
+}
+
 /** Забыть снятые темы — на случай смены ниши канала. */
 export function forgetShotTopics(chatId: number): void {
   store.shotTopics ??= {};

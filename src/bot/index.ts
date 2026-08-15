@@ -194,6 +194,7 @@ import {
   getProfile,
   getSession,
   listProfiles,
+  forgetShotTopic,
   listShotTopics,
   rememberShotTopic,
   resetSession,
@@ -1161,6 +1162,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/clonemore — добавить материал в уже созданный клон\n" +
       "/stems — разобрать чужую дорожку: что играет под речью\n" +
       "/autopilot — генерация без подтверждений на каждом шаге\n" +
+      "/topicback — вернуть тему в подбор (ролик не доснят)\n" +
       "/topicsreset — забыть снятые темы (смена ниши канала)\n" +
       "/accounts — подключённые аккаунты соцсетей (Zernio)\n" +
       "/link — привязать аккаунт соцсети\n" +
@@ -2392,6 +2394,41 @@ bot.command("topics", async (ctx) => {
   await sendTopics(ctx, ctx.chat.id);
 });
 
+bot.command("topicback", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const shot = listShotTopics(chatId);
+  if (shot.length === 0) {
+    await ctx.reply("Снятых тем пока нет — возвращать нечего.");
+    return;
+  }
+
+  const arg = (ctx.match ?? "").trim();
+  // Без аргумента — последняя выбранная: обычно её и хотят вернуть, потому
+  // что ролик не доснят. С числом — из списка ниже, с текстом — по названию.
+  const which = arg ? (/^\d+$/.test(arg) ? Number(arg) - 1 : arg) : 0;
+  const removed = forgetShotTopic(chatId, which);
+  if (!removed) {
+    await ctx.reply(
+      `Не нашёл такую тему. Снятые темы:\n\n${numberedTopics(shot)}\n\n` +
+        "Вернуть: /topicback <номер> или /topicback <часть названия>.",
+    );
+    return;
+  }
+
+  const left = listShotTopics(chatId);
+  await ctx.reply(
+    `Вернул в подбор: «${removed}».\n\n` +
+      `Снятых тем осталось ${left.length}. Теперь /topics может предложить ` +
+      "её снова — или начните ролик сразу: /new." +
+      (left.length > 0 ? `\n\nПоследние:\n${numberedTopics(left.slice(0, 5))}` : ""),
+  );
+});
+
+/** Пронумерованный список тем — по этим номерам работает /topicback. */
+function numberedTopics(topics: string[]): string {
+  return topics.map((title, i) => `${i + 1}. ${title}`).join("\n");
+}
+
 bot.command("topicsreset", async (ctx) => {
   const chatId = ctx.chat.id;
   const had = listShotTopics(chatId).length;
@@ -2424,8 +2461,8 @@ bot.callbackQuery(/^topic_(\d+)$/, async (ctx) => {
     : topicBrief(topic);
   updateSession(chatId, { brief, step: "idle" });
   // Запоминаем СРАЗУ, а не после удачной сборки: если ролик не вышел, тема всё
-  // равно уже обдумана, и предлагать её завтра снова незачем. Вернуть можно
-  // через /topicsreset.
+  // равно уже обдумана, и предлагать её завтра снова незачем. Одну тему можно
+  // вернуть — /topicback, всю память чистит /topicsreset.
   rememberShotTopic(chatId, topic.title);
   await ctx.reply(`Тема: ${topic.title}\n\nПишу сценарий…`);
   await runScriptStep(ctx, chatId);
