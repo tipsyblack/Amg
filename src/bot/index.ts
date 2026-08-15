@@ -2426,9 +2426,15 @@ bot.callbackQuery(/^zunlink_(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   // Отключение необратимо: подключать придётся заново через OAuth. Поэтому
   // спрашиваем ещё раз, а не выполняем по первому касанию.
+  //
+  // Кнопка отмены называется zcancel, а НЕ zunlink_cancel. Второе выглядит
+  // стройнее, но попадает вот в этот же обработчик: «Отмена» читалась бы как
+  // аккаунт с id «cancel», и диалог подтверждения показывался бы снова. Проверено
+  // на настоящем grammY — порядок регистрации тут не спасает, потому что этот
+  // обработчик стоит выше.
   const keyboard = new InlineKeyboard()
     .text("Да, отключить", `zunlinkyes_${accountId}`)
-    .text("Отмена", "zunlink_cancel");
+    .text("Отмена", "zcancel");
   await ctx.reply(
     "Отключить аккаунт? Публиковать в него будет нельзя, а обратно — только " +
       "через повторный вход по ссылке.",
@@ -2436,7 +2442,7 @@ bot.callbackQuery(/^zunlink_(.+)$/, async (ctx) => {
   );
 });
 
-bot.callbackQuery("zunlink_cancel", async (ctx) => {
+bot.callbackQuery("zcancel", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply("Оставил как есть.");
 });

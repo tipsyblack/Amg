@@ -270,4 +270,28 @@ check('аргумент дошёл целиком', hits.at(-1)?.[1] === 'ZERNIO
 await bot.handleUpdate(upd('/restart'));
 check('/restart распознан', hits.at(-1)?.[0] === 'restart');
 
+// Кнопки отвязки аккаунта: «Отмена» не должна попадать в обработчик,
+// который ждёт id аккаунта. Раньше она называлась zunlink_cancel и попадала —
+// диалог подтверждения показывался снова вместо отмены.
+const cbHits = [];
+bot.callbackQuery(/^zunlink_(.+)$/, (ctx) => { cbHits.push(['подтверждение', ctx.match[1]]); });
+bot.callbackQuery('zcancel', () => { cbHits.push(['отмена']); });
+bot.callbackQuery(/^zunlinkyes_(.+)$/, (ctx) => { cbHits.push(['удаляю', ctx.match[1]]); });
+bot.api.config.use(async () => ({ ok: true, result: true }));
+
+const cq = (data) => ({
+  update_id: Math.floor(Math.random() * 1e6),
+  callback_query: {
+    id: '1', from: { id: 1, is_bot: false, first_name: 'U' }, chat_instance: 'x', data,
+    message: { message_id: 1, date: 0, chat: { id: 1, type: 'private' } },
+  },
+});
+
+await bot.handleUpdate(cq('zunlink_abc123'));
+check('нажатие на аккаунт спрашивает подтверждение', cbHits.at(-1)?.[0] === 'подтверждение' && cbHits.at(-1)?.[1] === 'abc123', JSON.stringify(cbHits.at(-1)));
+await bot.handleUpdate(cq('zcancel'));
+check('«Отмена» отменяет, а не спрашивает снова', cbHits.at(-1)?.[0] === 'отмена', JSON.stringify(cbHits.at(-1)));
+await bot.handleUpdate(cq('zunlinkyes_abc123'));
+check('подтверждение доходит до удаления', cbHits.at(-1)?.[0] === 'удаляю' && cbHits.at(-1)?.[1] === 'abc123', JSON.stringify(cbHits.at(-1)));
+
 process.exit(fails === 0 ? 0 : 1);
