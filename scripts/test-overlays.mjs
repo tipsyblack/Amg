@@ -102,7 +102,7 @@ check(
 check("а не в начале сцены", atWord > 0);
 // Сценарист пишет слово в начальной форме, в реплике оно склоняется.
 const declined = overlayStartMs(
-  estimateWordTimings("Он сбрасывает тепло радиатором в космос", 4).map(({ text, startMs, endMs }) => ({ text, startMs, endMs })),
+  estimateWordTimings("Она дорисовывает пальцы похоже, а не считает", 4).map(({ text, startMs, endMs }) => ({ text, startMs, endMs })),
   "радиатор",
   4000,
 );

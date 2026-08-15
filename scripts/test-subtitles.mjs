@@ -45,7 +45,7 @@ check(
 );
 
 console.log("\n=== приблизительный расчёт без выравнивания ===");
-const text = "Прикол в том, что в космосе минус двести семьдесят.";
+const text = "Дело в том, что руки в обучении почти всегда мелкие.";
 const est = estimateWordTimings(text, 4);
 check("слов столько же, сколько в тексте", est.length === text.split(/\s+/).length, String(est.length));
 check("первое слово с нуля", est[0].startMs === 0);
@@ -62,7 +62,7 @@ check(
   "длинному слову достаётся больше времени",
   (() => {
     const short = est.find((w) => w.text === "в");
-    const long = est.find((w) => w.text.startsWith("семьдесят"));
+    const long = est.find((w) => w.text.startsWith("обучении"));
     return long.endMs - long.startMs > short.endMs - short.startMs;
   })(),
 );
