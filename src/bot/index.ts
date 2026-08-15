@@ -954,6 +954,20 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         `${formatMb(await fileSizeBytes(videoFile))}`,
     });
 
+    // Ролик запоминаем ДО описания.
+    //
+    // Раньше это стояло внутри блока с описанием, и получалось так: ролик
+    // отрендерен, отправлен, лежит на диске — а если описание не сгенерировалось
+    // (сеть, лимит), /publish отвечал «публиковать нечего». Описание — текст
+    // под пост, из-за него нельзя терять сам ролик. Пока описания нет, в
+    // подписи будет название из сценария; настоящее подставим следом.
+    rememberVideo(chatId, {
+      file: publishFile,
+      title: script.title,
+      description: script.title,
+      at: new Date().toISOString(),
+    });
+
     // Текст под пост отдельным сообщением: так его удобно скопировать целиком,
     // не выцепляя из подписи к файлу.
     try {
@@ -972,6 +986,7 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
         "Новый ролик — /new",
       ].filter(Boolean);
       await ctx.reply(notes.join(" "));
+      // Настоящее описание поверх заглушки: именно оно уйдёт текстом поста.
       rememberVideo(chatId, {
         file: publishFile,
         title: script.title,
@@ -980,15 +995,23 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
       });
       if (isZernioConfigured()) {
         await ctx.reply(
-          "Опубликовать: /publish — сразу, /schedule 18:00 — на время.",
+          "Это же описание уйдёт текстом поста. Поменять — /caption, " +
+            "опубликовать — /publish или /schedule 18:00",
         );
       }
     } catch (error) {
-      // Видео уже отправлено — из-за описания ролик терять нельзя.
+      // Видео уже отправлено и уже запомнено — из-за описания ролик терять
+      // нельзя. Публиковать можно, но текстом поста будет название сценария,
+      // и об этом надо сказать прямо.
       await ctx.reply(
         `Описание не получилось (${
           error instanceof Error ? error.message : String(error)
-        }). Видео выше готово. Новый ролик — /new`,
+        }). Видео выше готово.` +
+          (isZernioConfigured()
+            ? " Опубликовать его можно, но текстом поста пойдёт название " +
+              "ролика — задайте свой текст командой /caption."
+            : "") +
+          " Новый ролик — /new",
       );
     }
     resetSession(chatId);
@@ -1025,6 +1048,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/accounts — подключённые аккаунты соцсетей (Zernio)\n" +
       "/link — привязать аккаунт соцсети\n" +
       "/unlink — отвязать аккаунт\n" +
+      "/caption — посмотреть или заменить текст поста\n" +
       "/publish — опубликовать последний ролик сразу\n" +
       "/schedule 18:00 — опубликовать по времени\n" +
       "/poststatus — что с последней публикацией\n" +
@@ -2452,6 +2476,28 @@ async function publishFlow(
     await ctx.reply(error instanceof Error ? error.message : String(error));
   }
 }
+
+bot.command("caption", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const video = getLastVideo(chatId);
+  if (!video) {
+    await ctx.reply("Ролика пока нет — задавать текст не к чему.");
+    return;
+  }
+  const text = (ctx.match ?? "").trim();
+  if (!text) {
+    await ctx.reply(
+      `Текст поста сейчас (${video.description.length} символов):\n\n` +
+        video.description +
+        "\n\nПоменять: /caption и следом новый текст одним сообщением.",
+    );
+    return;
+  }
+  rememberVideo(chatId, { ...video, description: text });
+  await ctx.reply(
+    `Готово, ${text.length} символов. Публиковать: /publish или /schedule 18:00`,
+  );
+});
 
 bot.command("publish", async (ctx) => {
   if (!(await requireZernio(ctx))) return;

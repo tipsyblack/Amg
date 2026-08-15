@@ -51,6 +51,7 @@ bot.command('accounts', (ctx) => { hits.push(['accounts', ctx.match]); });
 bot.command('keys', (ctx) => { hits.push(['keys', ctx.match]); });
 bot.command('setkey', (ctx) => { hits.push(['setkey', ctx.match]); });
 bot.command('restart', (ctx) => { hits.push(['restart', ctx.match]); });
+bot.command('caption', (ctx) => { hits.push(['caption', ctx.match]); });
 bot.command('publish', (ctx) => { hits.push(['publish', ctx.match]); });
 bot.command('schedule', (ctx) => { hits.push(['schedule', ctx.match]); });
 bot.command('poststatus', (ctx) => { hits.push(['poststatus', ctx.match]); });
@@ -279,6 +280,8 @@ check('/restart распознан', hits.at(-1)?.[0] === 'restart');
 // проверяем, что ничего не перехватывает друг друга.
 await bot.handleUpdate(upd('/publish'));
 check('/publish распознан', hits.at(-1)?.[0] === 'publish', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/caption Новый текст поста #нейросети'));
+check('/caption берёт текст целиком', hits.at(-1)?.[0] === 'caption' && hits.at(-1)?.[1] === 'Новый текст поста #нейросети', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/schedule 18:00'));
 check('/schedule получил время', hits.at(-1)?.[0] === 'schedule' && hits.at(-1)?.[1] === '18:00', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/schedule завтра 09:30'));

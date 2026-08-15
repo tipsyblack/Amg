@@ -61,6 +61,25 @@ const scheduled = buildPostBody(VIDEO, "u", targets, { scheduledFor: "2026-08-15
 check("в отложенном есть время и пояс", scheduled.scheduledFor === "2026-08-15T15:00:00.000Z" && scheduled.timezone === "Europe/Moscow");
 check("и нет publishNow", scheduled.publishNow === undefined);
 
+console.log("\n=== описание идёт текстом поста ===");
+// Прямой ответ на вопрос: подтягивается ли сгенерированное описание. Да —
+// оно и есть content поста, один и тот же текст на все площадки.
+const withDesc = buildPostBody(
+  { file: "/tmp/v.mp4", title: "Заголовок ролика", description: "Текст под пост #нейросети" },
+  "https://cdn/v.mp4",
+  [{ platform: "instagram", accountId: "a1" }, { platform: "youtube", accountId: "a2" }],
+  { publishNow: true },
+);
+check("описание — это текст поста", withDesc.content === "Текст под пост #нейросети");
+check("хештеги из описания не теряются", /#нейросети/.test(withDesc.content));
+check("текст один на все площадки", withDesc.platforms.every((p) => p.customContent === undefined));
+// У YouTube заголовок отдельный: там подпись и название — разные поля.
+check(
+  "у YouTube заголовок отдельно от текста",
+  withDesc.platforms[1].platformSpecificData.title === "Заголовок ролика" &&
+    withDesc.content !== "Заголовок ролика",
+);
+
 console.log("\n=== расписание понимается по поясу канала ===");
 // Сервер живёт по UTC, канал — по Москве. Без пояса «в шесть вечера» уехало бы
 // на три часа, и заметили бы это только по охватам.
