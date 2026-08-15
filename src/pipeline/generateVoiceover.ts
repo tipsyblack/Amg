@@ -96,7 +96,13 @@ export async function synthesizeSpeech(
   if (provider === "elevenlabs") {
     // Прямой путь умеет отдавать тайминги символов — из них получаются
     // субтитры по словам без всякого распознавания.
-    return synthesizeSpeechDirect(text, outFile, voice, config.wordSubtitles);
+    return synthesizeSpeechDirect(
+      text,
+      outFile,
+      voice,
+      modelOverride,
+      config.wordSubtitles,
+    );
   }
 
   // У прокси Kie.ai таймингов нет: поле timestamps в их схеме есть, но что

@@ -49,6 +49,7 @@ import {
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import { describeSpeed, parseSpeed, setSpeechSpeed } from "../pipeline/speech";
+import { DIRECT_TTS_MODELS, directModelNote } from "../pipeline/ttsModels";
 import {
   dayLabel,
   hourCells,
@@ -1748,19 +1749,35 @@ bot.callbackQuery(/^scriptmodel_(.+)$/, async (ctx) => {
 
 bot.command("ttsmodel", async (ctx) => {
   const chatId = ctx.chat.id;
+  const session = getSession(chatId);
+  const provider = session.ttsProvider ?? config.ttsProvider;
   const requested = ctx.match.trim();
+
   if (!requested) {
+    const current =
+      session.ttsModel ??
+      (provider === "elevenlabs" ? config.elevenLabsModelId : config.kieTtsModel);
     await ctx.reply(
-      `Текущая модель озвучки: ${getSession(chatId).ttsModel ?? config.kieTtsModel}\n\n` +
-        "Сменить: /ttsmodel <слаг модели>\n" +
+      `Текущая модель озвучки: ${current}\n` +
+        `Путь озвучки: ${provider === "elevenlabs" ? "прямой ElevenLabs" : "прокси Kie.ai"}\n\n` +
+        (provider === "elevenlabs"
+          ? `Модели прямого пути: ${DIRECT_TTS_MODELS.join(", ")}\n\n`
+          : "") +
+        "Сменить: /ttsmodel <имя модели>\n" +
         "Найти рабочую автоматически: /diag\n" +
         "Модель сценария — /model.",
     );
     return;
   }
+
   updateSession(chatId, { ttsModel: requested });
+  // На прямом пути имя модели другое, чем у прокси. Раньше настройка туда не
+  // доходила вовсе, и человек не понимал, почему ничего не изменилось.
+  const note = provider === "elevenlabs" ? directModelNote(requested) : undefined;
   await ctx.reply(
-    `Модель озвучки: ${requested}. Проверить — /voice ${getSession(chatId).voice ?? config.kieTtsVoice}`,
+    `Модель озвучки: ${requested}.` +
+      (note ? `\n\n${note}` : "") +
+      `\n\nПроверить — /voice ${session.voice ?? config.kieTtsVoice}`,
   );
 });
 

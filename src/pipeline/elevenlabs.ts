@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import type { Caption } from "@remotion/captions";
 import { config } from "./config";
 import { speechSpeed } from "./speech";
+import { directModelId } from "./ttsModels";
 import { resolveVoiceId } from "./voices";
 import { charactersToWords, type AlignmentPayload } from "./wordTimings";
 
@@ -70,6 +71,7 @@ export async function synthesizeSpeechDirect(
   text: string,
   outFile: string,
   voiceOverride?: string,
+  modelOverride?: string,
   // Запросить выравнивание по символам вместе с аудио — из него собираются
   // тайминги слов для субтитров. Отдельный эндпоинт, зато не нужно ничего
   // распознавать: модель сама знает, когда произносит каждый символ.
@@ -96,7 +98,7 @@ export async function synthesizeSpeechDirect(
     },
     body: JSON.stringify({
       text,
-      model_id: config.elevenLabsModelId,
+      model_id: directModelId(modelOverride),
       // use_speaker_boost работает только здесь, у прямого API: он заметно
       // добавляет сходства с оригинальным тембром клона.
       voice_settings: {

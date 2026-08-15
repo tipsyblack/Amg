@@ -124,7 +124,17 @@ export const config = {
   // Резервная озвучка напрямую через ElevenLabs — нужна, когда прокси Kie.ai
   // для их моделей лежит. Провайдер: "kie" (по умолчанию) или "elevenlabs";
   // переключается командой /tts в боте.
-  ttsProvider: (env("TTS_PROVIDER") ?? "kie") as "kie" | "elevenlabs",
+  // По умолчанию прямой ElevenLabs, а не прокси Kie.ai.
+  //
+  // Причина не в предпочтениях, а в устройстве: озвучка идёт ОДНИМ чтением
+  // всего сценария с последующей нарезкой по таймингам слов, а тайминги
+  // отдаёт только прямой путь. Через прокси их нет — и озвучка молча
+  // откатывается на посценную, с рваной интонацией и приблизительными
+  // субтитрами. Умолчание должно соответствовать тому, как система работает
+  // на самом деле.
+  //
+  // Kie.ai остаётся запасным путём: TTS_PROVIDER=kie или /tts kie.
+  ttsProvider: (env("TTS_PROVIDER") ?? "elevenlabs") as "kie" | "elevenlabs",
   elevenLabsApiKey: env("ELEVENLABS_API_KEY"),
   elevenLabsModelId: env("ELEVENLABS_MODEL_ID") ?? "eleven_multilingual_v2",
   kieImageModel: env("KIE_IMAGE_MODEL") ?? "google/nano-banana-edit",

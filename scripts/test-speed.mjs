@@ -88,6 +88,36 @@ check("остальные настройки голоса на месте", type
 const { buildTtsInput } = await import("../src/pipeline/generateVoiceover.ts");
 check("путь Kie.ai шлёт ту же скорость", buildTtsInput("текст", "voice").speed === 1.15, String(buildTtsInput("т", "v").speed));
 
+console.log("\n=== путь озвучки и модель ===");
+// Озвучка идёт прямым ElevenLabs, а не через прокси: единая озвучка требует
+// таймингов слов, а их отдаёт только прямой путь.
+check("по умолчанию прямой ElevenLabs", config.ttsProvider === "elevenlabs", config.ttsProvider);
+
+const { directModelId, directModelNote, isDirectModel, DIRECT_TTS_MODELS } =
+  await import("../src/pipeline/ttsModels.ts");
+check("имя модели ElevenLabs узнаётся", isDirectModel("eleven_multilingual_v2"));
+check("имя из набора Kie.ai — не оно", !isDirectModel("elevenlabs/text-to-speech-multilingual-v2"));
+check("своё имя проходит как есть", directModelId("eleven_v3") === "eleven_v3");
+check(
+  "имя из Kie.ai переводится",
+  directModelId("elevenlabs/text-to-speech-multilingual-v2") === "eleven_multilingual_v2",
+);
+// Незнакомое имя лучше заменить умолчанием, чем получить отказ уже в запросе.
+check("незнакомое имя — модель по умолчанию", directModelId("что-то своё") === config.elevenLabsModelId);
+check("пустое — тоже умолчание", directModelId("") === config.elevenLabsModelId && directModelId(undefined) === config.elevenLabsModelId);
+check("про перевод имени бот скажет", /перевёл имя/.test(directModelNote("elevenlabs/text-to-speech-multilingual-v2")));
+check("про незнакомое имя скажет тоже", /такой модели нет/.test(directModelNote("нечто")));
+check("про своё имя молчит", directModelNote("eleven_v3") === undefined);
+check("список моделей непустой", DIRECT_TTS_MODELS.length >= 3);
+
+// Настройка модели должна доходить до запроса — раньше на прямом пути она
+// игнорировалась, и /ttsmodel там не делал ничего.
+setSpeechSpeed(1.15);
+await synthesizeSpeechDirect("текст", path.join(dir, "b.mp3"), undefined, "eleven_v3", true);
+check("модель из настройки ушла в запрос", sent.body.model_id === "eleven_v3", String(sent.body.model_id));
+await synthesizeSpeechDirect("текст", path.join(dir, "c.mp3"), undefined, undefined, true);
+check("без настройки — модель из .env", sent.body.model_id === config.elevenLabsModelId, String(sent.body.model_id));
+
 console.log("\n=== бюджет слов растёт вместе со скоростью ===");
 // Ускорили речь и не тронули бюджет — ролик выйдет короче лимита, и мы просто
 // потеряем секунды, за которые могли бы что-то рассказать.
