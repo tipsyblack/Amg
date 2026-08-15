@@ -48,6 +48,19 @@ import {
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import {
+  accountLine,
+  connectUrl,
+  disconnectAccount,
+  isZernioConfigured,
+  listAccounts,
+  listProfiles as listZernioProfiles,
+  platformTitle,
+  PRIMARY_PLATFORMS,
+  resolveProfileId,
+  ZERNIO_PLATFORMS,
+  type ZernioPlatform,
+} from "../pipeline/zernio";
+import {
   isFreshTopic,
   suggestNewsTopics,
   topicBrief,
@@ -969,6 +982,10 @@ bot.command(["start", "help"], async (ctx) => {
       "/stems — разобрать чужую дорожку: что играет под речью\n" +
       "/autopilot — генерация без подтверждений на каждом шаге\n" +
       "/topicsreset — забыть снятые темы (смена ниши канала)\n" +
+      "/accounts — подключённые аккаунты соцсетей (Zernio)\n" +
+      "/link — привязать аккаунт соцсети\n" +
+      "/unlink — отвязать аккаунт\n" +
+      "/zprofiles — профили Zernio\n" +
       "/diag — проверить озвучку и найти рабочую модель\n" +
       "/deploy — обновить бота с GitHub прямо сейчас\n\n" +
       "Порядок: бриф → референс (по желанию) → сценарий с правками → " +
@@ -2143,6 +2160,175 @@ bot.callbackQuery("topic_more", async (ctx) => {
     return;
   }
   await sendTopics(ctx, ctx.chat!.id);
+});
+
+// ——— Привязка аккаунтов соцсетей через Zernio ———
+//
+// Только привязка: посмотреть подключённое, подключить новое, отключить.
+// Публикация — отдельная работа, её просили сделать позже, и мешать в одну
+// кучу не стоит: привязку можно проверить руками сегодня, а постинг тянет за
+// собой расписание, лимиты площадок и разбор ошибок публикации.
+
+async function requireZernio(ctx: Context): Promise<boolean> {
+  if (isZernioConfigured()) return true;
+  await ctx.reply(
+    "Zernio не подключён: нет ZERNIO_API_KEY.\n\n" +
+      "Ключ берётся в личном кабинете zernio.com и кладётся в .env НА СЕРВЕРЕ — " +
+      "в репозиторий он не попадает, репозиторий публичный. После правки .env " +
+      "перезапустите бота: /deploy",
+  );
+  return false;
+}
+
+bot.command("accounts", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  await ctx.reply("Смотрю подключённые аккаунты…");
+  try {
+    const profileId = await resolveProfileId();
+    const accounts = await listAccounts(profileId);
+    if (accounts.length === 0) {
+      await ctx.reply(
+        "Подключённых аккаунтов нет. Подключить: /link",
+      );
+      return;
+    }
+    const broken = accounts.filter((a) => a.needsReconnection);
+    await ctx.reply(
+      `Подключено ${accounts.length}:\n\n` +
+        accounts.map((a) => `• ${accountLine(a)}`).join("\n") +
+        (broken.length > 0
+          ? `\n\n⚠️ ${broken.length} аккаунт(ов) требуют повторной привязки — ` +
+            "площадка сообщила, что доступ отозван. Лечится тем же /link."
+          : "") +
+        "\n\nПодключить ещё — /link, отключить — /unlink",
+    );
+  } catch (error) {
+    await ctx.reply(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+});
+
+bot.command("link", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  const keyboard = new InlineKeyboard();
+  for (const platform of PRIMARY_PLATFORMS) {
+    keyboard.text(platformTitle(platform), `zlink_${platform}`).row();
+  }
+  keyboard.text("Другие площадки", "zlink_more");
+  await ctx.reply(
+    "Какую площадку подключаем?\n\n" +
+      "⚠️ ВКонтакте Zernio не поддерживает — VK Клипы придётся заливать " +
+      "отдельно. Список площадок взят из их спецификации, не из головы.",
+    { reply_markup: keyboard },
+  );
+});
+
+bot.callbackQuery("zlink_more", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const keyboard = new InlineKeyboard();
+  const rest = ZERNIO_PLATFORMS.filter((p) => !PRIMARY_PLATFORMS.includes(p));
+  rest.forEach((platform, i) => {
+    keyboard.text(platformTitle(platform), `zlink_${platform}`);
+    if (i % 2 === 1) keyboard.row();
+  });
+  await ctx.reply("Остальные площадки:", { reply_markup: keyboard });
+});
+
+bot.callbackQuery(/^zlink_(.+)$/, async (ctx) => {
+  const platform = ctx.match![1] as ZernioPlatform;
+  await ctx.answerCallbackQuery();
+  if (!ZERNIO_PLATFORMS.includes(platform)) return;
+  if (!(await requireZernio(ctx))) return;
+
+  try {
+    const profileId = await resolveProfileId();
+    const url = await connectUrl(platform, profileId);
+    await ctx.reply(
+      `Подключение ${platformTitle(platform)}.\n\n` +
+        "Откройте ссылку и войдите в свой аккаунт — дальше Zernio всё сделает " +
+        "сам и вернёт вас обратно:\n\n" +
+        url +
+        "\n\n⚠️ Ссылка одноразовая и привязывает аккаунт К НАШЕМУ профилю " +
+        "Zernio. Никому её не пересылайте.\n\n" +
+        "Когда закончите — /accounts, там будет видно, подключилось ли.",
+      { link_preview_options: { is_disabled: true } },
+    );
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+  }
+});
+
+bot.command("unlink", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  try {
+    const profileId = await resolveProfileId();
+    const accounts = await listAccounts(profileId);
+    if (accounts.length === 0) {
+      await ctx.reply("Отключать нечего — подключённых аккаунтов нет.");
+      return;
+    }
+    const keyboard = new InlineKeyboard();
+    for (const account of accounts) {
+      keyboard.text(accountLine(account).slice(0, 60), `zunlink_${account.id}`).row();
+    }
+    await ctx.reply("Какой аккаунт отключить?", { reply_markup: keyboard });
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+  }
+});
+
+bot.callbackQuery(/^zunlink_(.+)$/, async (ctx) => {
+  const accountId = ctx.match![1];
+  await ctx.answerCallbackQuery();
+  // Отключение необратимо: подключать придётся заново через OAuth. Поэтому
+  // спрашиваем ещё раз, а не выполняем по первому касанию.
+  const keyboard = new InlineKeyboard()
+    .text("Да, отключить", `zunlinkyes_${accountId}`)
+    .text("Отмена", "zunlink_cancel");
+  await ctx.reply(
+    "Отключить аккаунт? Публиковать в него будет нельзя, а обратно — только " +
+      "через повторный вход по ссылке.",
+    { reply_markup: keyboard },
+  );
+});
+
+bot.callbackQuery("zunlink_cancel", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Оставил как есть.");
+});
+
+bot.callbackQuery(/^zunlinkyes_(.+)$/, async (ctx) => {
+  const accountId = ctx.match![1];
+  await ctx.answerCallbackQuery();
+  if (!(await requireZernio(ctx))) return;
+  try {
+    await disconnectAccount(accountId);
+    await ctx.reply("Отключил. Список: /accounts");
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+  }
+});
+
+bot.command("zprofiles", async (ctx) => {
+  if (!(await requireZernio(ctx))) return;
+  try {
+    const profiles = await listZernioProfiles();
+    const active = await resolveProfileId();
+    await ctx.reply(
+      "Профили Zernio (аккаунты подключаются внутрь профиля):\n\n" +
+        profiles
+          .map(
+            (p) =>
+              `• ${p.name}${p.isDefault ? " (по умолчанию)" : ""}` +
+              `${p.id === active ? " ← используем" : ""}`,
+          )
+          .join("\n") +
+        "\n\nСменить — задайте ZERNIO_PROFILE_ID в .env на сервере.",
+    );
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+  }
 });
 
 bot.command("autopilot", async (ctx) => {

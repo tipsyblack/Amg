@@ -45,6 +45,9 @@ bot.command('addmusic', (ctx) => { hits.push(['addmusic', ctx.match]); });
 bot.command('autopilot', (ctx) => { hits.push(['autopilot', ctx.match]); });
 bot.command('topics', (ctx) => { hits.push(['topics', ctx.match]); });
 bot.command('topicsreset', (ctx) => { hits.push(['topicsreset', ctx.match]); });
+bot.command('link', (ctx) => { hits.push(['link', ctx.match]); });
+bot.command('library', (ctx) => { hits.push(['library2', ctx.match]); });
+bot.command('accounts', (ctx) => { hits.push(['accounts', ctx.match]); });
 bot.on('message:text', (ctx) => { hits.push(['fallback', ctx.message.text]); });
 
 const upd = (text, entities) => ({
@@ -247,5 +250,12 @@ await bot.handleUpdate(upd('/topicsreset'));
 check('/topicsreset не достался /topics', hits.at(-1)?.[0] === 'topicsreset', JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(upd('/topics', [{ type: 'code', offset: 0, length: 7 }]));
 check('/topics распознан и скопированным как код', hits.at(-1)?.[0] === 'topics');
+
+// Привязка аккаунтов. /link и /library начинаются одинаково — та же ловушка,
+// на которой раньше ломались /library с /length.
+await bot.handleUpdate(upd('/link'));
+check('/link не достался /library', hits.at(-1)?.[0] === 'link', JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(upd('/accounts'));
+check('/accounts распознан', hits.at(-1)?.[0] === 'accounts');
 
 process.exit(fails === 0 ? 0 : 1);

@@ -30,6 +30,7 @@
     "test:description": "tsx scripts/test-description.mjs",
     "test:clips": "tsx scripts/test-clips.mjs",
     "test:topics": "tsx scripts/test-topics.mjs",
+    "test:zernio": "tsx scripts/test-zernio.mjs",
     "sfx:import": "node scripts/import-sfx.mjs",
     "clips:build": "tsx scripts/build-clip-library.mjs",
     "character:ref": "node scripts/build-character-reference.mjs"
