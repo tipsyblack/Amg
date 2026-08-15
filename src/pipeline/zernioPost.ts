@@ -485,3 +485,26 @@ export function publishableTargets(accounts: ZernioAccount[]): PostTarget[] {
     .filter((a) => a.isActive && !a.needsReconnection)
     .map((a) => ({ platform: a.platform, accountId: a.id }));
 }
+
+
+/**
+ * Уже запланированные публикации — чтобы отметить занятые дни в календаре.
+ *
+ * Сбой этого запроса не должен ломать календарь: отметки полезны, но без них
+ * выбрать день по-прежнему можно. Поэтому ошибки здесь глотаются осознанно —
+ * единственное место в этом файле, где так делается.
+ */
+export async function listScheduledDates(profileId?: string): Promise<string[]> {
+  try {
+    const query = new URLSearchParams({ status: "scheduled", limit: "200" });
+    if (profileId) query.set("profileId", profileId);
+    const data = await request<{ posts?: { scheduledFor?: string }[] }>(
+      `/v1/posts?${query.toString()}`,
+    );
+    return (data.posts ?? [])
+      .map((p) => p.scheduledFor)
+      .filter((x): x is string => Boolean(x));
+  } catch {
+    return [];
+  }
+}

@@ -49,6 +49,21 @@ import {
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import {
+  dayLabel,
+  hourCells,
+  hourLabel,
+  humanDate,
+  markedDays,
+  monthGrid,
+  monthTitle,
+  nextMonth,
+  parseDateTime,
+  pickedMoment,
+  prevMonth,
+  todayIn,
+  WEEKDAYS,
+} from "./calendar";
+import {
   buildPostBody,
   createPost,
   getPost,
@@ -56,6 +71,7 @@ import {
   postStateLines,
   publishableTargets,
   retryPost,
+  listScheduledDates,
   uploadVideo,
   validatePost,
   isSettled,
@@ -1050,7 +1066,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/unlink — отвязать аккаунт\n" +
       "/caption — посмотреть или заменить текст поста\n" +
       "/publish — опубликовать последний ролик сразу\n" +
-      "/schedule 18:00 — опубликовать по времени\n" +
+      "/schedule — календарь публикации (или /schedule 18:00)\n" +
       "/poststatus — что с последней публикацией\n" +
       "/retrypost — повторить неудачные площадки\n" +
       "/zprofiles — профили Zernio\n" +
@@ -2477,6 +2493,131 @@ async function publishFlow(
   }
 }
 
+// ——— Календарь публикации ———
+//
+// Кнопками, а не текстом: набирать дату каждый раз неудобно, а промахнуться
+// легко. Занятые дни помечены конвертом — видно, на что уже что-то стоит.
+//
+// Всё считается в поясе канала: сервер живёт по UTC, и «сегодня» у него и у
+// человека — разные дни.
+
+async function sendCalendar(
+  ctx: Context,
+  year: number,
+  month: number,
+  edit = false,
+): Promise<void> {
+  const tz = config.postTimezone;
+  const today = todayIn(tz);
+
+  // Отметки — приятная мелочь, а не условие: если список не пришёл, календарь
+  // всё равно должен открыться.
+  let marked = new Set<number>();
+  try {
+    const profileId = await resolveProfileId();
+    marked = markedDays(await listScheduledDates(profileId), year, month, tz);
+  } catch {
+    // Молча: причину человек увидит на самой публикации.
+  }
+
+  const keyboard = new InlineKeyboard();
+  const prev = prevMonth(year, month);
+  const next = nextMonth(year, month);
+  keyboard
+    .text(`‹ ${monthTitle(prev.year, prev.month).split(" ")[0]}`, `cal_${prev.year}_${prev.month}`)
+    .text(monthTitle(year, month), "cal_noop")
+    .text(`${monthTitle(next.year, next.month).split(" ")[0]} ›`, `cal_${next.year}_${next.month}`)
+    .row();
+  for (const day of WEEKDAYS) keyboard.text(day, "cal_noop");
+  keyboard.row();
+
+  for (const week of monthGrid(year, month, today, marked)) {
+    for (const cell of week) {
+      keyboard.text(
+        dayLabel(cell),
+        cell.day === null || cell.isPast
+          ? "cal_noop"
+          : `calday_${year}_${month}_${cell.day}`,
+      );
+    }
+    keyboard.row();
+  }
+
+  const text =
+    "🕐 В какой день опубликовать?\n\n" +
+    `Выберите дату или пришлите в формате: ${String(today.day).padStart(2, "0")}-` +
+    `${String(today.month).padStart(2, "0")}-${today.year}, ` +
+    `${String(today.hours).padStart(2, "0")}:${String(today.minutes).padStart(2, "0")}\n\n` +
+    `Часовой пояс канала: ${tz}` +
+    (marked.size > 0 ? `\n✉ — на этот день уже что-то запланировано` : "");
+
+  if (edit) {
+    await ctx.editMessageText(text, { reply_markup: keyboard });
+    return;
+  }
+  await ctx.reply(text, { reply_markup: keyboard });
+}
+
+bot.callbackQuery("cal_noop", async (ctx) => {
+  await ctx.answerCallbackQuery();
+});
+
+bot.callbackQuery(/^cal_(\d+)_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await sendCalendar(ctx, Number(ctx.match![1]), Number(ctx.match![2]), true);
+});
+
+bot.callbackQuery(/^calday_(\d+)_(\d+)_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const year = Number(ctx.match![1]);
+  const month = Number(ctx.match![2]);
+  const day = Number(ctx.match![3]);
+  const tz = config.postTimezone;
+  const today = todayIn(tz);
+  const isToday = year === today.year && month === today.month && day === today.day;
+
+  const keyboard = new InlineKeyboard();
+  keyboard.text("↩️ Вернуться", `cal_${year}_${month}`).row();
+  hourCells(isToday, today.hours, today.minutes).forEach((cell, i) => {
+    keyboard.text(
+      hourLabel(cell),
+      cell.isPast ? "cal_past" : `calhour_${year}_${month}_${day}_${cell.hour}`,
+    );
+    if (i % 4 === 3) keyboard.row();
+  });
+
+  await ctx.editMessageText(
+    "🕐 В какое время опубликовать?\n\n" +
+      `Выбранная дата: ${humanDate(year, month, day)}\n\n` +
+      "Выберите время кнопками или пришлите в формате: 21:31" +
+      (isToday ? "\n\n· — этот час сегодня уже прошёл" : ""),
+    { reply_markup: keyboard },
+  );
+});
+
+bot.callbackQuery("cal_past", async (ctx) => {
+  await ctx.answerCallbackQuery({
+    text: "Этот час уже прошёл — выберите позже или другой день.",
+    show_alert: true,
+  });
+});
+
+bot.callbackQuery(/^calhour_(\d+)_(\d+)_(\d+)_(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const m = ctx.match as RegExpMatchArray;
+  const [year, month, day, hour] = [m[1], m[2], m[3], m[4]].map(Number);
+  const when = pickedMoment(year, month, day, hour, config.postTimezone);
+  if ("error" in when) {
+    await ctx.reply(when.error);
+    return;
+  }
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  await publishFlow(ctx, ctx.chat!.id, when);
+});
+
 bot.command("caption", async (ctx) => {
   const chatId = ctx.chat.id;
   const video = getLastVideo(chatId);
@@ -2514,10 +2655,27 @@ bot.command("schedule", async (ctx) => {
     await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
     return;
   }
-  const when = parseWhen(ctx.match ?? "");
+  const arg = (ctx.match ?? "").trim();
+  if (!arg) {
+    // Без аргументов — календарь. Текстовый ввод никуда не делся: он быстрее,
+    // когда время известно заранее.
+    const today = todayIn(config.postTimezone);
+    await sendCalendar(ctx, today.year, today.month);
+    return;
+  }
+
+  // Полная дата со временем — как в подсказке под календарём.
+  const full = parseDateTime(arg, config.postTimezone);
+  if (!("error" in full)) {
+    await publishFlow(ctx, ctx.chat.id, full);
+    return;
+  }
+  // Иначе пробуем короткую форму «18:00» или «завтра 09:30».
+  const when = parseWhen(arg);
   if ("error" in when) {
     await ctx.reply(
-      `${when.error}\n\nВремя понимается по часовому поясу канала: ${config.postTimezone}`,
+      `${when.error}\n\nИли выберите кнопками: /schedule без аргументов.\n` +
+        `Часовой пояс канала: ${config.postTimezone}`,
     );
     return;
   }

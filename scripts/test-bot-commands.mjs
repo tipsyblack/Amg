@@ -317,4 +317,24 @@ check('«Отмена» отменяет, а не спрашивает снов�
 await bot.handleUpdate(cq('zunlinkyes_abc123'));
 check('подтверждение доходит до удаления', cbHits.at(-1)?.[0] === 'удаляю' && cbHits.at(-1)?.[1] === 'abc123', JSON.stringify(cbHits.at(-1)));
 
+// Кнопки календаря: у них общий префикс cal_, и легко получить то же, что
+// было с «Отменой» — служебная кнопка попадает в обработчик дня.
+const calHits = [];
+bot.callbackQuery('cal_noop', () => { calHits.push(['пусто']); });
+bot.callbackQuery('cal_past', () => { calHits.push(['час прошёл']); });
+bot.callbackQuery(/^cal_(\d+)_(\d+)$/, (ctx) => { calHits.push(['месяц', ctx.match[1], ctx.match[2]]); });
+bot.callbackQuery(/^calday_(\d+)_(\d+)_(\d+)$/, (ctx) => { calHits.push(['день', ctx.match[3]]); });
+bot.callbackQuery(/^calhour_(\d+)_(\d+)_(\d+)_(\d+)$/, (ctx) => { calHits.push(['час', ctx.match[3], ctx.match[4]]); });
+
+await bot.handleUpdate(cq('cal_2026_9'));
+check('перелистывание месяца', calHits.at(-1)?.[0] === 'месяц' && calHits.at(-1)?.[2] === '9', JSON.stringify(calHits.at(-1)));
+await bot.handleUpdate(cq('cal_noop'));
+check('пустая клетка не считается месяцем', calHits.at(-1)?.[0] === 'пусто', JSON.stringify(calHits.at(-1)));
+await bot.handleUpdate(cq('cal_past'));
+check('прошедший час не считается месяцем', calHits.at(-1)?.[0] === 'час прошёл', JSON.stringify(calHits.at(-1)));
+await bot.handleUpdate(cq('calday_2026_8_16'));
+check('выбор дня не перехвачен', calHits.at(-1)?.[0] === 'день' && calHits.at(-1)?.[1] === '16', JSON.stringify(calHits.at(-1)));
+await bot.handleUpdate(cq('calhour_2026_8_16_9'));
+check('выбор часа не перехвачен днём', calHits.at(-1)?.[0] === 'час' && calHits.at(-1)?.[2] === '9', JSON.stringify(calHits.at(-1)));
+
 process.exit(fails === 0 ? 0 : 1);
