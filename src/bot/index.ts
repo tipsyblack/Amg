@@ -52,6 +52,12 @@ import { lookLabel, sceneLook, seedFromTitle } from "../pipeline/sceneLook";
 import { measureImages, varietyLines, varietyReport } from "../pipeline/variety";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import {
+  measureVoiceSample,
+  needsCleanup,
+  qualityNotes,
+  statsLine,
+} from "../pipeline/voiceQuality";
+import {
   countSlang,
   parseSlangCommand,
   readSlang,
@@ -3490,28 +3496,51 @@ async function runCloneStep(ctx: Context, chatId: number): Promise<void> {
         const merged = path.join(workDir, "merged.mp3");
         await concatAudio(parts, merged);
 
+        // Замер материала. Похож клон ровно настолько, насколько чист и
+        // однороден исходник, и это измеримо — незачем гадать по звуку.
+        const stats = await measureVoiceSample(merged);
+        const notes = qualityNotes(stats);
         await ctx.reply(
-          `Материала: ${Math.round(totalSeconds)} с из ${parts.length} файл(ов).` +
-            (totalSeconds < CLONE_MIN_SECONDS
-              ? "\n\n⚠️ Меньше рекомендованной минуты — клон получится " +
-                "узнаваемым, но грубоватым."
-              : ""),
+          `Материала: ${Math.round(totalSeconds)} с из ${parts.length} файл(ов).\n` +
+            `📊 ${statsLine(stats)}` +
+            (notes.length > 0
+              ? `\n\n${notes.map((n) => `⚠️ ${n}`).join("\n\n")}`
+              : "\n\n✅ К материалу вопросов нет."),
         );
 
-        // Очищенную дорожку присылаем послушать: если голос звучит
-        // «подводно», клонировать такой материал бессмысленно.
-        await ctx.reply("🧹 Убираю музыку с фона…");
-        const cleaned = path.join(workDir, "cleaned.mp3");
-        await isolateVoice(merged, cleaned);
-        await ctx.replyWithAudio(new InputFile(cleaned), {
-          title: `${name} — исходник без музыки`,
-          caption: "Так звучит материал после удаления музыки. Из него делаю клон.",
-        });
+        // Чистим ТОЛЬКО шумный материал. Раньше через изолятор шло всё, а
+        // потом ElevenLabs чистил ещё раз своим remove_background_noise — то
+        // есть дважды. В их SDK про этот флаг сказано прямо: «If the samples
+        // do not include background noise, it can make the quality worse».
+        // Из чистой записи второй проход выедал призвуки, из которых и
+        // складывается узнаваемость голоса.
+        let forClone = merged;
+        if (needsCleanup(stats)) {
+          await ctx.reply(
+            "🧹 Материал шумный — убираю фон. Послушайте результат: если голос " +
+              "стал «подводным», лучше взять другую запись, чем клонировать это.",
+          );
+          const cleaned = path.join(workDir, "cleaned.mp3");
+          await isolateVoice(merged, cleaned);
+          await ctx.replyWithAudio(new InputFile(cleaned), {
+            title: `${name} — исходник без музыки`,
+            caption: "Из этого делаю клон.",
+          });
+          forClone = cleaned;
+        } else {
+          await ctx.reply(
+            "Чистку пропускаю: запись и так чистая, а лишний проход изолятора " +
+              "съедает призвуки, по которым голос и узнают.",
+          );
+        }
 
         await ctx.reply("🧬 Создаю клон голоса…");
         const { voiceId } = await createInstantVoiceClone({
           name,
-          files: [cleaned],
+          files: [forClone],
+          // Второй чистки не будет ни при каком раскладе: либо мы уже
+          // почистили сами, либо чистить нечего.
+          removeBackgroundNoise: false,
         });
 
         updateSession(chatId, {

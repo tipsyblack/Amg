@@ -37,6 +37,7 @@
     "test:speed": "tsx scripts/test-speed.mjs",
     "test:variety": "tsx scripts/test-variety.mjs",
     "test:slang": "tsx scripts/test-slang.mjs",
+    "test:voicequality": "tsx scripts/test-voice-quality.mjs",
     "variety:check": "tsx scripts/check-variety.mjs",
     "sfx:import": "node scripts/import-sfx.mjs",
     "clips:build": "tsx scripts/build-clip-library.mjs",
