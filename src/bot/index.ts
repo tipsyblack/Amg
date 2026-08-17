@@ -158,6 +158,7 @@ import {
   isElevenLabsAvailable,
   listVoices,
   synthesizeSpeechDirect,
+  voiceKind,
 } from "../pipeline/elevenlabs";
 import {
   DEFAULT_IMAGE_MODEL_KEY,
@@ -1345,7 +1346,7 @@ bot.command("voice", async (ctx) => {
         const voices = await listVoices();
         const match = voices.find((v) => v.voiceId === resolved);
         named = match
-          ? `\nИмя в ElevenLabs: «${match.name}» (${match.category})`
+          ? `\nИмя в ElevenLabs: «${match.name}» — ${voiceKind(match.category)}`
           : "\nВ вашем аккаунте ElevenLabs такого голоса нет — возможно, " +
             "он удалён или это голос из Kie.ai.";
       } catch {
@@ -1933,7 +1934,8 @@ bot.command("voices", async (ctx) => {
       list
         .map(
           (v) =>
-            `${v.voiceId === active ? "▶️" : "•"} ${v.name} — ${v.voiceId}`,
+            `${v.voiceId === active ? "▶️" : "•"} ${v.name} — ${v.voiceId}` +
+            (v.category === "premade" ? "" : `\n   ${voiceKind(v.category)}`),
         )
         .join("\n");
 

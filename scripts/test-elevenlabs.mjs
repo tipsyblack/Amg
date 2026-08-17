@@ -116,6 +116,19 @@ voicesMode = 'no-permission';
 check('нет прав на список голосов — не мешаем работать', (await cloneViaProxyWarning(cloneId, 'kie')) === undefined);
 voicesMode = 'ok';
 
+console.log("\n=== каким способом сделан голос ===");
+// Вопрос «у нас мгновенный клон или профессиональный» должен решаться из чата,
+// а не по памяти о том, где голос создавали: наш /clone умеет только
+// мгновенный, но голос могли завести и в кабинете ElevenLabs.
+// Названия категорий — из официального SDK (VoiceCategory).
+const { voiceKind } = await import("../src/pipeline/elevenlabs.ts");
+check("cloned — это мгновенный клон", /мгновенный/.test(voiceKind("cloned")), voiceKind("cloned"));
+check("professional — профессиональный", /профессиональный/.test(voiceKind("professional")), voiceKind("professional"));
+check("premade — базовый", /базовый/.test(voiceKind("premade")));
+check("generated узнаётся", /сгенерированн/.test(voiceKind("generated")));
+check("библиотечные вместе", voiceKind("famous") === voiceKind("high_quality"));
+check("незнакомая категория показывается как есть", voiceKind("что-то новое") === "что-то новое");
+
 server.close();
 console.log(fails === 0 ? '\nВсе проверки пройдены\n' : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

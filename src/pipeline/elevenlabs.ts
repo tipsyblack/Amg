@@ -25,6 +25,35 @@ export interface ElevenLabsVoice {
 }
 
 /**
+ * Каким способом сделан голос, по-русски.
+ *
+ * Нужно, чтобы на вопрос «у нас мгновенный клон или профессиональный» можно
+ * было ответить из чата, а не по памяти о том, где голос создавали. Наш /clone
+ * умеет только мгновенный, но голос могли завести и в кабинете ElevenLabs — там
+ * доступны оба, и разница в похожести между ними принципиальная.
+ *
+ * Названия категорий — из официального SDK (VoiceCategory): generated, cloned,
+ * premade, professional, famous, high_quality.
+ */
+export function voiceKind(category: string): string {
+  switch (category) {
+    case "cloned":
+      return "мгновенный клон (IVC)";
+    case "professional":
+      return "профессиональный клон (PVC)";
+    case "premade":
+      return "базовый голос ElevenLabs";
+    case "generated":
+      return "сгенерированный голос";
+    case "famous":
+    case "high_quality":
+      return "голос из библиотеки";
+    default:
+      return category;
+  }
+}
+
+/**
  * Спрашивает у ElevenLabs список голосов, доступных этому ключу. Нужен,
  * потому что состав голосов зависит от тарифа: на бесплатном библиотечные
  * голоса через API закрыты, и угадывать ID бессмысленно.
