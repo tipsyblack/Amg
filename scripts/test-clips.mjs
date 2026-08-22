@@ -432,10 +432,44 @@ check(
   librarySceneIndexes(10).length > 0,
   JSON.stringify(librarySceneIndexes(10)),
 );
+// Финал — да, хук — НЕТ. Библиотечный клип занимает всю карточку, то есть
+// подменяет собой иллюстрацию сцены. На хуке это значит, что первые секунды
+// зритель видит маскота вместо новости, ради которой ролик и открыл: в
+// присланном ролике на 0.5 с был джин со скрещёнными руками, на 3.5 с — он же
+// с лампой, а картинки хука не было вовсе.
 check(
-  "и стоят они там, где и так появляется маскот — хук и финал",
-  JSON.stringify(librarySceneIndexes(10)) === "[0,9]",
+  "клип стоит в финале, где маскот произносит призыв",
+  JSON.stringify(librarySceneIndexes(10)) === "[9]",
   JSON.stringify(librarySceneIndexes(10)),
+);
+const { mascotAllowedInHook } = await import("../src/pipeline/clipLibrary.ts");
+check("на хук маскота по умолчанию не пускаем", mascotAllowedInHook() === false);
+
+// Маскот попадал на первый кадр ТРЕМЯ путями, и заткнуть надо было все три:
+// библиотечный клип (librarySceneIndexes), эталон внешности в промпте
+// картинки (sceneWithCharacter) и подбор клипа по роли сцены — последний
+// срабатывал даже при пустом librarySceneIndexes, если сцена попадала в
+// платный счётчик /clips, потому что тот тоже начинается с нулевой.
+const { execFile } = await import("node:child_process");
+const { promisify } = await import("node:util");
+const runNode = promisify(execFile);
+const probe =
+  "import {librarySceneIndexes} from './src/pipeline/clipLibrary';" +
+  "import {sceneWithCharacter} from './src/pipeline/assets';" +
+  "console.log(JSON.stringify(librarySceneIndexes(10)), sceneWithCharacter(0,10));";
+const inHook = async (value) => {
+  const { stdout } = await runNode(
+    "npx",
+    ["tsx", "-e", probe],
+    { env: { ...process.env, CHARACTER_IN_HOOK: value } },
+  );
+  return stdout.trim();
+};
+check("без настройки хук свободен", (await inHook("")) === "[9] false", await inHook(""));
+check(
+  "CHARACTER_IN_HOOK=1 возвращает маскота на хук",
+  (await inHook("1")) === "[0,9] true",
+  await inHook("1"),
 );
 check(
   "единственная сцена — только хук, без дубля",
@@ -564,7 +598,7 @@ const { CLIP_LIBRARY_DIR, PUBLIC_CLIPS_DIR } = await import(
 );
 const libDir = CLIP_LIBRARY_DIR;
 const hadLibDir = existsSync(libDir);
-const fakeId = "intro-lean";
+const fakeId = "outro-thumb";
 const fakeFile = path.join(libDir, libraryFileName(fakeId));
 const hadFake = existsSync(fakeFile);
 try {
@@ -578,8 +612,9 @@ try {
     ]);
   }
 
+  // Сцена не нулевая: на хук библиотечный клип не идёт вовсе.
   const fromLibrary = await sceneClip({
-    index: 0,
+    index: 4,
     total: 5,
     voiceoverText: "текст",
     imageUrl: "https://example.com/scene.png",

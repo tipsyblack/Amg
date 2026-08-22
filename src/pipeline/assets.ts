@@ -8,6 +8,7 @@ import { getAudioDurationInSeconds, getClipDurationInSeconds } from "./audioDura
 import {
   clipRoleForScene,
   installLibraryClip,
+  mascotAllowedInHook,
   pickLibraryClip,
   PUBLIC_CLIPS_DIR,
 } from "./clipLibrary";
@@ -64,15 +65,24 @@ export async function ensureDirs(): Promise<void> {
  *
  * Раньше он был в каждой: эталон внешности прикладывался ко всем запросам, и
  * ролик выходил галереей поз одного персонажа — даже там, где сцена про
- * серверы или про космос. Держим его там, где он к месту: хук (лицо ролика) и
- * финал (призыв к действию — говорит именно маскот). Середина — про содержание
+ * серверы или про космос. Осталось одно место, где он к месту: финал — там
+ * призыв к действию, и произносит его именно маскот. Середина про содержание
  * истории, и там он только отвлекает.
  *
- * CHARACTER_EVERY_SCENE=1 в .env возвращает прежнее поведение.
+ * ХУК ИЗ ЭТОГО СПИСКА УБРАН. Джина туда дорисовывали в саму иллюстрацию, и
+ * вместе с библиотечным клипом получалось, что первые секунды ролика заняты
+ * персонажем целиком: на 0.5 с в присланном ролике маскот со скрещёнными
+ * руками, на 3.5 с — он же с лампой. Новость, ради которой ролик открывают,
+ * показать было нечем. Хук — самое дорогое место в ролике, и отдавать его под
+ * заставку нельзя.
+ *
+ * CHARACTER_IN_HOOK=1 возвращает его на хук, CHARACTER_EVERY_SCENE=1 — во все
+ * сцены.
  */
 export function sceneWithCharacter(index: number, total: number): boolean {
   if (config.characterEveryScene) return true;
-  return index === 0 || index === total - 1;
+  if (index === total - 1) return true;
+  return index === 0 && mascotAllowedInHook();
 }
 
 /**
@@ -284,7 +294,15 @@ export async function sceneClip({
   modelKey?: string;
   source?: "auto" | "library" | "generate";
 }): Promise<SceneClipResult | undefined> {
-  if (source !== "generate") {
+  // Библиотечный клип — это маскот, и он занимает всю карточку, то есть
+  // подменяет собой иллюстрацию сцены. На хуке это значит «вместо новости
+  // заставка», поэтому туда за библиотекой не идём вовсе. Важно, что проверка
+  // именно здесь: сцена может попасть сюда и по платному счётчику (/clips),
+  // а он тоже начинается с нулевой сцены — и тогда маскот вернулся бы на хук
+  // мимо librarySceneIndexes.
+  const libraryAllowed =
+    source !== "generate" && (index !== 0 || mascotAllowedInHook());
+  if (libraryAllowed) {
     const pick = pickLibraryClip(clipRoleForScene(index, total), ready, used);
     if (pick) {
       try {
