@@ -3173,7 +3173,12 @@ bot.callbackQuery(/^zlink_(.+)$/, async (ctx) => {
       { link_preview_options: { is_disabled: true } },
     );
   } catch (error) {
-    await ctx.reply(error instanceof Error ? error.message : String(error));
+    // Превью выключено: в отказе бывает ссылка (например, на биллинг при
+    // упёршемся лимите тарифа), и Telegram разворачивал её в карточку на треть
+    // экрана — она отодвигала сам текст, где и написано, что делать.
+    await ctx.reply(error instanceof Error ? error.message : String(error), {
+      link_preview_options: { is_disabled: true },
+    });
   }
 });
 

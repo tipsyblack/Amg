@@ -115,6 +115,39 @@ check("401 — про ключ в .env", /ZERNIO_API_KEY/.test(zernioErrorText(4
 check("409 — про чужой профиль", /другому профилю/.test(zernioErrorText(409, "")));
 check("429 — про частоту", /частоту/.test(zernioErrorText(429, "")));
 check("неизвестный код не теряется", /500/.test(zernioErrorText(500, "boom")));
+
+// 402 — не поломка, а упёршийся лимит тарифа. Тело ответа настоящее, снятое с
+// живого отказа: раньше оно валилось в чат как есть, обрезанное на полуслове
+// («…"current»), с карточкой ссылки на документацию во весь экран и без ответа
+// на вопрос «что мне теперь делать».
+const paymentBody = JSON.stringify({
+  error: "Add a payment method to connect more than 2 accounts.",
+  code: "PAYMENT_REQUIRED",
+  reason: "free_tier_exceeded",
+  documentation_url: "https://docs.zernio.com/billing/payment-method-required",
+  dashboard_url: "https://zernio.com/dashboard/billing",
+  details: { free_tier_account_limit: 2, current_account_count: 2 },
+});
+const payment = zernioErrorText(402, paymentBody);
+check("402 объяснён тарифом, а не кодом", /бесплатный тариф/.test(payment), payment.slice(0, 80));
+check("сказано, сколько аккаунтов разрешено", /2 аккаунта/.test(payment));
+check("названы оба выхода: карта и отвязка", /Привязать карту/.test(payment) && /\/unlink/.test(payment));
+check("дана ссылка на биллинг из ответа сервиса", payment.includes("zernio.com/dashboard/billing"));
+check("успокоено про уже подключённые", /работают как работали/.test(payment));
+check("сырой JSON в чат не льётся", !payment.includes('"code"') && !payment.includes("free_tier_account_limit"), payment.slice(0, 60));
+check("исходная фраза сервиса сохранена", payment.includes("Add a payment method"));
+// Лимит может приехать и без details — тогда просто не называем число.
+const noDetails = zernioErrorText(402, JSON.stringify({ error: "Payment required" }));
+check("без подробностей всё равно понятно", /бесплатный тариф/.test(noDetails) && !/аккаунта\)/.test(noDetails), noDetails.slice(0, 60));
+check("без ссылки в ответе подставляем кабинет", noDetails.includes("zernio.com/dashboard/billing"));
+
+// Остальные коды тоже больше не таскают JSON, если его можно прочитать.
+const conflict = zernioErrorText(409, JSON.stringify({ error: "Account already linked" }));
+check("409 показывает фразу сервиса, а не JSON", /Сервис говорит: Account already linked/.test(conflict) && !conflict.includes("{"), conflict);
+// А вот неразбираемый ответ (HTML-страница, обрыв) терять нельзя — по нему
+// только и можно понять, что случилось.
+const html = zernioErrorText(500, "<html>Bad gateway</html>");
+check("неразбираемый ответ сохраняется", html.includes("Bad gateway"), html);
 // Ключ уходит в чат вместе с текстом ошибки — его там быть не должно ни при
 // каком коде ответа.
 check(

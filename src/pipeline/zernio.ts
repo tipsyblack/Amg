@@ -109,21 +109,90 @@ async function request<T>(
  * проверять её без сети: формулировки — половина пользы от интеграции.
  */
 export function zernioErrorText(status: number, body: string): string {
-  const tail = body ? ` Ответ сервиса: ${body.slice(0, 300)}` : "";
+  const parsed = parseZernioError(body);
+  // Голый JSON в чате — это не сообщение об ошибке, а свалка. Он приходил
+  // обрезанным на полуслове («…"current»), тянул за собой карточку ссылки на
+  // документацию и занимал полэкрана, а главное — не отвечал на вопрос «что
+  // мне теперь делать». Если сервис прислал разбираемый ответ, показываем его
+  // словами; сырой хвост оставляем только когда разобрать нечего.
+  const said = parsed.message ? ` Сервис говорит: ${parsed.message}` : "";
+  const tail = parsed.message
+    ? ""
+    : body
+      ? ` Ответ сервиса: ${body.slice(0, 200)}`
+      : "";
+
   switch (status) {
     case 401:
       return "Zernio не принял ключ (401). Проверьте ZERNIO_API_KEY в .env на сервере.";
+    case 402:
+      return paymentRequiredText(parsed);
     case 403:
-      return `Zernio отказал в доступе (403) — возможно, тариф не включает эту возможность.${tail}`;
+      return `Zernio отказал в доступе (403) — возможно, тариф не включает эту возможность.${said}${tail}`;
     case 404:
-      return `Zernio не нашёл объект (404) — профиль или аккаунт уже удалён.${tail}`;
+      return `Zernio не нашёл объект (404) — профиль или аккаунт уже удалён.${said}${tail}`;
     case 409:
-      return `Zernio: конфликт (409) — аккаунт уже подключён к другому профилю.${tail}`;
+      return `Zernio: конфликт (409) — аккаунт уже подключён к другому профилю.${said}${tail}`;
     case 429:
       return "Zernio ограничил частоту запросов (429). Попробуйте через минуту.";
     default:
-      return `Zernio вернул ошибку ${status}.${tail}`;
+      return `Zernio вернул ошибку ${status}.${said}${tail}`;
   }
+}
+
+interface ZernioErrorBody {
+  message?: string;
+  reason?: string;
+  /** Сколько аккаунтов разрешено на бесплатном тарифе. */
+  accountLimit?: number;
+  dashboardUrl?: string;
+}
+
+/**
+ * Разбор ответа Zernio об ошибке. Ответ структурный (error, code, reason,
+ * details, dashboard_url), и грех этим не воспользоваться — но полагаться на
+ * него нельзя: сервис вправе ответить и HTML-страницей.
+ */
+export function parseZernioError(body: string): ZernioErrorBody {
+  try {
+    const data = JSON.parse(body) as {
+      error?: string;
+      message?: string;
+      reason?: string;
+      dashboard_url?: string;
+      details?: { free_tier_account_limit?: number };
+    };
+    return {
+      message: data.error ?? data.message,
+      reason: data.reason,
+      accountLimit: data.details?.free_tier_account_limit,
+      dashboardUrl: data.dashboard_url,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 402 — это не поломка, а упёршийся лимит тарифа, и ответ должен быть про
+ * выбор, а не про код ошибки. Выборов ровно два: платить или освободить место.
+ */
+function paymentRequiredText(parsed: ZernioErrorBody): string {
+  const limit = parsed.accountLimit;
+  const where = parsed.dashboardUrl ?? "https://zernio.com/dashboard/billing";
+  return (
+    "Zernio не даёт подключить ещё один аккаунт: упёрлись в бесплатный тариф" +
+    (limit ? ` (в нём ${limit} аккаунта)` : "") +
+    ".\n\nВыбор такой:\n" +
+    "1. Привязать карту в кабинете Zernio — " +
+    where +
+    " — и подключать сколько нужно.\n" +
+    "2. Освободить место: /accounts покажет подключённые, /unlink отвяжет " +
+    "лишний. Отвязка ничего не удаляет в самой соцсети.\n\n" +
+    "Уже подключённые аккаунты работают как работали — публикацию это не " +
+    "ломает." +
+    (parsed.message ? `\n\nСервис говорит: ${parsed.message}` : "")
+  );
 }
 
 /** Профили Zernio: аккаунты подключаются внутрь профиля. */
