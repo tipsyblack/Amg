@@ -42,9 +42,24 @@ const YOUTUBE_TITLE_MAX = 100;
  * сразу: правило площадки, а не наша осторожность, и лучше пометка от нас,
  * чем санкция от них.
  */
+export interface PostOptions {
+  /**
+   * Отдать ролик в Creator Inbox вместо прямой публикации.
+   *
+   * Нужен, когда у TikTok очередь на прямую публикацию («direct posting is at
+   * capacity»). Поле подтверждено по их openapi.yaml (TikTokPlatformData.draft):
+   * ролик приходит в приложение уведомлением, и человек дописывает пост сам.
+   * Там же оговорка про права: для черновика аккаунту нужен video.upload, для
+   * прямой публикации — video.publish. Аккаунт, привязанный только под прямую
+   * публикацию, черновик может не принять.
+   */
+  tiktokDraft?: boolean;
+}
+
 export function platformOptions(
   platform: string,
   video: PostVideo,
+  options: PostOptions = {},
 ): Record<string, unknown> | undefined {
   switch (platform) {
     case "youtube":
@@ -66,7 +81,10 @@ export function platformOptions(
         isAiGenerated: true,
       };
     case "tiktok":
-      return { privacyLevel: "PUBLIC_TO_EVERYONE" };
+      return {
+        privacyLevel: "PUBLIC_TO_EVERYONE",
+        ...(options.tiktokDraft ? { draft: true } : {}),
+      };
     default:
       return undefined;
   }
@@ -196,6 +214,7 @@ export function buildPostBody(
   videoUrl: string,
   targets: PostTarget[],
   when: { publishNow: true } | { scheduledFor: string; timezone: string },
+  options: PostOptions = {},
 ): PostBody {
   return {
     title: video.title,
@@ -206,7 +225,7 @@ export function buildPostBody(
     platforms: targets.map((t) => ({
       platform: t.platform,
       accountId: t.accountId,
-      platformSpecificData: platformOptions(t.platform, video),
+      platformSpecificData: platformOptions(t.platform, video, options),
     })),
     ...when,
   };
@@ -292,8 +311,9 @@ export async function createPost(
   videoUrl: string,
   targets: PostTarget[],
   when: { publishNow: true } | { scheduledFor: string; timezone: string },
+  options: PostOptions = {},
 ): Promise<PostState> {
-  const body = buildPostBody(video, videoUrl, targets, when);
+  const body = buildPostBody(video, videoUrl, targets, when, options);
   const data = await request<{ post?: Record<string, unknown>; existingPost?: Record<string, unknown> }>(
     "/v1/posts",
     { method: "POST", body: JSON.stringify(body) },
@@ -345,9 +365,31 @@ export function explainPostError(state: PostPlatformState): string {
     system_error:
       "сбой на стороне Zernio — повторите: /retrypost",
   };
-  const advice = what[state.errorCategory ?? ""] ?? "причина не названа";
+  // Сообщение сильнее категории, и это не теория. Живой отказ TikTok:
+  // категория user_content («не подошёл формат или длина»), а в сообщении —
+  // «direct posting is at capacity right now», то есть у площадки очередь и
+  // наш файл ни при чём. Мы честно пересказывали категорию и отправляли
+  // человека проверять ролик, в котором нечего чинить.
+  const known = knownFailure(state.errorMessage ?? "");
+  const advice = known ?? what[state.errorCategory ?? ""] ?? "причина не названа";
   const detail = state.errorMessage ? `\n   ${state.errorMessage}` : "";
   return `${advice}${detail}`;
+}
+
+/**
+ * Отказы, которые площадка объясняет словами лучше, чем Zernio — категорией.
+ * Список короткий намеренно: сюда попадает только то, что мы видели живьём.
+ */
+function knownFailure(message: string): string | undefined {
+  if (/at capacity/i.test(message) || /Creator Inbox/i.test(message)) {
+    return (
+      "у TikTok очередь на прямую публикацию — это временно и к нашему ролику " +
+      "отношения не имеет. Повторить позже: /retrypost. Либо отдать ролик " +
+      "черновиком в Creator Inbox: /publish draft — он придёт в приложение " +
+      "уведомлением, останется нажать «опубликовать»"
+    );
+  }
+  return undefined;
 }
 
 /** Готово ли всё: есть ли ещё что ждать. */

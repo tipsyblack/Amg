@@ -84,6 +84,7 @@ import {
 import {
   buildPostBody,
   createPost,
+  type PostOptions,
   getPost,
   parseWhen,
   postStateLines,
@@ -1267,6 +1268,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/unlink — отвязать аккаунт\n" +
       "/caption — посмотреть или заменить текст поста\n" +
       "/publish — опубликовать последний ролик сразу\n" +
+      "/publish draft — TikTok черновиком в Creator Inbox\n" +
       "/schedule — календарь публикации: день и час кнопками\n" +
       "/poststatus — что с последней публикацией\n" +
       "/retrypost — повторить неудачные площадки\n" +
@@ -2746,6 +2748,7 @@ async function publishFlow(
   ctx: Context,
   chatId: number,
   when: { publishNow: true } | { scheduledFor: string; timezone: string },
+  options: PostOptions = {},
 ): Promise<void> {
   const video = getLastVideo(chatId);
   if (!video) {
@@ -2785,7 +2788,7 @@ async function publishFlow(
 
   try {
     const url = await uploadVideo(video.file);
-    const body = buildPostBody(video, url, targets, when);
+    const body = buildPostBody(video, url, targets, when, options);
 
     // Прогон без публикации: их проверка знает пределы площадок лучше, чем
     // любые наши зашитые числа, и всегда свежее.
@@ -2819,7 +2822,7 @@ async function publishFlow(
       );
     }
 
-    const state = await createPost(video, url, targets, when);
+    const state = await createPost(video, url, targets, when, options);
     rememberPostId(chatId, state.id);
 
     if ("scheduledFor" in when) {
@@ -3000,7 +3003,18 @@ bot.command("publish", async (ctx) => {
     await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
     return;
   }
-  await publishFlow(ctx, ctx.chat.id, { publishNow: true });
+  // «/publish draft» — обходной путь на случай, когда у TikTok очередь на
+  // прямую публикацию. Ролик уходит в Creator Inbox, и человек дожимает
+  // публикацию в приложении. На остальные площадки это не влияет никак.
+  const draft = /^draft$|^черновик$/i.test((ctx.match ?? "").trim());
+  if (draft) {
+    await ctx.reply(
+      "TikTok уйдёт ЧЕРНОВИКОМ в Creator Inbox: ролик придёт в приложение " +
+        "уведомлением, опубликовать надо будет вручную. Остальные площадки " +
+        "публикуются как обычно.",
+    );
+  }
+  await publishFlow(ctx, ctx.chat.id, { publishNow: true }, { tiktokDraft: draft });
 });
 
 bot.command("schedule", async (ctx) => {

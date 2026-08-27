@@ -170,6 +170,43 @@ for (const [cat, expect] of [
 }
 check("неизвестная категория не роняет", typeof explainPostError({ platform: "x", status: "failed" }) === "string");
 
+// Живой отказ TikTok: Zernio отдал категорию user_content («не подошёл формат
+// или длина»), а в сообщении — «direct posting is at capacity right now». Мы
+// честно пересказывали категорию и отправляли человека проверять ролик, в
+// котором нечего чинить. Сообщение площадки сильнее категории.
+const capacity = explainPostError({
+  platform: "tiktok",
+  status: "failed",
+  errorCategory: "user_content",
+  errorMessage:
+    "TikTok direct posting is at capacity right now. Use tiktokSettings.draft: true to deliver via Creator Inbox, or try again in a few hours as capacity frees up.",
+});
+check("очередь TikTok названа очередью, а не форматом", /очередь на прямую публикацию/.test(capacity), capacity.slice(0, 70));
+check("сказано, что ролик ни при чём", /отношения не имеет/.test(capacity));
+check("предложен повтор", /\/retrypost/.test(capacity));
+check("предложен черновик", /\/publish draft/.test(capacity));
+check("про формат больше не врём", !/формат или длина/.test(capacity), capacity.slice(0, 70));
+check("исходное сообщение сохранено", /at capacity/.test(capacity));
+// Обычный отказ по содержимому по-прежнему объясняется категорией.
+check(
+  "остальные отказы не задеты",
+  /формат или длина/.test(explainPostError({ platform: "x", status: "failed", errorCategory: "user_content", errorMessage: "Caption too long" })),
+);
+
+console.log("\n=== черновик в Creator Inbox ===");
+// Поле подтверждено по их openapi.yaml (TikTokPlatformData.draft), а не
+// угадано: ролик уходит в приложение уведомлением, публикует человек.
+const draftOpts = platformOptions("tiktok", VIDEO, { tiktokDraft: true });
+check("TikTok получает draft", draftOpts.draft === true, JSON.stringify(draftOpts));
+check("приватность остаётся на месте", draftOpts.privacyLevel === "PUBLIC_TO_EVERYONE");
+check("без просьбы черновика нет", platformOptions("tiktok", VIDEO).draft === undefined);
+check("на другие площадки не влияет", platformOptions("youtube", VIDEO, { tiktokDraft: true }).draft === undefined);
+const draftBody = buildPostBody(VIDEO, "https://cdn/x.mp4", [
+  { platform: "tiktok", accountId: "t1" },
+  { platform: "instagram", accountId: "i1" },
+], { publishNow: true }, { tiktokDraft: true });
+check("в теле запроса черновик только у TikTok", draftBody.platforms[0].platformSpecificData.draft === true && draftBody.platforms[1].platformSpecificData.draft === undefined);
+
 console.log("\n=== когда ждать, а когда всё ===");
 check("всё опубликовано — ждать нечего", isSettled({ id: "p", status: "published", platforms: [{ platform: "a", status: "published" }] }) === true);
 check("есть pending — ещё ждём", isSettled({ id: "p", status: "publishing", platforms: [{ platform: "a", status: "pending" }] }) === false);
