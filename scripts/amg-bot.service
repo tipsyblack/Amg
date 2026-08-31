@@ -1,0 +1,14 @@
+[Unit]
+Description=Amg Telegram video bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/Amg
+ExecStart=/usr/bin/env npm run bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

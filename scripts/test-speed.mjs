@@ -1,0 +1,164 @@
+// Скорость речи: разбор команды, пределы, и главное — доходит ли она до
+// запроса синтезатора.
+//
+// Последнее и есть суть: настройка KIE_TTS_SPEED в проекте была давно, но
+// уходила ТОЛЬКО через прокси Kie.ai. Единая озвучка идёт прямым ElevenLabs,
+// и там скорость не отправлялась вовсе — то есть в .env её можно было
+// поставить, а на роликах это не отражалось никак.
+process.env.OPENROUTER_API_KEY = "test-key";
+process.env.KIE_API_KEY = "test-key";
+process.env.ELEVENLABS_API_KEY = "el-test";
+
+let fails = 0;
+const check = (name, ok, extra = "") => {
+  console.log(`${ok ? "  ok  " : " FAIL "} ${name}${extra ? ` — ${extra}` : ""}`);
+  if (!ok) fails++;
+};
+
+const { parseSpeed, clampSpeed, describeSpeed, setSpeechSpeed, speechSpeed, MIN_SPEED, MAX_SPEED } =
+  await import("../src/pipeline/speech.ts");
+const { config } = await import("../src/pipeline/config.ts");
+
+console.log("=== значение по умолчанию выведено замером ===");
+// Наш ролик: 2.06 слова в секунду. Референс: 2.33. Отношение 1.13.
+check("по умолчанию 1.13", Math.abs(config.ttsSpeed - 1.13) < 0.001, String(config.ttsSpeed));
+check(
+  "это и есть отношение к референсу",
+  Math.abs(2.06 * config.ttsSpeed - 2.33) < 0.02,
+  `2.06 × ${config.ttsSpeed} = ${(2.06 * config.ttsSpeed).toFixed(2)} слов/с`,
+);
+
+console.log("\n=== разбор команды ===");
+check("дробное число", parseSpeed("1.15") === 1.15);
+check("запятая вместо точки", parseSpeed("1,15") === 1.15);
+check("проценты", parseSpeed("115%") === 1.15);
+check("проценты с пробелом", parseSpeed("115 %") === 1.15);
+check("обычная скорость", parseSpeed("1") === 1);
+check("пустой аргумент — не ошибка, а показ текущей", parseSpeed("").error === "");
+check("мусор объяснён примерами", /Примеры/.test(parseSpeed("быстрее").error));
+check("ноль отклонён", typeof parseSpeed("0") === "object");
+check("отрицательное отклонено", typeof parseSpeed("-1") === "object");
+
+console.log("\n=== пределы ===");
+check(`слишком быстро (${MAX_SPEED + 0.3}) отклонено`, /за пределами/.test(parseSpeed(String(MAX_SPEED + 0.3)).error));
+check(`слишком медленно (${MIN_SPEED - 0.2}) отклонено`, /за пределами/.test(parseSpeed(String(MIN_SPEED - 0.2)).error));
+check("в отказе объяснено, почему", /плыть/.test(parseSpeed("2").error));
+check("граница сверху допустима", parseSpeed(String(MAX_SPEED)) === MAX_SPEED);
+check("граница снизу допустима", parseSpeed(String(MIN_SPEED)) === MIN_SPEED);
+check("clamp режет выше предела", clampSpeed(5) === MAX_SPEED);
+check("clamp режет ниже предела", clampSpeed(0.1) === MIN_SPEED);
+check("мусор в clamp — обычная скорость", clampSpeed(NaN) === 1 && clampSpeed(0) === 1);
+
+console.log("\n=== описание для чата ===");
+check("ускорение в процентах", /на 13% быстрее/.test(describeSpeed(1.13)), describeSpeed(1.13));
+check("замедление тоже", /на 10% медленнее/.test(describeSpeed(0.9)), describeSpeed(0.9));
+check("единица названа обычной", /обычная/.test(describeSpeed(1)), describeSpeed(1));
+
+console.log("\n=== скорость прогона перекрывает .env ===");
+setSpeechSpeed(undefined);
+check("без переопределения берётся .env", speechSpeed(1.13) === 1.13);
+setSpeechSpeed(1.2);
+check("переопределение действует", speechSpeed(1.13) === 1.2);
+setSpeechSpeed(9);
+check("и оно тоже в пределах", speechSpeed(1.13) === MAX_SPEED);
+setSpeechSpeed(undefined);
+check("сброс возвращает .env", speechSpeed(1.13) === 1.13);
+
+console.log("\n=== доходит ли до синтезатора ===");
+// Прямой ElevenLabs: тот самый путь, где скорости не было вовсе.
+let sent;
+globalThis.fetch = async (url, init = {}) => {
+  sent = { url: String(url), body: JSON.parse(init.body) };
+  return new Response(
+    JSON.stringify({ audio_base64: Buffer.from("x").toString("base64"), alignment: null }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+};
+const { synthesizeSpeechDirect } = await import("../src/pipeline/elevenlabs.ts");
+setSpeechSpeed(1.15);
+const { mkdtempSync, rmSync } = await import("node:fs");
+const { tmpdir } = await import("node:os");
+const path = (await import("node:path")).default;
+const dir = mkdtempSync(path.join(tmpdir(), "amg-speed-"));
+await synthesizeSpeechDirect("текст", path.join(dir, "a.mp3"), undefined, undefined, true);
+check("прямой путь шлёт speed", sent.body.voice_settings?.speed === 1.15, JSON.stringify(sent.body.voice_settings));
+check("остальные настройки голоса на месте", typeof sent.body.voice_settings?.stability === "number");
+
+// Путь через прокси Kie.ai — там настройка была и раньше, но теперь общая.
+const { buildTtsInput } = await import("../src/pipeline/generateVoiceover.ts");
+check("путь Kie.ai шлёт ту же скорость", buildTtsInput("текст", "voice").speed === 1.15, String(buildTtsInput("т", "v").speed));
+
+console.log("\n=== путь озвучки и модель ===");
+// Озвучка идёт прямым ElevenLabs, а не через прокси: единая озвучка требует
+// таймингов слов, а их отдаёт только прямой путь.
+check("по умолчанию прямой ElevenLabs", config.ttsProvider === "elevenlabs", config.ttsProvider);
+
+const { directModelId, directModelNote, isDirectModel, DIRECT_TTS_MODELS } =
+  await import("../src/pipeline/ttsModels.ts");
+check("имя модели ElevenLabs узнаётся", isDirectModel("eleven_multilingual_v2"));
+check("имя из набора Kie.ai — не оно", !isDirectModel("elevenlabs/text-to-speech-multilingual-v2"));
+check("своё имя проходит как есть", directModelId("eleven_v3") === "eleven_v3");
+check(
+  "имя из Kie.ai переводится",
+  directModelId("elevenlabs/text-to-speech-multilingual-v2") === "eleven_multilingual_v2",
+);
+// Незнакомое имя лучше заменить умолчанием, чем получить отказ уже в запросе.
+check("незнакомое имя — модель по умолчанию", directModelId("что-то своё") === config.elevenLabsModelId);
+check("пустое — тоже умолчание", directModelId("") === config.elevenLabsModelId && directModelId(undefined) === config.elevenLabsModelId);
+check("про перевод имени бот скажет", /перевёл имя/.test(directModelNote("elevenlabs/text-to-speech-multilingual-v2")));
+check("про незнакомое имя скажет тоже", /такой модели нет/.test(directModelNote("нечто")));
+check("про своё имя молчит", directModelNote("eleven_v3") === undefined);
+check("список моделей непустой", DIRECT_TTS_MODELS.length >= 3);
+
+// Настройка модели должна доходить до запроса — раньше на прямом пути она
+// игнорировалась, и /ttsmodel там не делал ничего.
+setSpeechSpeed(1.15);
+await synthesizeSpeechDirect("текст", path.join(dir, "b.mp3"), undefined, "eleven_v3", true);
+check("модель из настройки ушла в запрос", sent.body.model_id === "eleven_v3", String(sent.body.model_id));
+await synthesizeSpeechDirect("текст", path.join(dir, "c.mp3"), undefined, undefined, true);
+check("без настройки — модель из .env", sent.body.model_id === config.elevenLabsModelId, String(sent.body.model_id));
+
+console.log("\n=== старый ключ в .env перебивает умолчание ===");
+// Это случилось на живом сервере: в .env с прошлой установки осталась строка
+// KIE_TTS_SPEED=1, ролики шли на обычной скорости, а бюджет слов считался
+// 126 вместо 142 — и сценарий на 132 слова автопилот забраковал как длинный.
+// Поддержку старого имени убирать нельзя, а вот молчать об этом — можно было
+// зря: теперь /speed говорит, откуда взято значение.
+const { execFile } = await import("node:child_process");
+const speedIn = (env) =>
+  new Promise((resolve) => {
+    execFile(
+      "npx",
+      ["tsx", "-e", "import {config} from './src/pipeline/config';import {wordBudget} from './src/pipeline/generateScript';console.log(config.ttsSpeed, wordBudget(60));"],
+      { env: { ...process.env, ...env } },
+      (error, stdout) => resolve(error ? "" : stdout.trim()),
+    );
+  });
+const legacy = await speedIn({ TTS_SPEED: "", KIE_TTS_SPEED: "1" });
+const fresh = await speedIn({ TTS_SPEED: "", KIE_TTS_SPEED: "" });
+check("старое имя всё ещё действует", legacy.startsWith("1 "), legacy);
+check("и это даёт бюджет 126 слов", legacy.endsWith("126"), legacy);
+check("без него берётся замеренная скорость", fresh.startsWith("1.13"), fresh);
+check("и бюджет становится 142", fresh.endsWith("142"), fresh);
+
+console.log("\n=== бюджет слов растёт вместе со скоростью ===");
+// Ускорили речь и не тронули бюджет — ролик выйдет короче лимита, и мы просто
+// потеряем секунды, за которые могли бы что-то рассказать.
+const { wordBudget, minSceneCount } = await import("../src/pipeline/generateScript.ts");
+setSpeechSpeed(1);
+const normal = wordBudget(60);
+setSpeechSpeed(1.13);
+const faster = wordBudget(60);
+check("на обычной скорости 126 слов", normal === 126, String(normal));
+check("на ускоренной больше", faster > normal, `${faster} против ${normal}`);
+check(
+  "ровно во столько же раз",
+  Math.abs(faster / normal - 1.13) < 0.02,
+  `${(faster / normal).toFixed(3)}`,
+);
+check("сцен тоже становится больше", minSceneCount(60) >= Math.ceil(normal / 14));
+setSpeechSpeed(undefined);
+
+rmSync(dir, { recursive: true, force: true });
+console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
+process.exit(fails === 0 ? 0 : 1);

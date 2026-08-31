@@ -1,0 +1,916 @@
+// Проверка качества сценария: обязательный хук, реклама только в финале и
+// автоматические правки через generateCheckedScript. Сеть не нужна —
+// OpenRouter подменяется заглушкой, которая по очереди отдаёт готовые ответы.
+let fails = 0;
+const check = (name, ok, extra = "") => {
+  console.log(`${ok ? "  ok  " : " FAIL "} ${name}${extra ? ` — ${extra}` : ""}`);
+  if (!ok) fails++;
+};
+
+process.env.OPENROUTER_API_KEY ??= "test-key";
+process.env.KIE_API_KEY ??= "test-key";
+process.env.TELEGRAM_BOT_TOKEN ??= "test-token";
+
+const {
+  hookProblem,
+  promoProblem,
+  toolListProblem,
+  fillerProblem,
+  scriptProblems,
+  stripSources,
+  generateCheckedScript,
+} = await import("../src/pipeline/generateScript.ts");
+
+console.log("=== валидатор хука ===");
+const good = { caption: "ХВАТИТ ПЛАТИТЬ ЗА ПОДПИСКИ", voiceoverText: "Ты платишь за пять нейросетей отдельно. Зря." };
+check("нормальный хук проходит", hookProblem(good) === undefined, String(hookProblem(good)));
+
+for (const opening of [
+  "Привет, друзья!",
+  "Здравствуйте, меня зовут Шамиль.",
+  "Ассаламу алейкум!",
+  "Добрый день, коллеги.",
+  "В этом видео расскажу про нейросети.",
+  "Сегодня поговорим о нейросетях.",
+  "Итак, начнём.",
+  "Hi there, let's start.",
+]) {
+  const problem = hookProblem({ caption: "ТЕСТ", voiceoverText: opening });
+  check(`отклонено приветствие: «${opening}»`, problem?.includes("приветствия") === true, String(problem));
+}
+
+const long = {
+  caption: "ТЕСТ",
+  voiceoverText:
+    "Сегодняшний ролик мы посвятим тому как именно можно использовать " +
+    "современные нейросетевые модели в повседневных рабочих задачах, " +
+    "а начнём мы с самого простого примера из практики",
+};
+check("слишком длинный хук отклонён", hookProblem(long)?.includes("слов") === true, String(hookProblem(long)));
+// Новостной хук с фразой-зацепкой — 19 слов, это норма для жанра.
+const newsHook = {
+  caption: "ШЕСТЬ ПАЛЬЦЕВ",
+  voiceoverText:
+    "Нейросеть рисует лицо человека идеально, а руку почему-то с шестью " +
+    "пальцами. Сейчас объясню, в чём подвох.",
+};
+check("новостной хук на 19 слов проходит", hookProblem(newsHook) === undefined, String(hookProblem(newsHook)));
+
+const wordyCaption = {
+  caption: "ОЧЕНЬ ДЛИННАЯ ПОДПИСЬ КОТОРАЯ НИКАК НЕ ВЛЕЗАЕТ В КАДР",
+  voiceoverText: "Ты теряешь час каждый день.",
+};
+check("длинная подпись отклонена", hookProblem(wordyCaption)?.includes("подпись") === true, String(hookProblem(wordyCaption)));
+
+// «Приветливое» слово не в начале — не повод браковать хук.
+const midGreeting = { caption: "ЗАБУДЬ ПРО ЭТО", voiceoverText: "Забудь про «привет, чем помочь» — отвечай сразу." };
+check("приветствие не в начале допустимо", hookProblem(midGreeting) === undefined, String(hookProblem(midGreeting)));
+
+console.log("\n=== реклама только в финале ===");
+const usefulBody = [
+  { caption: "ТРИ ТОНА СРАЗУ", voiceoverText: "Попроси переписать текст в трёх тонах и выбери лучший.", visual: "три письма веером в руке, на каждом своя печать" },
+  { caption: "ПРОВЕРЬ ЦИФРЫ", voiceoverText: "Модель уверенно врёт в числах — сверяй с источником.", visual: "калькулятор рядом с раскрытым справочником, палец ведёт по строке" },
+];
+// Призыв в фикстуре тоже обязан быть хорошим: он подставляется почти во все
+// проверки, и слабый ловился бы новым ctaProblem, зашумляя остальные тесты.
+const cta = {
+  caption: "ЖМИ ССЫЛКУ",
+  voiceoverText: "Открой бота по ссылке в профиле и собери первую картинку бесплатно.",
+  visual: "открытая дверь с аркой, за порогом лежит красная дорожка",
+};
+const cleanScript = {
+  title: "Приёмы работы с текстом",
+  scenes: [
+    { caption: "ПЛАТИШЬ ПЯТЬ РАЗ", voiceoverText: "Ты платишь пяти сервисам за одно и то же.", visual: "пять касс подряд, у каждой стоит один и тот же покупатель" },
+    ...usefulBody,
+    cta,
+  ],
+};
+check("полезная середина проходит", promoProblem(cleanScript) === undefined, String(promoProblem(cleanScript)));
+check("призыв в последней сцене допустим", promoProblem({ title: "t", scenes: [usefulBody[0], cta] }) === undefined);
+
+for (const [what, scene] of [
+  ["наш бот", { caption: "ВСЁ УМЕЕТ", voiceoverText: "Наш бот умеет всё это сразу." }],
+  ["нашего сервиса (со склонением)", { caption: "ТУТ", voiceoverText: "В нашем сервисе это уже готово." }],
+  ["подписка", { caption: "ДЁШЕВО", voiceoverText: "Одна подписка вместо пяти." }],
+  ["тариф", { caption: "ТАРИФЫ", voiceoverText: "Тариф начинается со ста рублей." }],
+  ["ссылка в описании", { caption: "ТАМ", voiceoverText: "Всё это по ссылке в описании." }],
+  ["призыв", { caption: "ДАВАЙ", voiceoverText: "Жми старт и пробуй сам." }],
+  ["у нас есть", { caption: "ГОТОВО", voiceoverText: "У нас есть все эти модели." }],
+  ["промокод", { caption: "СКИДКА", voiceoverText: "Промокод даёт первый месяц дешевле." }],
+]) {
+  const withPromo = { title: "t", scenes: [cleanScript.scenes[0], scene, cta] };
+  check(`реклама в середине поймана: ${what}`, promoProblem(withPromo) !== undefined, String(promoProblem(withPromo)));
+}
+const promoCase = { title: "t", scenes: [cleanScript.scenes[0], { caption: "П", voiceoverText: "Наш бот умеет всё." }, cta] };
+check("в причине указан номер сцены", promoProblem(promoCase)?.includes("сцена 2") === true, promoProblem(promoCase));
+
+console.log("\n=== перечисление инструментов вместо пользы ===");
+// Это ровно тот сценарий, который забраковал заказчик: каждая сцена — название
+// сервиса плюс восторг, применить нечего.
+const toolList = {
+  title: "Видео нейросетями",
+  scenes: [
+    { caption: "Тратишь часы на видео?", voiceoverText: "Хватит монтировать часами." },
+    { caption: "GPT-5.4: сценарий за 15 минут", voiceoverText: "Потом GPT-5.4 или Claude сценарий напишут." },
+    { caption: "Midjourney: кадры-референсы", voiceoverText: "Midjourney или Imagen 4 сделают раскадровку." },
+    { caption: "ElevenLabs: озвучка", voiceoverText: "ElevenLabs озвучит любым голосом." },
+    { caption: "Suno AI: музыка", voiceoverText: "Музыку напишет Suno." },
+    cta,
+  ],
+};
+check("список сервисов поймали", toolListProblem(toolList) !== undefined, String(toolListProblem(toolList)));
+check("в причине названо, сколько сцен", /4 из 4/.test(String(toolListProblem(toolList))), String(toolListProblem(toolList)));
+check("полезная середина не считается списком", toolListProblem(cleanScript) === undefined);
+// Одно-два названия вместе с приёмом — нормально, это не список.
+const twoNames = {
+  title: "t",
+  scenes: [
+    cleanScript.scenes[0],
+    { caption: "ОДНОЙ ФРАЗОЙ", voiceoverText: "Опиши кадр одной фразой и добавь стиль — так кадры не разъедутся." },
+    { caption: "Midjourney: три варианта", voiceoverText: "Проси сразу четыре кадра и выбирай, первый обычно скучный." },
+    { caption: "ПРОВЕРЬ ЛИЦА", voiceoverText: "Смотри на руки и лица — там ошибки заметнее всего." },
+    cta,
+  ],
+};
+check("одно название среди приёмов допустимо", toolListProblem(twoNames) === undefined, String(toolListProblem(twoNames)));
+// Короткий ролик из трёх сцен проверять нечем — не придираемся.
+check("на коротком ролике проверка молчит", toolListProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "Suno AI", voiceoverText: "x" }, cta] }) === undefined);
+
+console.log("\n=== вода и выдуманные цифры ===");
+for (const [what, scene] of [
+  ["пустой восторг", { caption: "КРАСОТА", voiceoverText: "Сделает раскадровку. Красота!" }],
+  ["чистый кайф", { caption: "МУЗЫКА", voiceoverText: "Музыку напишет за секунды. Чистый кайф!" }],
+  ["штамп", { caption: "ЛЕГКО", voiceoverText: "Всё легко и просто, без навыков." }],
+  ["меняет дело", { caption: "НОВОЕ", voiceoverText: "Нейросети меняют дело." }],
+  ["связка ни о чём", { caption: "ИДЕЯ", voiceoverText: "Сначала мы идею в текст заносим, да?" }],
+  ["как говорится", { caption: "СТАРТ", voiceoverText: "Как говорится, начинаем работу." }],
+  ["процент", { caption: "ЭКОНОМИЯ", voiceoverText: "Экономия бюджета до 90%." }],
+  ["в N раз", { caption: "БЫСТРЕЕ", voiceoverText: "Получается в пять раз быстрее." }],
+  ["за N минут", { caption: "БЫСТРО", voiceoverText: "Сценарий готов за 15 минут." }],
+]) {
+  const script = { title: "t", scenes: [cleanScript.scenes[0], scene, cta] };
+  check(`поймано: ${what}`, fillerProblem(script) !== undefined, String(fillerProblem(script)));
+}
+check("полезные сцены проходят", fillerProblem(cleanScript) === undefined, String(fillerProblem(cleanScript)));
+// Цифры-указания («три тона», «четыре кадра») — это польза, а не статистика.
+check(
+  "числа словами не считаются статистикой",
+  fillerProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "ТРИ ТОНА", voiceoverText: "Проси три варианта и выбирай." }, cta] }) === undefined,
+);
+
+console.log("\n=== ссылки из веб-поиска не попадают в озвучку ===");
+// Именно это модель дописывала к фразам при включённом поиске, и синтезатор
+// читал адрес вслух.
+const cited = "Потом GPT-5.4 напишет сценарий. [mashagpt.ru](https://mashagpt.ru/blog/kak-sdelat-rolik)";
+check("ссылка-сноска убрана", stripSources(cited) === "Потом GPT-5.4 напишет сценарий.", stripSources(cited));
+check("голый адрес убран", stripSources("Смотри https://example.com/blog там всё есть") === "Смотри там всё есть", stripSources("Смотри https://example.com/blog там всё есть"));
+check("домен без схемы убран", stripSources("Подробнее на mashagpt.ru") === "Подробнее на", stripSources("Подробнее на mashagpt.ru"));
+check("сноска [1] убрана", stripSources("Это факт [1] проверенный") === "Это факт проверенный");
+check("двойная точка не остаётся", !stripSources("Готово. (https://a.ru)").includes(".."), stripSources("Готово. (https://a.ru)"));
+check("обычный текст не портится", stripSources("Проси три тона: строгий, дружеский, короткий.") === "Проси три тона: строгий, дружеский, короткий.");
+check("название модели с точкой цело", stripSources("GPT-5.4 и Sora 2 умеют это") === "GPT-5.4 и Sora 2 умеют это", stripSources("GPT-5.4 и Sora 2 умеют это"));
+
+console.log("\n=== проверки на присланном сценарии находят обе беды ===");
+const realProblems = scriptProblems(toolList);
+check("названо и про список, и про воду", realProblems.length >= 1 && realProblems.some((p) => p.includes("названия инструментов")), realProblems.join(" | "));
+
+console.log("\n=== автоматические правки ===");
+const weakScript = {
+  title: "Про нейросети",
+  scenes: [
+    { caption: "ПРИВЕТ!", voiceoverText: "Привет, друзья! Сегодня расскажу про нейросети.", visual: "ведущий машет рукой с экрана старого телевизора" },
+    { caption: "ВСЁ В ОДНОМ БОТЕ", voiceoverText: "Наш бот умеет всё это сразу.", visual: "швейцарский нож с десятком раскрытых лезвий лежит на столе" },
+    cta,
+  ],
+};
+
+let requests = [];
+const queue = [];
+let httpStatus = 200;
+// Критика отвечаем отдельно: он ходит в тот же эндпоинт, но его ответ — это
+// список претензий, а не сценарий. Без разделения он съедал бы очередь
+// сценариев и ломал подсчёт запросов.
+let reviewProblems = [];
+const isReview = (body) =>
+  String(body.messages?.[0]?.content ?? "").startsWith("Ты — редактор");
+
+globalThis.fetch = async (url, init) => {
+  const body = JSON.parse(init.body);
+  if (isReview(body)) {
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ problems: reviewProblems }) } }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+  requests.push(body);
+  // Отказ имитируем только на запросах с плагином веб-поиска.
+  if (httpStatus !== 200 && body.plugins) {
+    return new Response('{"error":"web plugin not available"}', { status: httpStatus });
+  }
+  return new Response(
+    JSON.stringify({ choices: [{ message: { content: JSON.stringify(queue.shift()) } }] }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+};
+
+queue.push(weakScript, cleanScript);
+requests = [];
+const fixed = await generateCheckedScript("Продукт: нейросети в Телеграм.");
+check("сделано два запроса", requests.length === 2, String(requests.length));
+check("хук заменён", fixed.script.scenes[0].caption === "ПЛАТИШЬ ПЯТЬ РАЗ", fixed.script.scenes[0].caption);
+check("реклама из середины убрана", promoProblem(fixed.script) === undefined);
+check("названы обе причины", fixed.fixes.length === 2, fixed.fixes.join(" | "));
+const feedback = requests[1].messages.at(-1).content;
+check("в правку попало про хук", feedback.includes("первую сцену"), feedback.slice(0, 80));
+check("в правку попало про рекламу", feedback.includes("кроме последней"));
+check("остальное просят не трогать", feedback.includes("оставь как есть"));
+
+queue.length = 0;
+queue.push(cleanScript);
+requests = [];
+const asIs = await generateCheckedScript("Продукт: нейросети в Телеграм.");
+check("хороший сценарий не переписывается", requests.length === 1, String(requests.length));
+check("правок нет", asIs.fixes.length === 0, asIs.fixes.join(" | "));
+
+// Даже если модель со второй попытки снова принесла слабый сценарий, отдаём
+// то, что есть: пустой результат хуже несовершенного.
+queue.length = 0;
+queue.push(weakScript, weakScript);
+requests = [];
+const stillWeak = await generateCheckedScript("Продукт: нейросети в Телеграм.");
+check("после двух попыток сценарий всё равно есть", stillWeak.script.scenes.length === 3);
+check("вторая попытка не зациклилась", requests.length === 2, String(requests.length));
+// Ключевое для автопилота: правка — это просьба к модели, а не гарантия.
+// Раньше бот писал «переписал» и на этом успокаивался. Теперь после правки
+// структурные проверки прогоняются заново, и непочиненное видно.
+check(
+  "непочиненное после правки названо",
+  stillWeak.remaining.length > 0,
+  stillWeak.remaining.join(" | "),
+);
+check(
+  "у починенного сценария остатка нет",
+  fixed.remaining.length === 0,
+  fixed.remaining.join(" | "),
+);
+check("у сразу хорошего сценария остатка нет", asIs.remaining.length === 0);
+
+// Претензии критика должны попадать в тот же механизм автоправки, что и
+// структурные: иначе он бы только советовал, а сценарий уходил как есть.
+reviewProblems = [
+  { rule: "Тема ведёт к продукту", problem: "финал меняет тему", scene: 3 },
+];
+queue.length = 0;
+queue.push(cleanScript, cleanScript);
+requests = [];
+const reviewed = await generateCheckedScript("Продукт: нейросети в Телеграм.");
+check("претензия критика вызвала переписывание", requests.length === 2, String(requests.length));
+check(
+  "она названа в списке правок",
+  reviewed.fixes.some((f) => f.includes("финал меняет тему")),
+  reviewed.fixes.join(" | "),
+);
+check(
+  "и с номером сцены",
+  reviewed.fixes.some((f) => f.includes("сцена 3")),
+  reviewed.fixes.join(" | "),
+);
+reviewProblems = [];
+
+console.log("\n=== веб-поиск для актуальных тем ===");
+queue.length = 0;
+queue.push(cleanScript);
+requests = [];
+await generateCheckedScript("Тема: тренды нейросетей.");
+check("к первому запросу подключён веб-поиск", requests[0].plugins?.[0]?.id === "web", JSON.stringify(requests[0].plugins));
+check("число результатов задано", typeof requests[0].plugins[0].max_results === "number");
+
+// При правках свежие материалы не нужны — тема уже выбрана.
+queue.length = 0;
+queue.push(cleanScript);
+requests = [];
+await generateCheckedScript("Тема: тренды.", { previousScript: cleanScript, feedback: "короче" });
+check("на правках поиск не тратится", requests[0].plugins === undefined);
+
+// Если плагин недоступен, запрос повторяется без него, а не падает.
+httpStatus = 404;
+queue.length = 0;
+queue.push(cleanScript);
+requests = [];
+const noWeb = await generateCheckedScript("Тема: тренды.");
+check("сценарий всё равно получен", noWeb.script.scenes.length === 4, String(noWeb.script.scenes.length));
+check("повтор ушёл без плагина", requests.length === 2 && requests[1].plugins === undefined, String(requests.length));
+check("про недоступность поиска сказано наружу", noWeb.webSearchUnavailable === true);
+httpStatus = 200;
+
+console.log("\n=== промпт задаёт структуру ===");
+const prompt = requests[0].messages[0].content;
+check("в промпте есть блок про хук", prompt.includes("ПЕРВАЯ СЦЕНА — ХУК"));
+check("приветствия запрещены прямо в промпте", prompt.includes("НИКАКИХ приветствий"));
+check("лимит слов хука назван", /не больше 20 слов/i.test(prompt), prompt.match(/не больше 20 слов.{0,24}/i)?.[0]);
+// Число не вшито: бюджет зависит от скорости речи, и после её изменения
+// вшитая цифра ловила бы не ошибку, а сам факт правки.
+const { wordBudget: budgetFor } = await import("../src/pipeline/generateScript.ts");
+check(
+  "бюджет слов на ролик назван",
+  new RegExp(`не больше ${budgetFor(60)} слов озвучки`, "i").test(prompt),
+  prompt.match(/не больше \d+ слов озвучки.{0,20}/i)?.[0],
+);
+check("жанр задан как рассказ, а не инструкция", prompt.includes("рассказываю интересное"));
+// «Не телеграфом» переформулировано: раньше это было про длину и толкало
+// модель к сценам на 25-45 слов, то есть к кадру, висящему по 15 секунд.
+// Теперь это правило про содержание.
+check("телеграф запрещён по содержанию, а не по длине", prompt.includes("это про содержание, а не про длину"));
+check("сказано, что сцена — это кадр", prompt.includes("СЦЕНА — ЭТО КАДР"));
+check("разрешено рвать фразу через склейку", prompt.includes("закончиться в следующей"));
+check("разрешён живой разговорный тон", prompt.includes("Сленг уместен"));
+check("цифры из физики разрешены", prompt.includes("Цифры из физики"));
+check(
+  "в промпте есть эталонный пример",
+  prompt.includes("Почему нейросеть рисует шесть пальцев") &&
+    prompt.includes("дорисовывает похоже"),
+);
+// Пример обязан быть НАШИМ. Расшифровка чужого ролика в этой роли уже дала
+// себя знать: призыв другой компании вышел в нашем готовом ролике почти
+// дословно. Промпт — это образец для копирования, а не иллюстрация.
+const foreign = /(затестишь|в шапке|мужик с мозгами|ему чё|палка о двух концах|дата-центры в космосе)/i;
+check(
+  "в промпте нет чужого текста из референса",
+  !foreign.test(prompt),
+  prompt.match(new RegExp(`.{0,50}${foreign.source}.{0,50}`, "i"))?.[0],
+);
+check("сказано, что ролик не рекламный", prompt.includes("не реклама и не инструкция"));
+check("продукт разрешён только в финале", prompt.includes("кроме последней"));
+check("перечисление сервисов запрещено", prompt.includes("перечисление сервисов"));
+check("запрещён пустой восторг", prompt.includes("Пустой восторг"));
+check("запрещены проценты и «за N минут»", prompt.includes("«за N минут»"));
+check("запрещено вставлять ссылки в текст", prompt.includes("Ссылки, адреса сайтов"));
+check("названа норма слов на кадр", /8-14 слов озвучки/.test(prompt), prompt.match(/В каждой сцене .{0,24}/)?.[0]);
+// Нижняя граница считается из бюджета, а бюджет — из скорости речи. Вшитое
+// число здесь ловило бы правку скорости, а не ошибку.
+const { minSceneCount: minScenesFor } = await import("../src/pipeline/generateScript.ts");
+check(
+  "названа нижняя граница числа сцен",
+  new RegExp(`От ${minScenesFor(60)} до 15 сцен`).test(prompt),
+  prompt.match(/От \d+ до \d+ сцен/)?.[0],
+);
+
+console.log("\n=== ответ модели разбирается, даже если это не чистый JSON ===");
+// Так это и может сломаться при смене модели: response_format — параметр из
+// мира OpenAI, и если OpenRouter его для модели не переводит, JSON приходит
+// обёрнутым в ```-блок или с фразой перед ним.
+const { extractJson } = await import("../src/pipeline/generateScript.ts");
+const obj = { title: "Тест", scenes: [{ caption: "А", voiceoverText: "б" }] };
+const raw = JSON.stringify(obj);
+const same = (s) => JSON.stringify(JSON.parse(extractJson(s))) === raw;
+check("чистый JSON проходит как есть", same(raw));
+check("```json-блок снимается", same("```json\n" + raw + "\n```"));
+check("```-блок без языка тоже", same("```\n" + raw + "\n```"));
+check("фраза перед JSON отбрасывается", same("Вот сценарий:\n" + raw));
+check("фраза после JSON отбрасывается", same(raw + "\n\nГотово!"));
+check("отступы и перевод строки не мешают", same("\n  " + raw + "  \n"));
+// Берём текст до ПОСЛЕДНЕЙ }, а не до первой: иначе вложенный overlay обрезал
+// бы весь сценарий.
+const nested = JSON.stringify({
+  title: "Тест",
+  scenes: [{ caption: "А", voiceoverText: "б", overlay: { object: "кот" } }],
+});
+check(
+  "вложенные объекты не обрезаются",
+  JSON.parse(extractJson("Вот:\n```json\n" + nested + "\n```")).scenes[0].overlay
+    .object === "кот",
+);
+check("текст без JSON возвращается как есть — падение будет осмысленным", extractJson("Не могу") === "Не могу");
+
+console.log("\n=== выбор модели сценария (/model) ===");
+const models = await import("../src/pipeline/scriptModels.ts");
+const { config } = await import("../src/pipeline/config.ts");
+check("список непустой", models.SCRIPT_MODELS.length >= 2);
+check("ключи уникальны", new Set(models.SCRIPT_MODELS.map((m) => m.key)).size === models.SCRIPT_MODELS.length);
+check("у каждой модели есть слаг и подпись", models.SCRIPT_MODELS.every((m) => m.model && m.title && m.note));
+check(
+  "дефолтный ключ есть в списке",
+  models.SCRIPT_MODELS.some((m) => m.key === models.DEFAULT_SCRIPT_MODEL_KEY),
+);
+// Модель по умолчанию берёт слаг из .env, иначе OPENROUTER_MODEL перестал бы
+// работать после появления кнопок.
+check(
+  "дефолтная модель = OPENROUTER_MODEL",
+  models.getScriptModel(models.DEFAULT_SCRIPT_MODEL_KEY).model === config.openRouterModel,
+);
+check("неизвестный ключ -> дефолт", models.getScriptModel("нет").key === models.DEFAULT_SCRIPT_MODEL_KEY);
+check("пустой ключ -> дефолт", models.getScriptModel().key === models.DEFAULT_SCRIPT_MODEL_KEY);
+
+console.log("\n=== слаг для запроса ===");
+check("ничего не выбрано -> из .env", models.resolveScriptModel() === config.openRouterModel);
+check("ключ из списка -> его слаг", models.resolveScriptModel("opus") === "anthropic/claude-opus-5");
+// Ручной слаг проходит как есть: ID моделей на OpenRouter меняются чаще, чем
+// наш список, и упереться в него нельзя.
+check(
+  "произвольный слаг проходит как есть",
+  models.resolveScriptModel("x-ai/grok-9") === "x-ai/grok-9",
+);
+check(
+  "слаг, совпавший с ключом, не превращается в другую модель",
+  models.resolveScriptModel("flash") === "google/gemini-2.5-flash",
+);
+
+console.log("\n=== визуальный акцент на первой сцене ===");
+const { sceneMotion, MOTION_CYCLE_LENGTH } = await import("../src/remotion/transitions.ts");
+check("у хука своё движение", sceneMotion(0).emphasis === true);
+check("хук наезжает, а не проявляется", sceneMotion(0).entry === "punch", sceneMotion(0).entry);
+check("у остальных сцен акцента нет", [1, 2, 3, 4, 5, 6, 7].every((i) => !sceneMotion(i).emphasis));
+check("движение по-прежнему детерминировано", sceneMotion(1).entry === sceneMotion(1 + MOTION_CYCLE_LENGTH).entry);
+
+const { existsSync, statSync } = await import("node:fs");
+check("звук хука в репозитории", existsSync("public/sfx/hook.wav"));
+check("звук хука не пустой", existsSync("public/sfx/hook.wav") && statSync("public/sfx/hook.wav").size > 1000);
+
+console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
+
+console.log("\n=== ритм: сцена — это кадр, а не мысль ===");
+// Проверка появилась после первого настоящего ролика: шесть сцен на 69 секунд,
+// один кадр висел 15 секунд. Правило «не больше N слов» было в промпте, но
+// никто не смотрел, выполнено ли оно.
+const { rhythmProblem, minSceneCount, wordBudget, STYLE_EXAMPLE } = await import(
+  "../src/pipeline/generateScript.ts"
+);
+const sc = (n) => ({ caption: "c", voiceoverText: Array(n).fill("слово").join(" ") });
+
+check(
+  "бюджет слов пропорционален длине ролика",
+  Math.abs(wordBudget(60) / wordBudget(30) - 2) < 0.05,
+  `${wordBudget(60)} / ${wordBudget(30)}`,
+);
+// Скорость речи входит в бюджет: ускорили синтезатор — в те же секунды влезает
+// больше слов. Не учесть это значит выпускать ролики короче лимита.
+const { setSpeechSpeed } = await import("../src/pipeline/speech.ts");
+setSpeechSpeed(1);
+const atNormal = wordBudget(60);
+setSpeechSpeed(1.2);
+const atFast = wordBudget(60);
+setSpeechSpeed(undefined);
+check(
+  "и растёт вместе со скоростью речи",
+  Math.abs(atFast / atNormal - 1.2) < 0.02,
+  `${atNormal} → ${atFast}`,
+);
+check("на обычной скорости это 126 слов на минуту", atNormal === 126, String(atNormal));
+check(
+  "подсказка о числе кадров растёт вместе с длиной ролика",
+  minSceneCount(60) > minSceneCount(30),
+  `${minSceneCount(60)} против ${minSceneCount(30)}`,
+);
+check(
+  "и не превышает MAX_SCENES — просить невозможного нельзя",
+  minSceneCount(600) <= 15,
+  String(minSceneCount(600)),
+);
+
+// Меряем длину сцены, а не их количество: три сцены на пятнадцать секунд —
+// нормальный ритм, а три сцены на минуту — беда. Короткий ролик проверка
+// трогать не должна.
+check(
+  "короткий ролик из трёх сцен претензий не вызывает",
+  rhythmProblem({ title: "т", scenes: [sc(8), sc(8), sc(8)] }, 60) === undefined,
+  rhythmProblem({ title: "т", scenes: [sc(8), sc(8), sc(8)] }, 60),
+);
+
+// Форма настоящего сценария, который дал 71-секундный ролик.
+const real = { title: "т", scenes: [sc(12), sc(38), sc(40), sc(30), sc(25), sc(20)] };
+const realProblem = rhythmProblem(real, 60);
+check("сценарий из настоящего ролика забракован", Boolean(realProblem), realProblem);
+check(
+  "названа причина, по которой ролик вылезет за лимит",
+  /бюджете/.test(realProblem ?? ""),
+  realProblem,
+);
+
+check(
+  "одна растянутая сцена среди нормальных ловится",
+  /сцена 4/.test(
+    rhythmProblem({ title: "т", scenes: Array.from({ length: 13 }, (_, i) => sc(i === 3 ? 26 : 8)) }, 60) ?? "",
+  ),
+);
+// Последней сцене можно вдвое больше: там призыв к действию, рвать его пополам
+// незачем — да и проверка на рекламу освобождает только последнюю сцену.
+check(
+  "финалу с призывом разрешена двойная длина",
+  rhythmProblem({ title: "т", scenes: Array.from({ length: 13 }, (_, i) => sc(i === 12 ? 20 : 8)) }, 60) === undefined,
+);
+check(
+  "но и финалу не бесконечно",
+  Boolean(rhythmProblem({ title: "т", scenes: Array.from({ length: 13 }, (_, i) => sc(i === 12 ? 40 : 8)) }, 60)),
+);
+
+// Пример стиля в промпте сильнее правил: раньше он показывал пять длинных
+// сцен, и модель копировала именно его. Значит пример обязан сам проходить
+// проверку, которую мы предъявляем модели.
+const example = JSON.parse(STYLE_EXAMPLE);
+{
+  check(
+    "пример стиля сам проходит проверку ритма",
+    rhythmProblem(example, 60) === undefined,
+    rhythmProblem(example, 60),
+  );
+  check("в примере больше десяти кадров", example.scenes.length >= 10, String(example.scenes.length));
+}
+
+
+console.log("\n=== маркетинговые проверки ===");
+const {
+  deadEndProblem,
+  hookNumberProblem,
+  ctaProblem,
+  staleProblem,
+} = await import("../src/pipeline/generateScript.ts");
+
+console.log("--- финал без вывода ---");
+// Ролик, кончающийся «учёные работают над этим», не даёт зрителю ни вывода,
+// ни повода поделиться. Смотрим предпоследнюю сцену: в последней призыв.
+for (const [what, text] of [
+  ["учёные ищут", "Инженеры и учёные ищут способы снизить энергопотребление."],
+  ["непростая задача", "Это непростая задача, братуха."],
+  ["время покажет", "Что будет дальше — время покажет."],
+  ["пока неясно", "Пока непонятно, чем это кончится."],
+  ["работа идёт", "Работа всё ещё идёт."],
+]) {
+  const script = { title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: text }, cta] };
+  check(`поймано: ${what}`, deadEndProblem(script) !== undefined, String(deadEndProblem(script)));
+}
+check(
+  "вывод для зрителя претензий не вызывает",
+  deadEndProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Значит, проси у модели конкретику, а не красоту." }, cta] }) === undefined,
+);
+// Смотреть надо предпоследнюю: в последней сцене эти же слова были бы частью
+// призыва, а не концовкой рассказа.
+check(
+  "в самом призыве такие слова не ищем",
+  deadEndProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Проси конкретику." }, { caption: "CTA", voiceoverText: "Время покажет, но затестить бота можно бесплатно прямо сейчас." }] }) === undefined,
+);
+
+console.log("--- яркая цифра должна быть в хуке ---");
+const buried = {
+  title: "t",
+  scenes: [
+    { caption: "ХУК", voiceoverText: "Нейросети жрут энергию, и это стало проблемой." },
+    { caption: "ЦИФРА", voiceoverText: "Одно обучение — 1287 мегаватт-часов электричества." },
+    cta,
+  ],
+};
+check("цифра в середине поймана", hookNumberProblem(buried) !== undefined, String(hookNumberProblem(buried)));
+check(
+  "названо, в какой именно сцене она лежит",
+  /сцене 2/.test(hookNumberProblem(buried) ?? ""),
+  hookNumberProblem(buried),
+);
+check(
+  "цифра в хуке — претензий нет",
+  hookNumberProblem({ title: "t", scenes: [{ caption: "ХУК", voiceoverText: "Одно обучение нейросети — 1287 мегаватт-часов." }, { caption: "К", voiceoverText: "Это много." }, cta] }) === undefined,
+);
+check(
+  "ролик без крупных цифр вообще не трогаем",
+  hookNumberProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Проси три варианта." }, cta] }) === undefined,
+);
+// Год и номер поколения — не «яркая цифра», иначе проверка сработает на
+// каждом втором ролике про ИИ.
+check(
+  "год не считается крючком",
+  hookNumberProblem({ title: "t", scenes: [{ caption: "ХУК", voiceoverText: "Смотри, что поменялось." }, { caption: "К", voiceoverText: "В 2026 году всё стало иначе." }, cta] }) === undefined,
+);
+
+console.log("--- призыв ---");
+const weakCta = { title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Проси конкретику." }, { caption: "CTA", voiceoverText: "Наш бот умеет фото, видео и музыку. Загляни по ссылке в профиле, там много интересного." }] };
+const ctaFound = ctaProblem(weakCta);
+check("слабый призыв пойман", ctaFound !== undefined, String(ctaFound));
+check("названо «там много интересного»", /много интересного/.test(ctaFound ?? ""), ctaFound);
+check("названо отсутствие предложения", /конкретного предложения/.test(ctaFound ?? ""), ctaFound);
+check(
+  "растянутый призыв пойман",
+  /растянут/.test(
+    ctaProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "CTA", voiceoverText: "Бесплатно " + Array(30).fill("слово").join(" ") }] }) ?? "",
+  ),
+);
+check(
+  "конкретный короткий призыв проходит",
+  ctaProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "CTA", voiceoverText: "Открой бота по ссылке в профиле и собери первую картинку бесплатно." }] }) === undefined,
+  ctaProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "CTA", voiceoverText: "Открой бота по ссылке в профиле и собери первую картинку бесплатно." }] }),
+);
+
+console.log("--- устаревшие примеры ---");
+check(
+  "GPT-3 датирует ролик",
+  /GPT-3/.test(staleProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Нейросеть GPT-3, к примеру, потребляет много." }, cta] }) ?? ""),
+);
+check(
+  "актуальное поколение не трогаем",
+  staleProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "GPT-5.4 справляется с этим сама." }, cta] }) === undefined,
+);
+check(
+  "версия с точкой не путается со старой",
+  staleProblem({ title: "t", scenes: [cleanScript.scenes[0], { caption: "К", voiceoverText: "Claude 5 и Llama 4 умеют это." }, cta] }) === undefined,
+);
+
+console.log("--- сценарий из присланного ролика ---");
+// Тот самый ролик, ради которого проверки и появились.
+const shipped = {
+  title: "Энергия нейросетей",
+  scenes: [
+    { caption: "НЕЙРОСЕТИ ЖРУТ ЭНЕРГИЮ", voiceoverText: "Нейросети потребляют так много энергии, что уже стало настоящей проблемой. Чего так? Объясню, смотри." },
+    { caption: "1287 МЕГАВАТТ-ЧАСОВ", voiceoverText: "Нейросеть GPT-3, к примеру, за одно обучение потребляет около 1287 мегаватт-часов электричества." },
+    { caption: "УМНОЖЕНИЕ МАТРИЦ", voiceoverText: "Дело в том, что обучение — это миллиарды операций умножения матриц." },
+    { caption: "НЕПРОСТАЯ ЗАДАЧА", voiceoverText: "Инженеры и учёные ищут способы снизить энергопотребление. Это непростая задача, братуха." },
+    { caption: "ЗАГЛЯНИ В ПРОФИЛЬ", voiceoverText: "Хочешь сам поработать с мощными нейросетями? Наш бот соберёт для тебя фото, видео, музыку. Загляни по ссылке профиле, там много интересного, да?" },
+  ],
+};
+const shippedProblems = scriptProblems(shipped, 60);
+for (const key of ["яркая цифра", "кончается ничем", "слабый призыв", "устаревшие примеры"]) {
+  check(`найдено: ${key}`, shippedProblems.some((p) => p.includes(key)), shippedProblems.join(" | ").slice(0, 90));
+}
+
+// Пример стиля в промпте сильнее правил, поэтому он обязан проходить ВСЕ
+// проверки, которые мы предъявляем модели, — не только ритм.
+console.log("--- пример стиля безупречен ---");
+const exampleProblems = scriptProblems(JSON.parse(STYLE_EXAMPLE), 60);
+check("пример проходит все проверки", exampleProblems.length === 0, exampleProblems.join(" | "));
+
+
+console.log("\n=== ролик, который пересказывает сам себя ===");
+// Сценарий снят по субтитрам с присланного ролика: заказчик сказал про него
+// «как-то не связано». Причина — пять мыслей, растянутые повторами на
+// двенадцать кадров: вторая половина пересказывает первую. Ни одна из прежних
+// проверок этого не видела, они нашли ровно одно замечание про призыв.
+const { repeatProblem, stem, contentStems } = await import(
+  "../src/pipeline/scriptRepeat.ts"
+);
+const sr = (caption, voiceoverText) => ({ caption, voiceoverText });
+
+const repeating = {
+  title: "Нейросети для картинок",
+  scenes: [
+    sr("ТОЛЬКО ДИЗАЙНЕРАМ?", "Думаешь, нейросети для картинок нужны только дизайнерам? Нет, брат."),
+    sr("РИСОВАТЬ УМЕЕШЬ?", "Нужна картинка для дела, а рисовать ты умеешь?"),
+    sr("ДОЛГО И ДОРОГО", "Искать дизайнера — долго и дорого. А для поста в соцсети?"),
+    sr("СДЕЛАЙ САМ", "Зачем ждать, пока сделают. Сделай сам."),
+    sr("КАК НАПИСАТЬ СООБЩЕНИЕ", "Создавать изображения нейросетью — как написать сообщение."),
+    sr("ОНА ВЫДАЁТ ГОТОВОЕ", "Пишешь, что хочешь, и она выдаёт тебе готовое."),
+    sr("ЧТО УГОДНО ЗА СЕКУНДЫ", "Пейзаж, портрет, мультик — что угодно за секунды."),
+    sr("НАХОДКА ДЛЯ БЛОГЕРОВ", "Это находка для блогеров, для бизнеса или чтобы удивить друзей."),
+    sr("НЕ ТОЛЬКО КАРТИНКИ", "И это не только картинки. Видео, текст, можно музыку."),
+    sr("ДОСТУПНЫ КАЖДОМУ", "Инструменты доступны каждому. Воплоти идеи без преград."),
+    sr("ЗАЧЕМ ПЛАТИТЬ", "Зачем платить, ждать, если можно сделать самому быстро."),
+    sr("САМ СЕБЕ ДИЗАЙНЕР", "Теперь ты сам себе дизайнер, режиссёр, композитор. Мощь ИИ в кармане."),
+    sr("ПОПРОБУЙ БЕСПЛАТНО", "Заходи по ссылке в профиле и попробуй любую нейросеть в нашем боте бесплатно."),
+  ],
+};
+const repeatFound = repeatProblem(repeating);
+check(
+  "повтор пойман",
+  repeatFound !== undefined && /сцены 4 и 11/.test(repeatFound),
+  repeatFound ?? "ничего не найдено",
+);
+check(
+  "он попал в общий список проблем",
+  scriptProblems(repeating, 60).some((p) => /повторяется/.test(p)),
+);
+
+console.log("--- словоформы сводятся к корню ---");
+// Без этого повтор не виден: «сделай» и «сделать» — одно слово.
+check("дизайнерам = дизайнер", stem("дизайнерам") === stem("дизайнер"), stem("дизайнерам"));
+check("самому = сам", stem("самому") === stem("сам"), stem("самому"));
+check("сделай = сделать = сделают", stem("сделай") === stem("сделать") && stem("сделать") === stem("сделают"), stem("сделать"));
+check("ждать = ждали", stem("ждать") === stem("ждали"), stem("ждать"));
+// Обратная сторона: корень не должен схлопываться до бессмыслицы, иначе
+// совпадать начнёт всё подряд.
+check("долго ≠ дорого", stem("долго") !== stem("дорого"), `${stem("долго")} / ${stem("дорого")}`);
+check("путь не обрезан до «пу»", stem("путь").length >= 3, stem("путь"));
+
+console.log("--- что проверка НЕ ловит, и это честно ---");
+// Пересказ ДРУГИМИ словами общих корней не имеет. Здесь это ловит критик, у
+// него есть отдельный пункт чек-листа. Регулярка не должна делать вид, что
+// понимает смысл.
+const paraphrase = {
+  title: "т",
+  scenes: [
+    sr("ДОЛГО И ДОРОГО", "Искать дизайнера — долго и дорого."),
+    sr("СЕРЕДИНА", "Модель усредняет всё, что видела, и выдаёт середину."),
+    sr("ТО ЖЕ ДРУГИМИ СЛОВАМИ", "Незачем тратить деньги и время на подрядчика."),
+  ],
+};
+check(
+  "пересказ другими словами не ловится — это работа критика",
+  repeatProblem(paraphrase) === undefined,
+);
+check(
+  "слова темы из заголовка не считаются повтором",
+  repeatProblem({
+    title: "Нейросеть рисует картинки",
+    scenes: [
+      sr("A", "Нейросеть рисует картинки быстро."),
+      sr("B", "Промежуточная сцена совсем про другое."),
+      sr("C", "Нейросеть рисует картинки дёшево."),
+    ],
+  }) === undefined,
+);
+check(
+  "соседние сцены могут повторять слова — фраза продолжается",
+  repeatProblem({
+    title: "т",
+    scenes: [
+      sr("A", "Зачем ждать, пока сделают, если можно сделать самому,"),
+      sr("B", "сделать самому и ждать не придётся совсем."),
+    ],
+  }) === undefined,
+);
+check(
+  "пустые сцены не роняют проверку",
+  repeatProblem({ title: "", scenes: [sr("A", ""), sr("B", ""), sr("C", "")] }) === undefined,
+);
+check("значимые слова отделены от служебных", !contentStems("это и не так уже").has("это"));
+
+console.log("\n=== корпус здоровых сценариев: проверки не должны срабатывать ===");
+// Все проверки выше выведены из разбора ОДНОГО ролика, и это главный риск:
+// правило, подогнанное под единственный случай, начинает браковать нормальные
+// сценарии на других темах. Корпус — защита от этого. Каждый сценарий здесь
+// написан как хороший: соблюдает ритм, имеет вывод и внятный призыв. Ни один
+// не должен вызывать ни одной претензии.
+//
+// Корпус уже отработал: на первом прогоне он забраковал два правила.
+// «Тысячи вариантов» считалось яркой цифрой (обобщение с «1287 мегаватт-часов»
+// на любое слово масштаба), а предел подписи хука в проверке был 5 слов при
+// восьми в промпте — модель следовала инструкции и получала отказ.
+// Третьим полем — описание кадра. Оно здесь не для красоты: корпус проверяет
+// и frameProblem тоже, а он обязан молчать на здоровых сценариях, где каждая
+// сцена показывает своё.
+const sc2 = (caption, voiceoverText, visual) => ({ caption, voiceoverText, visual });
+const HEALTHY = {
+  "промпты, без единой цифры": [
+    sc2("ПРОСИШЬ КРАСИВО — ПОЛУЧАЕШЬ МУСОР", "Ты просишь у нейросети «красиво», а получаешь мусор. Вот почему.", "человек за столом смотрит на распечатку с кривым рисунком и разводит руками"),
+    sc2("МОДЕЛЬ НЕ ЗНАЕТ ТВОЁ КРАСИВО", "Модель не знает, что красиво лично для тебя.", "робот протягивает букет ромашек, а девушка ждала торт со свечами"),
+    sc2("ОНА УСРЕДНЯЕТ", "Она усредняет всё, что видела, и выдаёт середину.", "сотня разных чашек стекается в воронку, из которой выходит одна серая кружка"),
+    sc2("НАЗЫВАЙ ПРЕДМЕТЫ", "Называй предметы, а не впечатления: не «уютно», а «плед, лампа, чашка».", "на подоконнике аккуратно разложены плед, настольная лампа и чашка"),
+    sc2("СВЕТ РЕШАЕТ", "Свет решает больше композиции — скажи, откуда он падает.", "прожектор на штативе бьёт сбоку, от вазы тянется длинная тень"),
+    sc2("ТРИ ПРАВКИ", "Три точные правки работают лучше одного длинного промпта.", "три канцелярские скрепки лежат рядом с исчёрканным свитком до пола"),
+    sc2("ПОПРОБУЙ", "Открой бота по ссылке в профиле и собери первую картинку бесплатно.", "телефон в руке, на экране пустая рамка галереи ждёт первого снимка"),
+  ],
+  "цифра в середине, но не крючок": [
+    sc2("ТЫ ПЛАТИШЬ ПЯТЬ РАЗ", "Ты платишь пяти сервисам за то, что делает один.", "пять касс подряд, у каждой стоит один и тот же покупатель с кошельком"),
+    sc2("ТЕКСТ ОТДЕЛЬНО", "За текст платишь одному, за картинки другому.", "пишущая машинка и мольберт стоят в разных концах комнаты, между ними стена"),
+    sc2("ТЫСЯЧИ ВАРИАНТОВ", "А внутри у них тысячи вариантов одной и той же модели.", "открытый шкаф забит одинаковыми коробками, отличаются только номера на боку"),
+    sc2("СЧИТАЙ ПО ЗАДАЧАМ", "Считай не по сервисам, а по задачам, которые реально делаешь.", "рука вычёркивает половину пунктов в блокноте и обводит два оставшихся"),
+    sc2("ПОПРОБУЙ", "Ссылка на бота в профиле — первые запросы там бесплатные.", "дверь с приветливой аркой открыта, за порогом лежит красная дорожка"),
+  ],
+  "историческая рамка с устаревшей моделью": [
+    sc2("ПЯТЬ ЛЕТ НАЗАД ЭТО БЫЛО ЧУДОМ", "Пять лет назад машина, пишущая связный текст, была чудом.", "толпа в старом зале разглядывает громоздкий аппарат под стеклянным колпаком"),
+    sc2("ТОГДА", "Тогда GPT-3 удивлял всех одним абзацем без ошибок.", "из принтера выползает единственный лист, вокруг него столпились люди"),
+    sc2("СЕЙЧАС ЭТО НОРМА", "Сегодня это лежит в телефоне и работает за секунду.", "подросток в автобусе листает телефон одной рукой, не отрываясь от окна"),
+    sc2("ПРОВЕРЯЙ ФАКТЫ", "Проверяй факты сам, особенно даты, имена и цифры.", "на столе раскрыт толстый справочник, поверх него лежит красный карандаш"),
+    sc2("ПОПРОБУЙ", "Открой бота по ссылке в профиле и собери первую картинку бесплатно.", "чистый холст на мольберте и кисть, занесённая над ним"),
+  ],
+  "призыв через подписку, без слова «бесплатно»": [
+    sc2("НЕЙРОКАРТИНКУ ВИДНО ПО РУКАМ", "Нейрокартинку почти всегда видно по рукам и по тексту.", "детектив в шляпе разглядывает портрет через увеличительное стекло"),
+    sc2("ПАЛЬЦЫ", "Пальцы — самое сложное: их часто больше или меньше.", "перчатка с семью пальцами висит на гвозде рядом с обычной парой"),
+    sc2("СМОТРИ НА КРАЯ", "Смотри на края кадра — там ошибок больше всего.", "рамка картины отогнута по углу, за ней вместо холста мятая бумага"),
+    sc2("ПОДПИШИСЬ", "Подпишись — разбираю по одной нейросети каждую неделю.", "почтовый ящик у калитки, из щели торчит свежий конверт"),
+  ],
+  "«непростая задача», но с выводом": [
+    sc2("МУЗЫКА ЗА МИНУТУ", "Нейросеть пишет музыку за минуту, но звучит она никак.", "динамик на тумбе выдувает вялое серое облачко вместо нот"),
+    sc2("ПРИЧИНА В ЗАПРОСЕ", "Причина не в модели, а в том, что ты просишь.", "посетитель в кафе показывает официанту пустую записку"),
+    sc2("СКАЖИ ПРО ТЕМП", "Скажи темп, инструменты и настроение в двух словах.", "метроном качается рядом с гитарой и барабанной установкой"),
+    sc2("НАЧНИ С ОДНОГО", "Подобрать формулировку непростая задача, поэтому начни с одного инструмента.", "пианист садится за рояль в пустом зале, остальные инструменты зачехлены"),
+    sc2("ПОПРОБУЙ", "Проверь на своей задаче: бот в профиле, попробовать можно бесплатно.", "наушники лежат на столе рядом с телефоном, провод свёрнут кольцом"),
+  ],
+  "крупная цифра стоит в хуке": [
+    sc2("40 ЧАСОВ В МЕСЯЦ", "Сорок часов в месяц уходит у монтажёра на рутину.", "настенные часы над монтажным столом, стрелки смазаны от быстрого хода"),
+    sc2("ЧТО ЭТО ЗА ЧАСЫ", "Это нарезка, субтитры, подбор музыки и вычитка текста.", "гора обрезков плёнки на полу, ножницы воткнуты в подлокотник кресла"),
+    sc2("МАШИНА БЕРЁТ РУТИНУ", "Машина хорошо берёт именно такое: однотипное и скучное.", "конвейерный робот споро раскладывает одинаковые катушки по ячейкам"),
+    sc2("ЭТО И ЕСТЬ РАБОТА", "Решать, что показать, остаётся человеку — это и есть работа.", "режиссёр в кресле выбирает один кадр из трёх, отодвигая остальные"),
+    sc2("ПОПРОБУЙ", "Открой бота по ссылке в профиле и собери первую картинку бесплатно.", "штатив с камерой развёрнут к зрителю, красная лампочка записи горит"),
+  ],
+};
+
+for (const [name, scenes] of Object.entries(HEALTHY)) {
+  const problems = scriptProblems({ title: name, scenes }, 60);
+  check(`здоровый сценарий проходит: ${name}`, problems.length === 0, problems.join(" | "));
+}
+
+// Обратная сторона: проверка, которая никогда не срабатывает, бесполезна.
+// Тот самый сценарий, ради которого всё и делалось, обязан браковаться по
+// всем четырём пунктам сразу.
+const sick = {
+  title: "t",
+  scenes: [
+    sc2("НЕЙРОСЕТИ ЖРУТ ЭНЕРГИЮ", "Нейросети потребляют много энергии, и это стало проблемой."),
+    sc2("1287 МЕГАВАТТ-ЧАСОВ", "GPT-3 за одно обучение потребляет 1287 мегаватт-часов электричества."),
+    sc2("НЕПРОСТАЯ ЗАДАЧА", "Инженеры и учёные ищут способы. Это непростая задача."),
+    sc2("ЗАГЛЯНИ", "Наш бот умеет фото и видео. Загляни по ссылке, там много интересного."),
+  ],
+};
+const sickProblems = scriptProblems(sick, 60);
+for (const key of ["яркая цифра", "кончается ничем", "слабый призыв", "устаревшие примеры"]) {
+  check(`больной сценарий всё ещё бракуется: ${key}`, sickProblems.some((p) => p.includes(key)));
+}
+
+
+console.log("\n=== критик: правила вкуса вынесены из кода ===");
+// Для контент-завода регулярки — тупик: каждая новая тема приносит свои
+// обороты, и список либо отстаёт, либо начинает браковать здоровое. Поэтому
+// смысл проверяет модель по чек-листу, а чек-лист лежит текстовым файлом и
+// правится редактором без деплоя.
+const review = await import("../src/pipeline/reviewScript.ts");
+const checklist = await import("../src/pipeline/reviewChecklist.ts");
+const { config: cfg } = await import("../src/pipeline/config.ts");
+
+check("чек-лист по умолчанию непустой", checklist.DEFAULT_CHECKLIST.length > 500);
+check(
+  "в нём есть главное правило — тема ведёт к продукту",
+  /ведёт к продукту/i.test(checklist.readChecklist()),
+);
+check("критик включён по умолчанию", cfg.scriptReview === true);
+
+const sample = { title: "т", scenes: [{ caption: "К", voiceoverText: "текст" }] };
+const realFetch = globalThis.fetch;
+const reply = (content) => async () =>
+  new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+globalThis.fetch = reply(
+  JSON.stringify({
+    problems: [
+      { rule: "Тема ведёт к продукту", problem: "финал меняет тему", scene: 4 },
+      { rule: "Хук", problem: "говорит об отрасли, а не о зрителе", scene: null },
+    ],
+  }),
+);
+let got = await review.reviewScript(sample, "бриф");
+check("претензии разобраны", got.problems.length === 2, JSON.stringify(got.problems));
+check(
+  "номер сцены попал в текст для сценариста",
+  review.formatReviewProblem(got.problems[0]).includes("(сцена 4)"),
+  review.formatReviewProblem(got.problems[0]),
+);
+check(
+  "без номера сцены скобок нет",
+  !review.formatReviewProblem(got.problems[1]).includes("("),
+  review.formatReviewProblem(got.problems[1]),
+);
+
+// Модель любит обернуть JSON в ограду — разбор должен это переживать.
+globalThis.fetch = reply('```json\n{"problems":[{"rule":"Призыв","problem":"пустой"}]}\n```');
+got = await review.reviewScript(sample, "бриф");
+check("ответ в markdown-ограде разобран", got.problems.length === 1, JSON.stringify(got));
+
+globalThis.fetch = reply('{"problems":[]}');
+got = await review.reviewScript(sample, "бриф");
+check("хороший сценарий не вызывает претензий", got.problems.length === 0);
+check("и не считается сбоем", got.unavailable === undefined);
+
+// Критик — улучшение, а не условие работы: дальше идут оплаченные картинки,
+// и ронять из-за него генерацию нельзя.
+globalThis.fetch = async () => new Response("nope", { status: 500 });
+got = await review.reviewScript(sample, "бриф");
+check("отказ сети не бросает исключение", got.problems.length === 0);
+check("но сбой назван вслух", /500/.test(got.unavailable ?? ""), got.unavailable);
+
+globalThis.fetch = reply("это вообще не json");
+got = await review.reviewScript(sample, "бриф");
+check("мусор в ответе не роняет генерацию", got.problems.length === 0);
+check("и тоже назван", Boolean(got.unavailable), got.unavailable);
+
+globalThis.fetch = realFetch;
+
+console.log("--- структура и вкус разделены ---");
+// Структурные проверки объективны и не выключаются; регулярки вкуса — за
+// выключателем, потому что на потоке тем они начинают мешать.
+const sickScript = {
+  title: "t",
+  scenes: [
+    sc2("ХУК", "Нейросети потребляют много энергии, и это стало проблемой."),
+    sc2("ЦИФРА", "GPT-3 за обучение потребляет 1287 мегаватт-часов электричества."),
+    sc2("ФИНАЛ", "Инженеры и учёные ищут способы. Это непростая задача."),
+    sc2("CTA", "Наш бот умеет фото. Загляни по ссылке, там много интересного."),
+  ],
+};
+const withTaste = scriptProblems(sickScript, 60);
+process.env.SCRIPT_TASTE_RULES = "0";
+const fresh = await import(`../src/pipeline/generateScript.ts?taste=off`);
+// Конфиг читается один раз при загрузке модуля, поэтому переключатель здесь
+// проверяем на самом объекте конфигурации, а не перезагрузкой всего графа.
+delete process.env.SCRIPT_TASTE_RULES;
+check(
+  "с регулярками вкуса претензий больше, чем структурных",
+  withTaste.some((p) => p.includes("яркая цифра")) &&
+    withTaste.some((p) => p.includes("слабый призыв")),
+  withTaste.join(" | ").slice(0, 80),
+);
+check(
+  "структурные проверки на месте независимо от вкуса",
+  typeof fresh.rhythmProblem === "function",
+);
+
+process.exit(fails === 0 ? 0 : 1);

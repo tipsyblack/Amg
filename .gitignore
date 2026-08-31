@@ -1,0 +1,29 @@
+node_modules
+out
+dist
+.env
+deploy.log
+
+# Сгенерированные пайплайном файлы (создаются заново через npm run generate)
+public/audio/*.mp3
+public/images/*.png
+public/overlays/*.png
+public/clips/*.mp4
+public/music/*
+data/video-data.json
+
+# Состояние телеграм-бота, собранные сэмплы голоса и музыкальная библиотека
+data/bot-state.json
+# Словечки Шамиля правятся из чата и живут на сервере — как чек-лист критика
+data/slang.json
+data/clone-samples/
+# Скриншоты для гайдов: чужие экраны с перепиской, им не место в репозитории
+data/guide-slides/
+data/music-samples/
+assets/music/*
+!assets/music/README.md
+
+# Библиотека клипов с маскотом: генерируется один раз командой clips:build,
+# в репозиторий не кладём — это десяток видеофайлов.
+assets/clips/*
+!assets/clips/README.md
