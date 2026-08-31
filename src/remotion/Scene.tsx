@@ -23,6 +23,8 @@ import {
   cardAspect,
 } from "./layout";
 import { mascotBox } from "./mascot";
+import { Tap } from "./Tap";
+import type { TapKind } from "./tap";
 
 // Дыхание маскота: период и размах. Период длиннее, чем у покачивания
 // объектов (1.33 с) — персонаж крупный, и быстрое колебание на нём читалось бы
@@ -100,6 +102,8 @@ interface SceneProps {
   // зум-блюр на входе.
   clipFileName?: string;
   clipDurationInFrames?: number;
+  // Подсказка «нажми сюда» для гайдов — см. Tap.tsx.
+  tap?: { kind: TapKind; xPercent: number; yPercent: number };
   // Графические акценты вокруг карточки. В референсе их нет — см. types.ts.
   accentsEnabled?: boolean;
   // Сцена без карточки: маскот стоит прямо на белом фоне, во весь рост.
@@ -123,6 +127,7 @@ interface SceneProps {
 export const Scene: React.FC<SceneProps> = ({
   words,
   overlay,
+  tap,
   swapImageFileName,
   swapStartMs,
   imageFileName,
@@ -142,6 +147,9 @@ export const Scene: React.FC<SceneProps> = ({
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const scale = width / REF_WIDTH;
+  // Ширина карточки в пикселях: подсказка «нажми сюда» масштабируется от неё,
+  // а не от кадра — иначе на узкой карточке курсор вылезал бы за края.
+  const cardWidthPx = (CARD_WIDTH_PERCENT / 100) * width;
   const motion = sceneMotion(sceneIndex);
 
   const damping = motion.emphasis ? HOOK_DAMPING : ENTRANCE_DAMPING;
@@ -520,6 +528,19 @@ export const Scene: React.FC<SceneProps> = ({
             белом фоне. */}
         {overlay && (
           <Overlay overlay={overlay} exitProgress={plainExit ? 0 : exit} />
+        )}
+
+        {/* Подсказка «нажми сюда» — тоже внутри карточки: она показывает на
+            место В ИНТЕРФЕЙСЕ, и вылезать за его край ей нельзя. */}
+        {tap && (
+          <Tap
+            kind={tap.kind}
+            xPercent={tap.xPercent}
+            yPercent={tap.yPercent}
+            durationInFrames={visualDuration}
+            width={cardWidthPx}
+            height={cardWidthPx / cardAspect(imageWidth, imageHeight)}
+          />
         )}
       </div>
   );

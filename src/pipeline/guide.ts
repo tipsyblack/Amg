@@ -1,4 +1,5 @@
 import { STYLE_PROMPT } from "./generateImage";
+import { TAP_KINDS, TAP_ZONES, tapKindFor, tapZone, type TapKind } from "../remotion/tap";
 
 /**
  * Гайды по боту: скриншот превращается в кадр нашего стиля.
@@ -69,6 +70,8 @@ export interface GuideSlide {
   text: string;
   /** Что выделить, если реплика этого не говорит. */
   note?: string;
+  /** Куда и чем показать нажатие. Разбирается из пометки в реплике. */
+  tap?: { kind: TapKind; xPercent: number; yPercent: number };
 }
 
 /**
@@ -143,3 +146,78 @@ export function guideScript(
     })),
   };
 }
+
+
+/**
+ * Пометка о нажатии внутри реплики: `[клик: внизу справа]`.
+ *
+ * Почему прямо в тексте, а не отдельным вопросом на каждый слайд: слайды
+ * присылают пачкой с телефона, и лишний вопрос после каждого скриншота
+ * превратил бы съёмку гайда в допрос. Пометка пишется там же, где реплика, и
+ * ВЫРЕЗАЕТСЯ из неё — иначе синтезатор честно прочитает «квадратная скобка
+ * клик» вслух.
+ *
+ * Понимаются зоны словами («внизу справа»), проценты («30 70») и вид
+ * подсказки («обводка»). Ничего не указано — нижняя середина: в телеграм-боте
+ * почти всё нажимаемое живёт там.
+ */
+export interface TapSpec {
+  kind: TapKind;
+  xPercent: number;
+  yPercent: number;
+}
+
+const KIND_WORDS: Record<string, TapKind> = {
+  курсор: "cursor",
+  стрелка: "arrow",
+  обводка: "frame",
+  рамка: "frame",
+  кольцо: "ring",
+  круг: "ring",
+  волна: "ripple",
+  касание: "ripple",
+};
+
+/** Убирает пометку из реплики и возвращает то, что в ней было сказано. */
+export function parseTapTag(
+  text: string,
+  index = 0,
+): { text: string; tap?: TapSpec } {
+  const off = text.match(/\[\s*(?:без\s+клика|без\s+подсказки)\s*\]/i);
+  if (off) {
+    return { text: text.replace(off[0], " ").replace(/\s+/g, " ").trim() };
+  }
+
+  const tag = text.match(/\[\s*(?:клик|тап)\s*:?\s*([^\]]*)\]/i);
+  const clean = tag
+    ? text.replace(tag[0], " ").replace(/\s+/g, " ").trim()
+    : text.trim();
+  const inside = (tag?.[1] ?? "").toLowerCase().trim();
+
+  // Вид подсказки: если не назван, чередуется по номеру слайда — один и тот же
+  // курсор десять кадров подряд перестаёт читаться как подсказка.
+  const kindWord = Object.keys(KIND_WORDS).find((word) => inside.includes(word));
+  const kind = tapKindFor(index, kindWord ? KIND_WORDS[kindWord] : undefined);
+
+  // Проценты: «30 70». Берём только если оба числа в пределах кадра.
+  const numbers = inside.match(/(\d{1,3})\s*[,\s]\s*(\d{1,3})/);
+  if (numbers) {
+    const x = Number(numbers[1]);
+    const y = Number(numbers[2]);
+    if (x >= 0 && x <= 100 && y >= 0 && y <= 100) {
+      return { text: clean, tap: { kind, xPercent: x, yPercent: y } };
+    }
+  }
+
+  // Зона словами. Ищем самое длинное совпадение: «внизу справа» должно
+  // выиграть у «внизу».
+  const zoneWord = Object.keys(TAP_ZONES)
+    .filter((zone) => inside.includes(zone))
+    .sort((a, b) => b.length - a.length)[0];
+  const point = tapZone(zoneWord);
+  return { text: clean, tap: { kind, xPercent: point.x, yPercent: point.y } };
+}
+
+/** Список видов подсказки для подсказки в чате. */
+export const TAP_WORDS = Object.keys(KIND_WORDS);
+export { TAP_KINDS };

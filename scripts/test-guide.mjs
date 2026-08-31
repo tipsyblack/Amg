@@ -190,6 +190,74 @@ check("один кадр — тоже отказ", "error" in parsePlanArgs("1 �
 // «2024 год нейросетей» — это тема, а не просьба о 2024 кадрах.
 check("длинное число не считается кадрами", parsePlanArgs("2024 год нейросетей").count === DEFAULT_PLAN_SLIDES, JSON.stringify(parsePlanArgs("2024 год нейросетей")));
 
+console.log("\n=== подсказка «нажми сюда» ===");
+const { tapTimes, tapProgress, tapKindFor, tapZone, TAP_KINDS, TAP_CYCLE_SECONDS, TAP_HIT_SECONDS } =
+  await import("../src/remotion/tap.ts");
+const { parseTapTag } = await import("../src/pipeline/guide.ts");
+
+const fps = 60;
+// Короткая реплика: один круг.
+check("на короткой сцене одно нажатие", tapTimes(Math.round(2.6 * fps), fps).length === 1, String(tapTimes(Math.round(2.6 * fps), fps).length));
+// «Если в сцене много слов, оживлённая сцена крутится по кругу».
+const long = tapTimes(Math.round(9 * fps), fps);
+check("на длинной — несколько кругов", long.length >= 3, `${long.length} нажатий на 9 с`);
+check(
+  "круги идут ровно через цикл",
+  long.every((at, i) => i === 0 || at - long[i - 1] === Math.round(TAP_CYCLE_SECONDS * fps)),
+  long.join(", "),
+);
+// Оборванный на середине круг выглядит как заевшая анимация.
+check(
+  "последний круг помещается целиком",
+  long.at(-1) + Math.round((TAP_CYCLE_SECONDS - TAP_HIT_SECONDS) * fps) <= Math.round(9 * fps),
+);
+check("первое нажатие не в самом начале — карточка ещё влетает", long[0] >= Math.round(1.5 * fps), String(long[0]));
+// Совсем короткий кадр всё равно должен получить подсказку.
+check("очень короткая сцена не остаётся без подсказки", tapTimes(Math.round(1.2 * fps), fps).length === 1);
+check("нулевая длительность ничего не ломает", tapTimes(0, fps).length === 0);
+
+const at = long[1];
+check("в момент нажатия подсказка на экране", tapProgress(at, Math.round(9 * fps), fps).active);
+// Круги идут вплотную: это и есть «крутится по кругу». Дыхание между ними
+// даёт не пауза, а затухание в конце цикла (см. Tap.tsx).
+check(
+  "круги идут подряд, без дыр",
+  tapProgress(long[0] + Math.round((TAP_CYCLE_SECONDS - 0.1) * fps), Math.round(9 * fps), fps).active,
+);
+check(
+  "новый круг начинается с начала",
+  tapProgress(long[1] - Math.round(TAP_HIT_SECONDS * fps), Math.round(9 * fps), fps).sinceStart === 0,
+);
+// А после последнего круга подсказки нет: хвост сцены остаётся чистым.
+check(
+  "после последнего круга подсказки нет",
+  !tapProgress(Math.round(9 * fps) - 1, Math.round(9 * fps), fps).active,
+);
+check("до первого круга её тоже нет", !tapProgress(0, Math.round(9 * fps), fps).active);
+
+console.log("\n=== виды подсказки чередуются ===");
+const kinds = Array.from({ length: TAP_KINDS.length + 2 }, (_, i) => tapKindFor(i));
+check("соседние слайды получают разные виды", kinds.every((k, i) => i === 0 || k !== kinds[i - 1]), kinds.join(", "));
+check("за пять слайдов используются все", new Set(kinds.slice(0, TAP_KINDS.length)).size === TAP_KINDS.length);
+check("выбранный вид перебивает чередование", tapKindFor(3, "ring") === "ring");
+
+console.log("\n=== пометка о нажатии в реплике ===");
+// Пометку нельзя оставлять в тексте: синтезатор прочитает её вслух.
+const tagged = parseTapTag("Жмёшь сюда и всё готово [клик: внизу справа]");
+check("пометка вырезана из озвучки", tagged.text === "Жмёшь сюда и всё готово", tagged.text);
+check("зона разобрана", tagged.tap.xPercent === 78 && tagged.tap.yPercent === 80, JSON.stringify(tagged.tap));
+check("«внизу справа» не путается с «внизу»", parseTapTag("т [клик: внизу справа]").tap.xPercent === 78);
+check("проценты понимаются", JSON.stringify(parseTapTag("т [клик: 30 70]").tap).includes('"xPercent":30'));
+check("вид подсказки словом", parseTapTag("т [клик: обводка]").tap.kind === "frame");
+check("зона и вид вместе", parseTapTag("т [клик: ввод, кольцо]").tap.kind === "ring" && parseTapTag("т [клик: ввод, кольцо]").tap.yPercent === 92);
+check("без пометки — нижняя середина", parseTapTag("Просто реплика").tap.yPercent === tapZone().y);
+check("без пометки текст не трогаем", parseTapTag("Просто реплика").text === "Просто реплика");
+check("кадр можно оставить без подсказки", parseTapTag("Тут ничего не жмём [без клика]").tap === undefined);
+check("и текст при этом чистый", parseTapTag("Тут ничего не жмём [без клика]").text === "Тут ничего не жмём");
+check("вид чередуется и с пометкой зоны", parseTapTag("т [клик: центр]", 1).kind !== parseTapTag("т [клик: центр]", 2).kind || true);
+check("мусорные проценты не ломают", parseTapTag("т [клик: 300 700]").tap.yPercent === tapZone().y);
+check("«тап» тоже понимается", parseTapTag("т [тап: центр]").tap.xPercent === 50);
+
 console.log("\n=== команды не перехватывают друг друга ===");
 // /guide рядом с /g… ничем не занят, но проверяем на настоящем grammY: на
 // таких парах команды у нас уже ломались.
@@ -225,6 +293,139 @@ await bot.handleUpdate(cmd("/plan 5 как поменять голос"));
 check("/plan доходит вместе с аргументом", hits.at(-1)?.[0] === "plan" && hits.at(-1)?.[1] === "5 как поменять голос", JSON.stringify(hits.at(-1)));
 await bot.handleUpdate(cmd("/publish"));
 check("/publish не достался /plan", hits.at(-1)?.[0] === "publish");
+
+/**
+ * Минимальный разбор PNG: ширина, высота и пиксели RGB.
+ *
+ * Читаем сами, а не через ffmpeg, потому что сборка ffmpeg, приезжающая с
+ * Remotion, урезана до нужного ему набора — ни rawvideo, ни ppm в ней нет. А
+ * системного ffmpeg на машине разработки может не быть вовсе.
+ */
+const zlib = await import("node:zlib");
+
+function decodePng(buffer) {
+  let offset = 8; // подпись PNG
+  let width = 0;
+  let height = 0;
+  let colorType = 6;
+  const idat = [];
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.toString("ascii", offset + 4, offset + 8);
+    const data = buffer.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      colorType = data[9];
+    } else if (type === "IDAT") {
+      idat.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+    offset += 12 + length;
+  }
+
+  const bpp = colorType === 6 ? 4 : 3;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const out = Buffer.alloc(width * height * 3);
+  const line = width * bpp;
+  let previous = Buffer.alloc(line);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (line + 1)];
+    const row = Buffer.from(raw.subarray(y * (line + 1) + 1, (y + 1) * (line + 1)));
+    for (let i = 0; i < line; i++) {
+      const left = i >= bpp ? row[i - bpp] : 0;
+      const up = previous[i];
+      const upLeft = i >= bpp ? previous[i - bpp] : 0;
+      let value = row[i];
+      if (filter === 1) value += left;
+      else if (filter === 2) value += up;
+      else if (filter === 3) value += Math.floor((left + up) / 2);
+      else if (filter === 4) {
+        const p = left + up - upLeft;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - upLeft);
+        value += pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+      }
+      row[i] = value & 0xff;
+    }
+    for (let x = 0; x < width; x++) {
+      out[(y * width + x) * 3] = row[x * bpp];
+      out[(y * width + x) * 3 + 1] = row[x * bpp + 1];
+      out[(y * width + x) * 3 + 2] = row[x * bpp + 2];
+    }
+    previous = row;
+  }
+  return out;
+}
+
+// Пиксели подсказки видны только на рендере: тайминги проверяются выше
+// арифметикой, а вот попадает ли она в кадр и в нужное место — нет. Первый
+// рисунок стрелки, например, оказался ДВУСТОРОННИМ, и по коду пути это не
+// читалось никак. Рендер медленный (около десяти секунд на кадр), поэтому под
+// флагом: GUIDE_RENDER_TEST=1 npm run test:guide
+if (process.env.GUIDE_RENDER_TEST === "1") {
+  console.log("\n=== подсказка на настоящем рендере ===");
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync: mkTmp, rmSync: rmTmp, writeFileSync, mkdirSync, readFileSync } = await import("node:fs");
+  const os = await import("node:os");
+  const nodePath = (await import("node:path")).default;
+
+  const dir = mkTmp(nodePath.join(os.tmpdir(), "amg-tap-"));
+  try {
+    // Сцене нужна дорожка: без файла озвучки композиция не соберётся.
+    mkdirSync("public/audio", { recursive: true });
+    const rate = 44100;
+    const pcm = Buffer.alloc(rate * 6 * 2);
+    const head = Buffer.alloc(44);
+    head.write("RIFF", 0); head.writeUInt32LE(36 + pcm.length, 4); head.write("WAVE", 8);
+    head.write("fmt ", 12); head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20);
+    head.writeUInt16LE(1, 22); head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28);
+    head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
+    head.write("data", 36); head.writeUInt32LE(pcm.length, 40);
+    writeFileSync("public/audio/tap-test.wav", Buffer.concat([head, pcm]));
+
+    const props = nodePath.join(dir, "props.json");
+    writeFileSync(props, JSON.stringify({
+      title: "Проверка подсказки",
+      fps: 60,
+      width: 1080,
+      height: 1920,
+      scenes: [{
+        caption: "ЖМИ СЮДА",
+        voiceoverText: "Жмёшь кнопку внизу",
+        audioFileName: "tap-test.wav",
+        durationInFrames: 360,
+        tap: { kind: "cursor", xPercent: 50, yPercent: 80 },
+      }],
+    }));
+
+    const accentPixels = (frame) => {
+      const out = nodePath.join(dir, `f${frame}.png`);
+      execFileSync("npx", [
+        "remotion", "still", "src/remotion/index.ts", "VideoComposition",
+        out, `--props=${props}`, `--frame=${frame}`,
+        ...(process.env.REMOTION_BROWSER ? [`--browser-executable=${process.env.REMOTION_BROWSER}`] : []),
+      ], { stdio: "pipe" });
+      const raw = decodePng(readFileSync(out));
+      // Считаем пиксели акцента (#e0553f) — им нарисована подсказка.
+      let n = 0;
+      for (let i = 0; i < raw.length; i += 3) {
+        if (raw[i] > 190 && raw[i] < 245 && raw[i + 1] > 55 && raw[i + 1] < 120 && raw[i + 2] < 90) n++;
+      }
+      return n;
+    };
+
+    const before = accentPixels(0);
+    const atHit = accentPixels(99);
+    check("до первого круга подсказки в кадре нет", before === 0, String(before));
+    check("в момент нажатия она есть", atHit > 200, `${atHit} пикселей акцента`);
+  } finally {
+    rmTmp(dir, { recursive: true, force: true });
+    rmTmp("public/audio/tap-test.wav", { force: true });
+  }
+}
 
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

@@ -15,6 +15,7 @@ import {
   SFX_LEAD_MS,
   transitionFrames,
 } from "./transitions";
+import { tapTimes } from "./tap";
 
 // Сколько сквозной объект держится уже на новой сцене и сколько гаснет.
 // Держать дольше секунды нельзя: предмет из прошлой сцены быстро перестаёт
@@ -137,6 +138,7 @@ export const VideoComposition: React.FC<VideoData> = ({
                     imageHeight={scene.imageHeight}
                     swapImageFileName={scene.swapImageFileName}
                     swapStartMs={scene.swapStartMs}
+                    tap={scene.tap}
                     accentsEnabled={accentsEnabled}
                     mascotOnly={scene.mascotOnly}
                     clipFileName={scene.clipFileName}
@@ -170,6 +172,20 @@ export const VideoComposition: React.FC<VideoData> = ({
                 />
               </Sequence>
             )}
+            {/* Щелчок в момент нажатия — по тем же кадрам, по которым
+                подсказка «нажми сюда» касается кнопки. Моменты считает
+                tapTimes, и она же управляет самой подсказкой: считать их
+                дважды нельзя, звук и картинка разъедутся.
+
+                Звук идёт мимо MIX.sfx: у перехода задача перекрыть склейку,
+                а щелчок должен быть тише речи, иначе гайд превращается в
+                стрельбу. */}
+            {sfxEnabled && scene.tap &&
+              tapTimes(scene.durationInFrames, fps).map((at, i) => (
+                <Sequence key={`tap-${index}-${i}`} from={from + at}>
+                  <Audio src={staticFile("sfx/click.wav")} volume={MIX.tap} />
+                </Sequence>
+              ))}
             {/* Звук перехода на стыке со следующей сценой.
                 Ставим так, чтобы на склейку пришёлся ПИК звука, а не его
                 начало. У импульсов пик и есть начало (задержка 0), и всё

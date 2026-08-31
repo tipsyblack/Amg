@@ -86,7 +86,17 @@ export interface Session {
   images?: SceneImage[];
   // Гайд по боту: слайды, которые прислал человек. Ролик из них собирается
   // иначе — сценарий пишет он сам, а картинки берутся из его скриншотов.
-  guideSlides?: { file: string; text: string; note?: string }[];
+  guideSlides?: {
+    file: string;
+    text: string;
+    note?: string;
+    // Куда показать нажатие: разбирается из пометки в реплике, см. guide.ts.
+    tap?: {
+      kind: "cursor" | "ring" | "frame" | "ripple" | "arrow";
+      xPercent: number;
+      yPercent: number;
+    };
+  }[];
   guideTitle?: string;
   // Покадровый план гайда: заготовка, из которой берутся реплики, если к
   // скриншоту не приложили свою. Живёт рядом со слайдами и умирает с /new.

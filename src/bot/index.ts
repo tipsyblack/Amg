@@ -54,7 +54,9 @@ import {
   buildGuidePrompt,
   guideProblems,
   guideScript,
+  parseTapTag,
   slideCaption,
+  TAP_WORDS,
 } from "../pipeline/guide";
 import {
   formatPlan,
@@ -1053,6 +1055,9 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
             )
           : undefined,
         mascotOnly: mascotScenes.has(i) || undefined,
+        // Подсказка «нажми сюда» — только в гайдах: в новостном ролике жать
+        // нечего, там иллюстрация к мысли.
+        tap: session.guide ? session.guideSlides?.[i]?.tap : undefined,
         clipFileName: clips[i]?.clipFileName,
         clipDurationInFrames: clips[i]?.clipDurationInFrames,
         durationInFrames: audio[i].durationInFrames,
@@ -2259,6 +2264,18 @@ bot.command("plan", async (ctx) => {
 // Общего у них ровно столько, сколько стоило разделять: озвучка, субтитры,
 // сборка и публикация те же, различается только то, откуда взялись сцены.
 
+/** Куда и чем ткнём — словами, чтобы это было видно до сборки. */
+function tapWhere(tap: { kind: string; xPercent: number; yPercent: number }): string {
+  const kinds: Record<string, string> = {
+    cursor: "курсор",
+    ring: "кольцо",
+    frame: "обводка",
+    ripple: "волна",
+    arrow: "стрелка",
+  };
+  return `${kinds[tap.kind] ?? tap.kind} на ${tap.xPercent}/${tap.yPercent}`;
+}
+
 function guideDir(chatId: number): string {
   return path.resolve("data/guide-slides", String(chatId));
 }
@@ -2305,19 +2322,27 @@ async function addGuideSlide(
   // Реплика из плана подставляется ровно тогда, когда своей нет. План —
   // заготовка, а не решение: любое присланное слово его перебивает.
   const planned = own ? "" : (session.guidePlan?.[slides.length]?.line ?? "");
-  slides.push({ file, text: own || planned });
+  // Пометка о нажатии вырезается из реплики: иначе синтезатор прочитает
+  // «квадратная скобка клик» вслух.
+  const parsed = parseTapTag(own || planned, slides.length);
+  slides.push({ file, text: parsed.text, tap: parsed.tap });
   updateSession(chatId, { guideSlides: slides });
 
   const number = slides.length;
+  const where = parsed.tap
+    ? `👆 ${tapWhere(parsed.tap)}`
+    : "👆 без подсказки нажатия";
   if (own) {
     await ctx.reply(
-      `📸 Слайд ${number} принят.\n\nДальше: следующий скриншот или /done.`,
+      `📸 Слайд ${number} принят. ${where}.\n\n` +
+        "Дальше: следующий скриншот или /done.",
     );
     return;
   }
   if (planned) {
     await ctx.reply(
-      `📸 Слайд ${number} принят, реплика взята из плана:\n\n🎙 ${planned}\n\n` +
+      `📸 Слайд ${number} принят, реплика взята из плана:\n\n🎙 ${parsed.text}\n` +
+        `${where}\n\n` +
         "Не то — пришлите свою реплику текстом, она заменит эту. Дальше: " +
         "следующий скриншот или /done.",
     );
@@ -4476,7 +4501,17 @@ bot.on("message:text", async (ctx) => {
           "• скриншот лучше слать «без сжатия» (документом): чем чётче " +
           "исходник, тем точнее модель перенесёт надписи.\n\n" +
           "Реплику пишите так, как её должен произнести Шамиль — она пойдёт в " +
-          "озвучку слово в слово. Когда слайды кончатся — /done.",
+          "озвучку слово в слово.\n\n" +
+          "👆 На каждом кадре будет подсказка «нажми сюда»: курсор, обводка " +
+          "или волна от касания, со щелчком. По умолчанию показывает вниз — " +
+          "туда, где у телеграма кнопки. Другое место пишите пометкой прямо в " +
+          "реплике, она вырезается из озвучки:\n" +
+          "«Жмёшь сюда и всё [клик: внизу справа]»\n" +
+          "Зоны: центр, вверху, внизу, слева, справа, вверху справа, внизу " +
+          "слева, ввод. Можно процентами: [клик: 30 70]. Можно выбрать вид: " +
+          `[клик: внизу справа, обводка] — ${TAP_WORDS.join(", ")}. ` +
+          "Кадр без нажатия — [без клика].\n\n" +
+          "Когда слайды кончатся — /done.",
       );
       return;
     }
@@ -4493,10 +4528,12 @@ bot.on("message:text", async (ctx) => {
       // переписать, не изобретая отдельной команды правки.
       const last = slides.length - 1;
       const had = slides[last].text;
-      slides[last] = { ...slides[last], text };
+      const parsed = parseTapTag(text, last);
+      slides[last] = { ...slides[last], text: parsed.text, tap: parsed.tap };
       updateSession(chatId, { guideSlides: slides, step: "collecting_guide" });
       await ctx.reply(
         (had ? `Реплика слайда ${slides.length} заменена.` : `Слайд ${slides.length} готов.`) +
+          ` ${parsed.tap ? `👆 ${tapWhere(parsed.tap)}` : "👆 без подсказки нажатия"}.` +
           `\n\nСлайды:\n${guideSlideLines(slides)}\n\n` +
           "Дальше: следующий скриншот или /done.",
       );
