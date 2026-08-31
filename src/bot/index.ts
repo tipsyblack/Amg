@@ -2299,8 +2299,13 @@ async function resolveSlideTap(
     return `👆 ${tapWhere(slide.tap)} — как вы указали`;
   }
 
-  const target = await findTapTarget(imageUrl, slide.text, session.scriptModel);
-  const kind = tapKindFor(index);
+  const target = await findTapTarget(
+    imageUrl,
+    slide.text,
+    session.scriptModel,
+    slide.tapHint,
+  );
+  const kind = slide.tapKind ?? tapKindFor(index);
   if (target) {
     slides[index] = {
       ...slide,
@@ -2309,18 +2314,21 @@ async function resolveSlideTap(
     updateSession(chatId, { guideSlides: slides });
     return (
       `👆 нашёл: ${target.what} (${target.xPercent}/${target.yPercent}). ` +
-      "Не то — пришлите реплику с пометкой, например [клик: внизу справа]"
+      "Не то — назовите кнопку в пометке, например [клик: кнопка Оживить фото]"
     );
   }
 
   // Не нашла — говорим об этом прямо. Молчаливое умолчание означало бы курсор,
   // показывающий неизвестно куда, и человек об этом не узнал бы до просмотра.
-  const fallback = defaultTap(index);
+  const fallback = { ...defaultTap(index), kind };
   slides[index] = { ...slide, tap: fallback };
   updateSession(chatId, { guideSlides: slides });
   return (
-    "👆 не понял, что тут нажимают — показываю вниз по центру. " +
-    "Поправить: пришлите реплику с пометкой [клик: внизу справа]"
+    (slide.tapHint
+      ? `👆 не нашёл на кадре «${slide.tapHint}» — показываю вниз по центру. `
+      : "👆 не понял, что тут нажимают — показываю вниз по центру. ") +
+    "Поправить: назовите кнопку — [клик: кнопка Nano Banana] — или укажите " +
+    "место — [клик: внизу справа]"
   );
 }
 
@@ -2391,6 +2399,8 @@ async function addGuideSlide(
     tap: parsed.tap,
     tapOff: parsed.off,
     tapExplicit: Boolean(parsed.tap),
+    tapHint: parsed.hint,
+    tapKind: parsed.kind,
   });
   updateSession(chatId, { guideSlides: slides });
 
@@ -4580,13 +4590,16 @@ bot.on("message:text", async (ctx) => {
           "Реплику пишите так, как её должен произнести Шамиль — она пойдёт в " +
           "озвучку слово в слово.\n\n" +
           "👆 На каждом кадре будет подсказка «нажми сюда»: курсор, обводка " +
-          "или волна от касания, со щелчком. По умолчанию показывает вниз — " +
-          "туда, где у телеграма кнопки. Другое место пишите пометкой прямо в " +
+          "или волна от касания, со щелчком. КУДА показывать — найду сам по " +
+          "кадру и напишу, что нашёл.\n\n" +
+          "Если промахнусь или кнопок много — назовите её пометкой прямо в " +
           "реплике, она вырезается из озвучки:\n" +
-          "«Жмёшь сюда и всё [клик: внизу справа]»\n" +
-          "Зоны: центр, вверху, внизу, слева, справа, вверху справа, внизу " +
-          "слева, ввод. Можно процентами: [клик: 30 70]. Можно выбрать вид: " +
-          `[клик: внизу справа, обводка] — ${TAP_WORDS.join(", ")}. ` +
+          "«Жмёшь сюда и всё [клик: кнопка Nano Banana]»\n\n" +
+          "Ещё можно указать зону (центр, вверху, внизу, слева, справа, " +
+          "вверху справа, внизу слева, ввод), вид подсказки " +
+          `(${TAP_WORDS.join(", ")}) и точку в процентах — но проценты ` +
+          "считаются от готового кадра, а не от вашего скриншота, поэтому " +
+          "их удобнее подставлять уже посмотрев на слайд.\n" +
           "Кадр без нажатия — [без клика].\n\n" +
           "Когда слайды кончатся — /done.",
       );
@@ -4612,6 +4625,8 @@ bot.on("message:text", async (ctx) => {
         tap: parsed.tap,
         tapOff: parsed.off,
         tapExplicit: Boolean(parsed.tap),
+        tapHint: parsed.hint,
+        tapKind: parsed.kind,
       };
       updateSession(chatId, { guideSlides: slides, step: "collecting_guide" });
       await ctx.reply(

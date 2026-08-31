@@ -30,12 +30,12 @@ export interface TapTarget {
   what: string;
 }
 
-export function buildFindPrompt(narration: string): string {
+export function buildFindPrompt(narration: string, hint?: string): string {
   return `На картинке — кадр из видеоинструкции по телеграм-боту. Это
 перерисованный в мультяшном стиле скриншот интерфейса.
 
 Реплика, которая звучит на этом кадре: «${narration}»
-
+${hint ? `\nЧеловек прямо сказал, что искать: ${hint}. Ищи именно это.\n` : ""}
 Найди на КАРТИНКЕ элемент, на который зритель должен нажать по этой реплике:
 кнопку, пункт меню, поле ввода, команду. Ответь СТРОГО валидным JSON без
 markdown-обёртки:
@@ -95,6 +95,7 @@ export async function findTapTarget(
   imageUrl: string,
   narration: string,
   model: string = config.openRouterModel,
+  hint?: string,
 ): Promise<TapTarget | undefined> {
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -110,7 +111,7 @@ export async function findTapTarget(
           {
             role: "user",
             content: [
-              { type: "text", text: buildFindPrompt(narration) },
+              { type: "text", text: buildFindPrompt(narration, hint) },
               { type: "image_url", image_url: { url: imageUrl } },
             ],
           },

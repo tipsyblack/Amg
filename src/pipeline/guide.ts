@@ -190,7 +190,7 @@ const KIND_WORDS: Record<string, TapKind> = {
 export function parseTapTag(
   text: string,
   index = 0,
-): { text: string; tap?: TapSpec; off?: boolean } {
+): { text: string; tap?: TapSpec; off?: boolean; hint?: string; kind?: TapKind } {
   const off = text.match(/\[\s*(?:без\s+клика|без\s+подсказки)\s*\]/i);
   if (off) {
     return {
@@ -226,8 +226,44 @@ export function parseTapTag(
   const zoneWord = Object.keys(TAP_ZONES)
     .filter((zone) => inside.includes(zone))
     .sort((a, b) => b.length - a.length)[0];
-  const point = tapZone(zoneWord);
-  return { text: clean, tap: { kind, xPercent: point.x, yPercent: point.y } };
+  // Зона считается указанием места ТОЛЬКО когда кроме неё (и вида подсказки)
+  // в пометке ничего нет. Иначе «кнопка Поддержка справа» превратилась бы в
+  // «где-то справа», хотя человек назвал конкретную кнопку — а по имени
+  // попадём точнее, чем по половине экрана.
+  const rest = zoneWord
+    ? inside
+        .replace(zoneWord, " ")
+        .replace(new RegExp(Object.keys(KIND_WORDS).join("|"), "g"), " ")
+        .replace(/[,;\s]+/g, " ")
+        .trim()
+    : "";
+  if (zoneWord && !rest) {
+    const point = tapZone(zoneWord);
+    return { text: clean, tap: { kind, xPercent: point.x, yPercent: point.y } };
+  }
+
+  // Ни зоны, ни процентов — значит, кнопку назвали по имени: «[клик: кнопка
+  // Nano Banana]». Это САМЫЙ ЧАСТЫЙ случай на настоящем экране: в меню из
+  // двенадцати кнопок «справа» означает шесть разных, а координаты человек
+  // всё равно назвать не может — они считаются от перерисованного кадра, а не
+  // от его скриншота. Имя уходит в поиск по кадру как то, что нужно найти.
+  const hint = inside
+    .split(/[,;]/)
+    .map((part) => part.trim())
+    .filter(
+      (part) =>
+        part &&
+        !Object.keys(KIND_WORDS).includes(part) &&
+        // Голые числа сюда не идут: если они не прошли как проценты (вне
+        // кадра, одно вместо двух), то это ошибка ввода, а не имя кнопки, и
+        // отправлять «300 700» на поиск бессмысленно.
+        !/^[\d\s]+$/.test(part),
+    )
+    .join(", ");
+  if (hint) return { text: clean, hint, kind };
+
+  // Пустая пометка «[клик:]» — просто просьба найти самому.
+  return { text: clean, kind };
 }
 
 /**

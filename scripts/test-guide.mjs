@@ -248,7 +248,9 @@ check("пометка вырезана из озвучки", tagged.text === "Ж
 check("зона разобрана", tagged.tap.xPercent === 78 && tagged.tap.yPercent === 80, JSON.stringify(tagged.tap));
 check("«внизу справа» не путается с «внизу»", parseTapTag("т [клик: внизу справа]").tap.xPercent === 78);
 check("проценты понимаются", JSON.stringify(parseTapTag("т [клик: 30 70]").tap).includes('"xPercent":30'));
-check("вид подсказки словом", parseTapTag("т [клик: обводка]").tap.kind === "frame");
+// Один только вид, без места: место тогда ищется по кадру, а вид уважается.
+check("вид подсказки словом", parseTapTag("т [клик: обводка]").kind === "frame");
+check("но место при этом не назначено", parseTapTag("т [клик: обводка]").tap === undefined);
 check("зона и вид вместе", parseTapTag("т [клик: ввод, кольцо]").tap.kind === "ring" && parseTapTag("т [клик: ввод, кольцо]").tap.yPercent === 92);
 // Пустое tap здесь НЕ значит «показывать вниз»: оно значит «человек не
 // сказал», и место потом ищется по самому кадру. Различать обязательно —
@@ -262,14 +264,33 @@ check("кадр можно оставить без подсказки", parseTap
 check("и место у такого кадра не считаем", parseTapTag("Тут ничего не жмём [без клика]").tap === undefined);
 check("и текст при этом чистый", parseTapTag("Тут ничего не жмём [без клика]").text === "Тут ничего не жмём");
 check("вид чередуется и с пометкой зоны", parseTapTag("т [клик: центр]", 1).kind !== parseTapTag("т [клик: центр]", 2).kind || true);
-check("мусорные проценты откатываются на зону", parseTapTag("т [клик: 300 700]").tap.yPercent === tapZone().y);
+// Проценты вне кадра — ошибка ввода, а не имя кнопки: ни места, ни подсказки
+// для поиска из них не делаем, просто ищем по кадру.
+check("проценты вне кадра не назначают место", parseTapTag("т [клик: 300 700]").tap === undefined);
+check("и не уходят в поиск как имя", parseTapTag("т [клик: 300 700]").hint === undefined);
 check("«тап» тоже понимается", parseTapTag("т [тап: центр]").tap.xPercent === 50);
+
+console.log("\n=== кнопку можно назвать по имени ===");
+// Самый частый случай на настоящем экране: в меню из двенадцати кнопок
+// «справа» означает шесть разных, а проценты человек назвать не может — они
+// считаются от перерисованного кадра, а не от его скриншота.
+const named = parseTapTag("Жмёшь Nano Banana [клик: кнопка Nano Banana]");
+check("имя кнопки уходит в поиск", named.hint === "кнопка nano banana", JSON.stringify(named));
+check("координат при этом нет", named.tap === undefined);
+check("пометка вырезана и здесь", named.text === "Жмёшь Nano Banana");
+check("вид можно выбрать вместе с именем", parseTapTag("т [клик: кнопка Nano Banana, обводка]").kind === "frame");
+check("имя при этом не теряется", parseTapTag("т [клик: кнопка Nano Banana, обводка]").hint === "кнопка nano banana");
+check("зона по-прежнему сильнее имени", parseTapTag("т [клик: внизу справа]").tap.xPercent === 78);
+check("пустая пометка — просто «найди сам»", parseTapTag("т [клик:]").hint === undefined && parseTapTag("т [клик:]").tap === undefined);
 
 console.log("\n=== поиск кнопки по кадру ===");
 // Без этого пришлось бы писать пометку к каждому слайду: в настоящем гайде
 // кнопки каждый раз в разных местах.
 const { buildFindPrompt, parseFindResult } = await import("../src/pipeline/findTarget.ts");
 const findPrompt = buildFindPrompt("Жмёшь «Собрать видео» и ждёшь");
+const hinted = buildFindPrompt("Жмёшь сюда", "кнопка Nano Banana");
+check("названная кнопка попадает в запрос", /Ищи именно это/.test(hinted) && hinted.includes("кнопка Nano Banana"));
+check("без имени лишней строки нет", !/Ищи именно это/.test(findPrompt));
 check("реплика уходит в запрос", findPrompt.includes("Собрать видео"));
 check("координаты просят в процентах", /ПРОЦЕНТАХ/.test(findPrompt));
 // Уверенный курсор, показывающий не туда, хуже, чем курсор в умолчании.
