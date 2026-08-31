@@ -119,6 +119,77 @@ try {
 check("ответ не по формату тоже объяснён", /не по формату/.test(error), error);
 check("предел на исходник задан", MAX_UPLOAD_BYTES >= 1024 * 1024);
 
+console.log("\n=== покадровый план на тему ===");
+const {
+  buildPlanPrompt,
+  parsePlan,
+  formatPlan,
+  planWarnings,
+  parsePlanArgs,
+  DEFAULT_PLAN_SLIDES,
+  MAX_PLAN_SLIDES,
+} = await import("../src/pipeline/guidePlan.ts");
+
+const planPrompt = buildPlanPrompt("как поменять голос в боте", 5, "бот для нейросетей");
+check("тема в промпте", planPrompt.includes("как поменять голос в боте"));
+check("число кадров названо", /Кадров: 5/.test(planPrompt));
+check("контекст продукта уходит", /бот для нейросетей/.test(planPrompt));
+// Модель не видела интерфейс и с удовольствием придумает кнопку. В гайде
+// выдуманная кнопка хуже, чем никакой гайд: зритель пойдёт её искать.
+check("выдумывать кнопки запрещено", /НЕ ВЫДУМЫВАЙ НАЗВАНИЯ КНОПОК/.test(planPrompt));
+check("первый кадр — зачем смотреть", /ПЕРВЫЙ КАДР/.test(planPrompt));
+check("последний — что сделать", /ПОСЛЕДНИЙ КАДР/.test(planPrompt));
+check("рамки реплики те же, что у слайда", planPrompt.includes(`${MIN_SLIDE_WORDS}-${MAX_SLIDE_WORDS} слов`));
+check("говор Шамиля учтён и здесь", /ГОВОР ШАМИЛЯ/.test(planPrompt));
+check("без контекста лишней строки нет", !/Что это за продукт/.test(buildPlanPrompt("тема", 4)));
+
+const raw = JSON.stringify({
+  slides: [
+    { screen: "главный экран бота", line: "Открываешь бота и видишь одну кнопку — жми её." },
+    { screen: "список голосов", line: "Тут выбираешь голос, каждый можно послушать заранее." },
+  ],
+});
+const plan = parsePlan(raw);
+check("план разобран", plan.length === 2 && plan[0].screen === "главный экран бота");
+check("ответ в ограде тоже разбирается", parsePlan("```json\n" + raw + "\n```").length === 2);
+check("кадры без реплики выброшены", parsePlan(JSON.stringify({ slides: [{ screen: "экран" }, plan[0]] })).length === 1);
+let planError = "";
+try {
+  parsePlan(JSON.stringify({ slides: [] }));
+} catch (e) {
+  planError = e.message;
+}
+check("пустой план объяснён", /переформулировать тему/.test(planError), planError);
+try {
+  parsePlan("это не json");
+  planError = "";
+} catch (e) {
+  planError = e.message;
+}
+check("мусор вместо json объяснён", /Не разобрал ответ модели/.test(planError), planError);
+
+const shown = formatPlan(plan);
+check("в плане видно, что снять", shown.includes("📸 главный экран бота"));
+check("и что сказать", shown.includes("🎙 Открываешь бота"));
+check("кадры пронумерованы", shown.startsWith("1. "));
+
+// Реплика плана и есть будущая реплика слайда, поэтому мерило то же.
+check("длинная реплика помечена", planWarnings([{ screen: "э", line: Array.from({ length: MAX_SLIDE_WORDS + 3 }, () => "слово").join(" ") }]).some((w) => /длинная/.test(w)));
+check("короткая тоже", planWarnings([{ screen: "э", line: "Жми" }]).some((w) => /короткая/.test(w)));
+check("кадр без экрана помечен", planWarnings([{ screen: "", line: "Нормальная реплика из слов" }]).some((w) => /не сказано, что снять/.test(w)));
+check("к нормальному плану претензий нет", planWarnings(plan).length === 0, planWarnings(plan).join(" | "));
+
+console.log("\n=== разбор аргумента /plan ===");
+check("просто тема", parsePlanArgs("как поменять голос").count === DEFAULT_PLAN_SLIDES);
+check("тема сохранена", parsePlanArgs("как поменять голос").topic === "как поменять голос");
+check("число впереди — это кадры", parsePlanArgs("5 как поменять голос").count === 5);
+check("и тема без числа", parsePlanArgs("5 как поменять голос").topic === "как поменять голос");
+check("пустой аргумент — подсказка с примером", /error/.test(Object.keys(parsePlanArgs("  ")).join()));
+check("слишком много кадров отклонено", "error" in parsePlanArgs(`${MAX_PLAN_SLIDES + 5} тема`));
+check("один кадр — тоже отказ", "error" in parsePlanArgs("1 тема"));
+// «2024 год нейросетей» — это тема, а не просьба о 2024 кадрах.
+check("длинное число не считается кадрами", parsePlanArgs("2024 год нейросетей").count === DEFAULT_PLAN_SLIDES, JSON.stringify(parsePlanArgs("2024 год нейросетей")));
+
 console.log("\n=== команды не перехватывают друг друга ===");
 // /guide рядом с /g… ничем не занят, но проверяем на настоящем grammY: на
 // таких парах команды у нас уже ломались.
@@ -135,6 +206,8 @@ const hits = [];
 bot.command("guide", (ctx) => hits.push(["guide", ctx.match]));
 bot.command("done", (ctx) => hits.push(["done", ctx.match]));
 bot.command("new", (ctx) => hits.push(["new", ctx.match]));
+bot.command("plan", (ctx) => hits.push(["plan", ctx.match]));
+bot.command("publish", (ctx) => hits.push(["publish", ctx.match]));
 const cmd = (text) => ({
   update_id: Math.floor(Math.random() * 1e6),
   message: {
@@ -148,6 +221,10 @@ await bot.handleUpdate(cmd("/guide"));
 check("/guide доходит до своего обработчика", hits.at(-1)?.[0] === "guide");
 await bot.handleUpdate(cmd("/done"));
 check("/done не перехвачен", hits.at(-1)?.[0] === "done");
+await bot.handleUpdate(cmd("/plan 5 как поменять голос"));
+check("/plan доходит вместе с аргументом", hits.at(-1)?.[0] === "plan" && hits.at(-1)?.[1] === "5 как поменять голос", JSON.stringify(hits.at(-1)));
+await bot.handleUpdate(cmd("/publish"));
+check("/publish не достался /plan", hits.at(-1)?.[0] === "publish");
 
 console.log(fails === 0 ? "\nВсе проверки пройдены\n" : `\nПровалено: ${fails}\n`);
 process.exit(fails === 0 ? 0 : 1);

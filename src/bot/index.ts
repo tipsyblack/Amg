@@ -56,6 +56,12 @@ import {
   guideScript,
   slideCaption,
 } from "../pipeline/guide";
+import {
+  formatPlan,
+  parsePlanArgs,
+  planWarnings,
+  requestGuidePlan,
+} from "../pipeline/guidePlan";
 import { uploadImageToKie } from "../pipeline/kieUpload";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import {
@@ -1285,6 +1291,7 @@ bot.command(["start", "help"], async (ctx) => {
       "/topics — темы дня из мира нейросетей (повестка + защита от повторов)\n" +
       "/new — начать новый ролик\n" +
       "/guide — гайд по боту: ваши скриншоты и ваш текст\n" +
+      "/plan — покадровый план гайда на заданную тему\n" +
       "/profiles — профили продуктов (роль + стиль референса)\n" +
       "/newprofile — создать профиль\n" +
       "/cancel — сбросить текущий диалог\n" +
@@ -2199,6 +2206,52 @@ async function addCloneSample(
 }
 
 
+bot.command("plan", async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  const parsed = parsePlanArgs(ctx.match ?? "");
+  if ("error" in parsed) {
+    await ctx.reply(parsed.error);
+    return;
+  }
+
+  const session = getSession(chatId);
+  await ctx.reply(`✍️ Пишу покадровый план: «${parsed.topic}», ${parsed.count} кадров…`);
+  try {
+    const slides = await requestGuidePlan(
+      parsed.topic,
+      parsed.count,
+      // Профиль знает, что за продукт — без этого модель пишет про
+      // «бот» вообще.
+      session.brief,
+      session.scriptModel,
+    );
+    updateSession(chatId, { guidePlan: slides });
+
+    const warnings = planWarnings(slides);
+    await ctx.reply(
+      `🧭 План «${parsed.topic}»\n\n${formatPlan(slides)}` +
+        (warnings.length > 0 ? `\n\n⚠️ ${warnings.join("\n⚠️ ")}` : ""),
+    );
+    await ctx.reply(
+      "📸 — что снять, 🎙 — что скажет Шамиль.\n\n" +
+        "Названия кнопок модель НЕ придумывает: она не видела ваш бот. Где " +
+        "нужен точный текст — смотрите на свой экран и правьте.\n\n" +
+        (session.step === "collecting_guide"
+          ? "Присылайте скриншоты по порядку — реплика к каждому подставится " +
+            "из плана сама. Своя реплика в подписи или следующим сообщением " +
+            "перебивает план."
+          : "Начать гайд по этому плану — /guide. Реплики подставятся сами, " +
+            "останется прислать скриншоты по порядку."),
+    );
+  } catch (error) {
+    await ctx.reply(error instanceof Error ? error.message : String(error));
+  }
+});
+
 // ——— Гайды по боту ———
 //
 // Второй вид роликов. Новостной ролик модель придумывает сама; гайд человек
@@ -2216,13 +2269,20 @@ bot.command("guide", async (ctx) => {
     await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
     return;
   }
+  // План, если его писали до /guide, переживает сброс: порядок «сначала
+  // придумали покадрово, потом пошли снимать» — основной, и терять заготовку
+  // на ровном месте нельзя.
+  const plan = getSession(chatId).guidePlan;
   resetSession(chatId);
   await rm(guideDir(chatId), { recursive: true, force: true });
-  updateSession(chatId, { step: "awaiting_guide_title", guide: true });
+  updateSession(chatId, { step: "awaiting_guide_title", guide: true, guidePlan: plan });
   await ctx.reply(
     "🧭 Гайд по боту. Голос Шамиля, кадры — ваши скриншоты, перерисованные в " +
       "наш стиль.\n\nСначала название — оно пойдёт в заголовок и в описание " +
-      "поста. Например: «Как собрать первый ролик».",
+      "поста. Например: «Как собрать первый ролик»." +
+      (plan?.length
+        ? `\n\nПлан на ${plan.length} кадров сохранён — реплики подставлю сам.`
+        : "\n\nНет готового сценария? /plan напишет покадровый на вашу тему."),
   );
 });
 
@@ -2239,15 +2299,34 @@ async function addGuideSlide(
   file: string,
   caption?: string,
 ): Promise<void> {
-  const slides = [...(getSession(chatId).guideSlides ?? [])];
-  slides.push({ file, text: (caption ?? "").trim() });
+  const session = getSession(chatId);
+  const slides = [...(session.guideSlides ?? [])];
+  const own = (caption ?? "").trim();
+  // Реплика из плана подставляется ровно тогда, когда своей нет. План —
+  // заготовка, а не решение: любое присланное слово его перебивает.
+  const planned = own ? "" : (session.guidePlan?.[slides.length]?.line ?? "");
+  slides.push({ file, text: own || planned });
   updateSession(chatId, { guideSlides: slides });
 
+  const number = slides.length;
+  if (own) {
+    await ctx.reply(
+      `📸 Слайд ${number} принят.\n\nДальше: следующий скриншот или /done.`,
+    );
+    return;
+  }
+  if (planned) {
+    await ctx.reply(
+      `📸 Слайд ${number} принят, реплика взята из плана:\n\n🎙 ${planned}\n\n` +
+        "Не то — пришлите свою реплику текстом, она заменит эту. Дальше: " +
+        "следующий скриншот или /done.",
+    );
+    return;
+  }
   await ctx.reply(
-    caption?.trim()
-      ? `📸 Слайд ${slides.length} принят.\n\nДальше: следующий скриншот или /done.`
-      : `📸 Скриншот ${slides.length} принят. Теперь пришлите реплику к нему — ` +
-        "то, что Шамиль скажет на этом кадре.",
+    `📸 Скриншот ${number} принят. Теперь пришлите реплику к нему — ` +
+      "то, что Шамиль скажет на этом кадре. Нет своей — /plan напишет " +
+      "покадровый план на тему, и реплики подставятся сами.",
   );
 }
 
