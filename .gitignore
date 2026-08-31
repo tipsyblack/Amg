@@ -17,6 +17,8 @@ data/bot-state.json
 # Словечки Шамиля правятся из чата и живут на сервере — как чек-лист критика
 data/slang.json
 data/clone-samples/
+# Скриншоты для гайдов: чужие экраны с перепиской, им не место в репозитории
+data/guide-slides/
 data/music-samples/
 assets/music/*
 !assets/music/README.md

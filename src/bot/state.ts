@@ -21,6 +21,8 @@ export type Step =
   | "awaiting_checklist"
   | "awaiting_stems_source"
   | "awaiting_music_upload"
+  | "awaiting_guide_title"
+  | "collecting_guide"
   | "busy";
 
 export interface SceneImage {
@@ -82,6 +84,13 @@ export interface Session {
   styleNotes?: string;
   script?: GeneratedScript;
   images?: SceneImage[];
+  // Гайд по боту: слайды, которые прислал человек. Ролик из них собирается
+  // иначе — сценарий пишет он сам, а картинки берутся из его скриншотов.
+  guideSlides?: { file: string; text: string; note?: string }[];
+  guideTitle?: string;
+  // Этот ролик — гайд. От флага зависит не только сборка: маскот в кадрах
+  // гайда не нужен вовсе, там на экране интерфейс.
+  guide?: boolean;
   // Появляющиеся объекты: файл готов вместе с картинками, а момент появления
   // считается при сборке — он привязан к слову из озвучки.
   overlays?: (SceneOverlay | undefined)[];

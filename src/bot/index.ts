@@ -50,6 +50,13 @@ import {
 import { overlayStartMs } from "../pipeline/wordTimings";
 import { lookLabel, sceneLook, seedFromTitle } from "../pipeline/sceneLook";
 import { measureImages, varietyLines, varietyReport } from "../pipeline/variety";
+import {
+  buildGuidePrompt,
+  guideProblems,
+  guideScript,
+  slideCaption,
+} from "../pipeline/guide";
+import { uploadImageToKie } from "../pipeline/kieUpload";
 import { generateScriptAudio } from "../pipeline/scriptAudio";
 import {
   measureVoiceSample,
@@ -218,6 +225,7 @@ import {
   rememberShotTopic,
   resetSession,
   saveProfile,
+  type SceneImage,
   updateSession,
 } from "./state";
 
@@ -383,6 +391,23 @@ async function askImageModel(ctx: Context, chatId: number): Promise<void> {
       IMAGE_MODELS.map((spec) => `• ${spec.title} — ${spec.note}`).join("\n"),
     { reply_markup: keyboard },
   );
+}
+
+/**
+ * Маскот и библиотечные клипы в гайде не участвуют.
+ *
+ * В новостном ролике финал — это маскот во весь кадр с призывом, и карточка
+ * там исчезает совсем. В гайде на её месте экран бота: подменить последний
+ * слайд джином значит выбросить последний шаг инструкции. Клип библиотеки
+ * сделал бы то же самое, только в середине.
+ */
+function mascotScenesFor(chatId: number, total: number): Set<number> {
+  if (getSession(chatId).guide) return new Set();
+  return new Set(mascotSceneIndexes(total, config.mascotScenes));
+}
+
+function librarySceneIndexesFor(chatId: number, total: number): number[] {
+  return getSession(chatId).guide ? [] : librarySceneIndexes(total);
 }
 
 /** Включён ли автопилот в этом чате. */
@@ -578,9 +603,7 @@ async function runImagesStep(ctx: Context, chatId: number): Promise<void> {
       // Сцены без карточки: маскот во весь рост на белом. Картинка им не
       // нужна — рисовать её было бы и тратой денег, и путаницей: она попала
       // бы в согласование, а в ролик не вошла.
-      const mascotScenes = new Set(
-        mascotSceneIndexes(script.scenes.length, config.mascotScenes),
-      );
+      const mascotScenes = mascotScenesFor(chatId, script.scenes.length);
 
       for (let i = 0; i < script.scenes.length; i++) {
         if (mascotScenes.has(i)) {
@@ -787,6 +810,29 @@ async function regenerateScene(
         throw new Error("Нет данных сцены — начните заново: /new");
       }
 
+      // Гайд перерисовывается от того же скриншота: у его кадров нет ни тона,
+      // ни плана — есть экран, который должен остаться собой.
+      const slide = session.guide ? session.guideSlides?.[index] : undefined;
+      if (slide) {
+        await ctx.reply(`🎨 Перерисовываю слайд ${index + 1}…`);
+        const url = await uploadImageToKie(slide.file);
+        const again = await generateSceneIllustration(
+          index,
+          buildGuidePrompt(slide.text, slide.note, session.styleNotes),
+          url,
+          session.imageModel,
+          false,
+        );
+        images[index] = { ...again, attempt: (images[index]?.attempt ?? 0) + 1 };
+        updateSession(chatId, { step: "idle", images });
+        await ctx.replyWithPhoto(
+          new InputFile(path.resolve("public/images", again.imageFileName)),
+          { caption: `Слайд ${index + 1}: ${slideCaption(slide.text, 8)}` },
+        );
+        await ctx.reply("Как теперь?", { reply_markup: imagesKeyboard });
+        return;
+      }
+
       // Перегенерация одной сцены должна дать тот же тип кадра, что и общий
       // проход, иначе в середине ролика внезапно появится маскот.
       const regenWithCharacter = sceneWithCharacter(index, script.scenes.length);
@@ -855,10 +901,10 @@ async function runAssembleStep(ctx: Context, chatId: number): Promise<void> {
     // из-за неё при /clips 0 собранная библиотека не подставлялась никогда.
     const clipCount = session.clipScenes ?? config.clipScenes;
     const paid = new Set(clipSceneIndexes(script.scenes.length, clipCount));
-    const fromLibrary = new Set(librarySceneIndexes(script.scenes.length));
-    const mascotScenes = new Set(
-      mascotSceneIndexes(script.scenes.length, config.mascotScenes),
+    const fromLibrary = new Set(
+      librarySceneIndexesFor(chatId, script.scenes.length),
     );
+    const mascotScenes = mascotScenesFor(chatId, script.scenes.length);
     const libraryReady = await readyClipIds();
     // Один и тот же жест два раза подряд выглядит как заевшая плёнка.
     const usedLibraryClips = new Set(
@@ -1238,6 +1284,7 @@ bot.command(["start", "help"], async (ctx) => {
     "Бот собирает короткие вертикальные ролики с Шамилем.\n\n" +
       "/topics — темы дня из мира нейросетей (повестка + защита от повторов)\n" +
       "/new — начать новый ролик\n" +
+      "/guide — гайд по боту: ваши скриншоты и ваш текст\n" +
       "/profiles — профили продуктов (роль + стиль референса)\n" +
       "/newprofile — создать профиль\n" +
       "/cancel — сбросить текущий диалог\n" +
@@ -2151,8 +2198,149 @@ async function addCloneSample(
   );
 }
 
+
+// ——— Гайды по боту ———
+//
+// Второй вид роликов. Новостной ролик модель придумывает сама; гайд человек
+// пишет сам — по реплике на слайд, — а картинки берёт из своих же скриншотов.
+// Общего у них ровно столько, сколько стоило разделять: озвучка, субтитры,
+// сборка и публикация те же, различается только то, откуда взялись сцены.
+
+function guideDir(chatId: number): string {
+  return path.resolve("data/guide-slides", String(chatId));
+}
+
+bot.command("guide", async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (generationRunning) {
+    await ctx.reply("Сейчас идёт генерация — дождитесь её окончания.");
+    return;
+  }
+  resetSession(chatId);
+  await rm(guideDir(chatId), { recursive: true, force: true });
+  updateSession(chatId, { step: "awaiting_guide_title", guide: true });
+  await ctx.reply(
+    "🧭 Гайд по боту. Голос Шамиля, кадры — ваши скриншоты, перерисованные в " +
+      "наш стиль.\n\nСначала название — оно пойдёт в заголовок и в описание " +
+      "поста. Например: «Как собрать первый ролик».",
+  );
+});
+
+/** Слайды по-человечески: номер, реплика, есть ли картинка. */
+function guideSlideLines(slides: { file: string; text: string }[]): string {
+  return slides
+    .map((slide, i) => `${i + 1}. ${slide.text ? slideCaption(slide.text, 8) : "⚠️ без реплики"}`)
+    .join("\n");
+}
+
+async function addGuideSlide(
+  ctx: Context,
+  chatId: number,
+  file: string,
+  caption?: string,
+): Promise<void> {
+  const slides = [...(getSession(chatId).guideSlides ?? [])];
+  slides.push({ file, text: (caption ?? "").trim() });
+  updateSession(chatId, { guideSlides: slides });
+
+  await ctx.reply(
+    caption?.trim()
+      ? `📸 Слайд ${slides.length} принят.\n\nДальше: следующий скриншот или /done.`
+      : `📸 Скриншот ${slides.length} принят. Теперь пришлите реплику к нему — ` +
+        "то, что Шамиль скажет на этом кадре.",
+  );
+}
+
+/**
+ * Отрисовка слайдов и сборка сценария из них.
+ *
+ * Дальше ролик идёт общим путём: те же кнопки согласования, та же озвучка
+ * одним чтением, та же сборка. Гайд отличается только происхождением сцен.
+ */
+async function runGuideImagesStep(ctx: Context, chatId: number): Promise<void> {
+  const session = getSession(chatId);
+  const slides = session.guideSlides ?? [];
+  if (slides.length === 0) {
+    await ctx.reply("Слайдов нет. Пришлите скриншот с репликой — или /cancel.");
+    return;
+  }
+
+  // Проверки до трат: каждый слайд — платная перерисовка.
+  const problems = guideProblems(slides);
+  if (problems.length > 0) {
+    await ctx.reply(
+      "Так собирать не буду:\n\n" +
+        problems
+          .map((p) => `• слайд ${p.slide}: ${p.message}`)
+          .join("\n") +
+        "\n\nПоправьте и повторите /done. Заменить реплику последнего слайда " +
+        "— просто пришлите её текстом ещё раз.",
+    );
+    return;
+  }
+
+  const ok = await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      const title = getSession(chatId).guideTitle ?? "Гайд";
+      const images: SceneImage[] = [];
+
+      await ctx.reply(
+        `🎨 Перерисовываю ${slides.length} экран(ов) в наш стиль.\n\n` +
+          "Надписи на кнопках модель переносит с оригинала — смотрите на них " +
+          "внимательно: кириллицу картиночные модели рисуют хуже латиницы, и " +
+          "кривую подпись лучше поймать сейчас, а не в готовом ролике.",
+      );
+
+      for (const [i, slide] of slides.entries()) {
+        await ctx.reply(`🖼 Слайд ${i + 1} из ${slides.length}…`);
+        // Скриншот нужно показать модели, а она принимает только ссылку.
+        // Кладём во временное хранилище Kie.ai: в публичный репозиторий чужие
+        // экраны с перепиской класть нельзя.
+        const url = await uploadImageToKie(slide.file);
+        const illustration = await generateSceneIllustration(
+          i,
+          buildGuidePrompt(slide.text, slide.note, session.styleNotes),
+          url,
+          session.imageModel,
+          // Маскота в кадре гайда нет: на экране интерфейс, и джин поверх него
+          // только мешает читать.
+          false,
+        );
+        images.push(illustration);
+        updateSession(chatId, { images });
+        await ctx.replyWithPhoto(
+          new InputFile(path.resolve("public/images", illustration.imageFileName)),
+          { caption: `Слайд ${i + 1}: ${slideCaption(slide.text, 8)}` },
+        );
+      }
+
+      updateSession(chatId, {
+        step: "idle",
+        script: guideScript(title, slides),
+        images,
+        overlays: [],
+      });
+      await ctx.reply(
+        "Экраны готовы. Сверьте надписи с настоящим ботом — если где-то " +
+          "переврано, «🔄 Перегенерировать сцену».",
+        { reply_markup: imagesKeyboard },
+      );
+    },
+    { retryData: "retry_guide", errorStep: "collecting_guide" },
+  );
+  if (!ok) return;
+}
+
 bot.command("done", async (ctx) => {
   const chatId = ctx.chat.id;
+  // Гайд собирается тем же «/done», что и клон голоса: команда одна, а что
+  // именно завершать — видно по тому, что человек перед этим набирал.
+  if (getSession(chatId).step === "collecting_guide") {
+    await runGuideImagesStep(ctx, chatId);
+    return;
+  }
   const samples = getSession(chatId).cloneSamples ?? [];
   if (samples.length === 0) {
     await ctx.reply(
@@ -4040,6 +4228,11 @@ bot.callbackQuery("retry_images", async (ctx) => {
   await runImagesStep(ctx, ctx.chat!.id);
 });
 
+bot.callbackQuery("retry_guide", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await runGuideImagesStep(ctx, ctx.chat!.id);
+});
+
 bot.callbackQuery("retry_assemble", async (ctx) => {
   await ctx.answerCallbackQuery();
   await runAssembleStep(ctx, ctx.chat!.id);
@@ -4053,9 +4246,77 @@ bot.callbackQuery(/^regen_(\d+)$/, async (ctx) => {
 // Материал для клонирования можно присылать файлом: видео, аудио, голосовое
 // или документ. Telegram отдаёт боту файлы до 20 МБ — для звука этого хватает
 // с запасом, а большие видео идут ссылкой на Drive.
+bot.on(":photo", async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (getSession(chatId).step !== "collecting_guide") return;
+  await withGeneration(
+    ctx,
+    chatId,
+    async () => {
+      await mkdir(guideDir(chatId), { recursive: true });
+      const file = await ctx.getFile();
+      if (!file.file_path) throw new Error("Telegram не отдал путь к файлу");
+      const response = await fetch(
+        `https://api.telegram.org/file/bot${token}/${file.file_path}`,
+      );
+      if (!response.ok) {
+        throw new Error(`Не удалось скачать скриншот: HTTP ${response.status}`);
+      }
+      const slides = getSession(chatId).guideSlides ?? [];
+      const local = path.join(
+        guideDir(chatId),
+        `slide-${slides.length}${path.extname(file.file_path) || ".jpg"}`,
+      );
+      await writeFile(local, Buffer.from(await response.arrayBuffer()));
+      await addGuideSlide(ctx, chatId, local, ctx.message?.caption);
+      // Шаг возвращаем: withGeneration после успеха сбрасывает его в idle, а
+      // слайды присылают подряд.
+      updateSession(chatId, { step: "collecting_guide" });
+    },
+    { errorStep: "collecting_guide" },
+  );
+});
+
 bot.on([":video", ":audio", ":voice", ":document", ":video_note"], async (ctx) => {
   const chatId = ctx.chat.id;
   const step = getSession(chatId).step;
+  // Скриншот, присланный «без сжатия», приходит документом, а не фото. Для
+  // гайда это даже лучше: чем чётче исходник, тем точнее модель перенесёт
+  // надписи.
+  if (step === "collecting_guide") {
+    const name = ctx.message?.document?.file_name ?? "";
+    if (!/\.(png|jpe?g|webp)$/i.test(name)) {
+      await ctx.reply(
+        "Для гайда нужны скриншоты (png или jpg). Пришлите картинкой — или /done, если слайды кончились.",
+      );
+      return;
+    }
+    await withGeneration(
+      ctx,
+      chatId,
+      async () => {
+        await mkdir(guideDir(chatId), { recursive: true });
+        const file = await ctx.getFile();
+        if (!file.file_path) throw new Error("Telegram не отдал путь к файлу");
+        const response = await fetch(
+          `https://api.telegram.org/file/bot${token}/${file.file_path}`,
+        );
+        if (!response.ok) {
+          throw new Error(`Не удалось скачать скриншот: HTTP ${response.status}`);
+        }
+        const slides = getSession(chatId).guideSlides ?? [];
+        const local = path.join(
+          guideDir(chatId),
+          `slide-${slides.length}${path.extname(name) || ".png"}`,
+        );
+        await writeFile(local, Buffer.from(await response.arrayBuffer()));
+        await addGuideSlide(ctx, chatId, local, ctx.message?.caption);
+        updateSession(chatId, { step: "collecting_guide" });
+      },
+      { errorStep: "collecting_guide" },
+    );
+    return;
+  }
   if (
     step !== "awaiting_clone_links" &&
     step !== "awaiting_stems_source" &&
@@ -4126,6 +4387,43 @@ bot.on("message:text", async (ctx) => {
   const session = getSession(chatId);
 
   switch (session.step) {
+    case "awaiting_guide_title": {
+      updateSession(chatId, { step: "collecting_guide", guideTitle: text });
+      await ctx.reply(
+        `Гайд «${text}».\n\nТеперь слайды. На каждый — скриншот и реплика к ` +
+          "нему:\n\n" +
+          "• скриншот с подписью — принимается сразу;\n" +
+          "• скриншот, а следующим сообщением текст — тоже;\n" +
+          "• скриншот лучше слать «без сжатия» (документом): чем чётче " +
+          "исходник, тем точнее модель перенесёт надписи.\n\n" +
+          "Реплику пишите так, как её должен произнести Шамиль — она пойдёт в " +
+          "озвучку слово в слово. Когда слайды кончатся — /done.",
+      );
+      return;
+    }
+
+    case "collecting_guide": {
+      const slides = [...(session.guideSlides ?? [])];
+      if (slides.length === 0) {
+        await ctx.reply(
+          "Сначала скриншот, потом реплика к нему. Отменить — /cancel.",
+        );
+        return;
+      }
+      // Текст всегда достаётся ПОСЛЕДНЕМУ слайду: так его можно и дописать, и
+      // переписать, не изобретая отдельной команды правки.
+      const last = slides.length - 1;
+      const had = slides[last].text;
+      slides[last] = { ...slides[last], text };
+      updateSession(chatId, { guideSlides: slides, step: "collecting_guide" });
+      await ctx.reply(
+        (had ? `Реплика слайда ${slides.length} заменена.` : `Слайд ${slides.length} готов.`) +
+          `\n\nСлайды:\n${guideSlideLines(slides)}\n\n` +
+          "Дальше: следующий скриншот или /done.",
+      );
+      return;
+    }
+
     case "awaiting_brief": {
       updateSession(chatId, { step: "awaiting_reference", brief: text });
       await ctx.reply(
