@@ -193,7 +193,7 @@ check("длинное число не считается кадрами", parseP
 console.log("\n=== подсказка «нажми сюда» ===");
 const { tapTimes, tapProgress, tapKindFor, tapZone, TAP_KINDS, TAP_CYCLE_SECONDS, TAP_HIT_SECONDS } =
   await import("../src/remotion/tap.ts");
-const { parseTapTag } = await import("../src/pipeline/guide.ts");
+const { parseTapTag, defaultTap } = await import("../src/pipeline/guide.ts");
 
 const fps = 60;
 // Короткая реплика: один круг.
@@ -250,13 +250,47 @@ check("«внизу справа» не путается с «внизу»", par
 check("проценты понимаются", JSON.stringify(parseTapTag("т [клик: 30 70]").tap).includes('"xPercent":30'));
 check("вид подсказки словом", parseTapTag("т [клик: обводка]").tap.kind === "frame");
 check("зона и вид вместе", parseTapTag("т [клик: ввод, кольцо]").tap.kind === "ring" && parseTapTag("т [клик: ввод, кольцо]").tap.yPercent === 92);
-check("без пометки — нижняя середина", parseTapTag("Просто реплика").tap.yPercent === tapZone().y);
+// Пустое tap здесь НЕ значит «показывать вниз»: оно значит «человек не
+// сказал», и место потом ищется по самому кадру. Различать обязательно —
+// иначе явно указанный низ и молчание выглядели бы одинаково, и поиск
+// затирал бы указание человека.
+check("без пометки места нет — будем искать", parseTapTag("Просто реплика").tap === undefined);
+check("и это не отказ от подсказки", parseTapTag("Просто реплика").off === undefined);
 check("без пометки текст не трогаем", parseTapTag("Просто реплика").text === "Просто реплика");
-check("кадр можно оставить без подсказки", parseTapTag("Тут ничего не жмём [без клика]").tap === undefined);
+check("умолчание — нижняя середина", defaultTap(0).yPercent === tapZone().y);
+check("кадр можно оставить без подсказки", parseTapTag("Тут ничего не жмём [без клика]").off === true);
+check("и место у такого кадра не считаем", parseTapTag("Тут ничего не жмём [без клика]").tap === undefined);
 check("и текст при этом чистый", parseTapTag("Тут ничего не жмём [без клика]").text === "Тут ничего не жмём");
 check("вид чередуется и с пометкой зоны", parseTapTag("т [клик: центр]", 1).kind !== parseTapTag("т [клик: центр]", 2).kind || true);
-check("мусорные проценты не ломают", parseTapTag("т [клик: 300 700]").tap.yPercent === tapZone().y);
+check("мусорные проценты откатываются на зону", parseTapTag("т [клик: 300 700]").tap.yPercent === tapZone().y);
 check("«тап» тоже понимается", parseTapTag("т [тап: центр]").tap.xPercent === 50);
+
+console.log("\n=== поиск кнопки по кадру ===");
+// Без этого пришлось бы писать пометку к каждому слайду: в настоящем гайде
+// кнопки каждый раз в разных местах.
+const { buildFindPrompt, parseFindResult } = await import("../src/pipeline/findTarget.ts");
+const findPrompt = buildFindPrompt("Жмёшь «Собрать видео» и ждёшь");
+check("реплика уходит в запрос", findPrompt.includes("Собрать видео"));
+check("координаты просят в процентах", /ПРОЦЕНТАХ/.test(findPrompt));
+// Уверенный курсор, показывающий не туда, хуже, чем курсор в умолчании.
+check("модели разрешено сказать «нечего нажимать»", /"found": false/.test(findPrompt));
+check("и прямо сказано не угадывать", /Не угадывай/.test(findPrompt));
+
+const good = parseFindResult(JSON.stringify({ found: true, x: 78, y: 84, what: "кнопка Собрать видео" }));
+check("координаты разобраны", good.xPercent === 78 && good.yPercent === 84);
+check("что нашли — тоже", good.what === "кнопка Собрать видео");
+check("ответ в ограде разбирается", parseFindResult("```json\n{\"found\":true,\"x\":50,\"y\":50}\n```").xPercent === 50);
+check("дробные округляются", parseFindResult(JSON.stringify({ found: true, x: 49.6, y: 80.2 })).xPercent === 50);
+check("без описания подставляется общее", parseFindResult(JSON.stringify({ found: true, x: 50, y: 50 })).what.length > 0);
+// Всё, чему нельзя верить, должно вернуть undefined — и уйти в умолчание.
+check("«не нашёл» — это undefined", parseFindResult(JSON.stringify({ found: false, what: "нечего нажимать" })) === undefined);
+check("координаты за кадром отвергнуты", parseFindResult(JSON.stringify({ found: true, x: 140, y: 50 })) === undefined);
+check("отрицательные тоже", parseFindResult(JSON.stringify({ found: true, x: -5, y: 50 })) === undefined);
+// По самому краю кнопок не бывает: там рамка карточки.
+check("край кадра отвергнут", parseFindResult(JSON.stringify({ found: true, x: 1, y: 50 })) === undefined);
+check("без координат — undefined", parseFindResult(JSON.stringify({ found: true, what: "кнопка" })) === undefined);
+check("не json — undefined", parseFindResult("извините, не могу") === undefined);
+check("пустой ответ — undefined", parseFindResult("") === undefined);
 
 console.log("\n=== команды не перехватывают друг друга ===");
 // /guide рядом с /g… ничем не занят, но проверяем на настоящем grammY: на

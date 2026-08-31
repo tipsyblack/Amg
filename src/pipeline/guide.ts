@@ -178,20 +178,32 @@ const KIND_WORDS: Record<string, TapKind> = {
   касание: "ripple",
 };
 
-/** Убирает пометку из реплики и возвращает то, что в ней было сказано. */
+/**
+ * Убирает пометку из реплики и возвращает то, что в ней было сказано.
+ *
+ * Поле tap заполняется ТОЛЬКО когда пометка была. Пустое tap здесь не значит
+ * «показывать вниз» — оно значит «человек не сказал, куда», и дальше место
+ * ищется по самому кадру (findTarget.ts). Различать эти два случая
+ * обязательно: иначе явно указанный низ и молчание выглядели бы одинаково, и
+ * поиск затирал бы указание человека.
+ */
 export function parseTapTag(
   text: string,
   index = 0,
-): { text: string; tap?: TapSpec } {
+): { text: string; tap?: TapSpec; off?: boolean } {
   const off = text.match(/\[\s*(?:без\s+клика|без\s+подсказки)\s*\]/i);
   if (off) {
-    return { text: text.replace(off[0], " ").replace(/\s+/g, " ").trim() };
+    return {
+      text: text.replace(off[0], " ").replace(/\s+/g, " ").trim(),
+      off: true,
+    };
   }
 
   const tag = text.match(/\[\s*(?:клик|тап)\s*:?\s*([^\]]*)\]/i);
   const clean = tag
     ? text.replace(tag[0], " ").replace(/\s+/g, " ").trim()
     : text.trim();
+  if (!tag) return { text: clean };
   const inside = (tag?.[1] ?? "").toLowerCase().trim();
 
   // Вид подсказки: если не назван, чередуется по номеру слайда — один и тот же
@@ -216,6 +228,16 @@ export function parseTapTag(
     .sort((a, b) => b.length - a.length)[0];
   const point = tapZone(zoneWord);
   return { text: clean, tap: { kind, xPercent: point.x, yPercent: point.y } };
+}
+
+/**
+ * Куда показывать, когда не сказал человек и не нашла модель. Низ по центру:
+ * в телеграм-боте почти всё нажимаемое живёт там — инлайн-кнопки под
+ * сообщением и поле ввода.
+ */
+export function defaultTap(index: number): TapSpec {
+  const point = tapZone();
+  return { kind: tapKindFor(index), xPercent: point.x, yPercent: point.y };
 }
 
 /** Список видов подсказки для подсказки в чате. */

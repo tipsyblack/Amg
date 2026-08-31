@@ -52,12 +52,15 @@ import { lookLabel, sceneLook, seedFromTitle } from "../pipeline/sceneLook";
 import { measureImages, varietyLines, varietyReport } from "../pipeline/variety";
 import {
   buildGuidePrompt,
+  defaultTap,
   guideProblems,
   guideScript,
   parseTapTag,
   slideCaption,
   TAP_WORDS,
 } from "../pipeline/guide";
+import { findTapTarget } from "../pipeline/findTarget";
+import { tapKindFor } from "../remotion/tap";
 import {
   formatPlan,
   parsePlanArgs,
@@ -833,9 +836,19 @@ async function regenerateScene(
         );
         images[index] = { ...again, attempt: (images[index]?.attempt ?? 0) + 1 };
         updateSession(chatId, { step: "idle", images });
+        // Кадр перерисован — место нажатия ищем заново: кнопка могла переехать.
+        // Указание человека при этом остаётся в силе, поиск его не трогает.
+        const slides = [...(getSession(chatId).guideSlides ?? [])];
+        if (slides[index] && !slides[index].tapOff && !slides[index].tapExplicit) {
+          slides[index] = { ...slides[index], tap: undefined };
+          updateSession(chatId, { guideSlides: slides });
+        }
+        const found = await resolveSlideTap(chatId, index, again.resultUrl);
         await ctx.replyWithPhoto(
           new InputFile(path.resolve("public/images", again.imageFileName)),
-          { caption: `Слайд ${index + 1}: ${slideCaption(slide.text, 8)}` },
+          {
+            caption: `Слайд ${index + 1}: ${slideCaption(slide.text, 8)}\n${found}`,
+          },
         );
         await ctx.reply("Как теперь?", { reply_markup: imagesKeyboard });
         return;
@@ -2264,6 +2277,53 @@ bot.command("plan", async (ctx) => {
 // Общего у них ровно столько, сколько стоило разделять: озвучка, субтитры,
 // сборка и публикация те же, различается только то, откуда взялись сцены.
 
+/**
+ * Решает, куда ткнуть курсором на этом слайде, и отчитывается словами.
+ *
+ * Порядок важен: указание человека сильнее всего, потом поиск по кадру, потом
+ * умолчание. Найденное записывается в слайд — при сборке оно уже никуда не
+ * ходит, и повторная сборка не стоит новых запросов.
+ */
+async function resolveSlideTap(
+  chatId: number,
+  index: number,
+  imageUrl: string,
+): Promise<string> {
+  const session = getSession(chatId);
+  const slides = [...(session.guideSlides ?? [])];
+  const slide = slides[index];
+  if (!slide) return "";
+  if (slide.tapOff) return "👆 без подсказки — на этом кадре не жмём";
+  // Указание человека сильнее поиска и переживает перерисовку кадра.
+  if (slide.tapExplicit && slide.tap) {
+    return `👆 ${tapWhere(slide.tap)} — как вы указали`;
+  }
+
+  const target = await findTapTarget(imageUrl, slide.text, session.scriptModel);
+  const kind = tapKindFor(index);
+  if (target) {
+    slides[index] = {
+      ...slide,
+      tap: { kind, xPercent: target.xPercent, yPercent: target.yPercent },
+    };
+    updateSession(chatId, { guideSlides: slides });
+    return (
+      `👆 нашёл: ${target.what} (${target.xPercent}/${target.yPercent}). ` +
+      "Не то — пришлите реплику с пометкой, например [клик: внизу справа]"
+    );
+  }
+
+  // Не нашла — говорим об этом прямо. Молчаливое умолчание означало бы курсор,
+  // показывающий неизвестно куда, и человек об этом не узнал бы до просмотра.
+  const fallback = defaultTap(index);
+  slides[index] = { ...slide, tap: fallback };
+  updateSession(chatId, { guideSlides: slides });
+  return (
+    "👆 не понял, что тут нажимают — показываю вниз по центру. " +
+    "Поправить: пришлите реплику с пометкой [клик: внизу справа]"
+  );
+}
+
 /** Куда и чем ткнём — словами, чтобы это было видно до сборки. */
 function tapWhere(tap: { kind: string; xPercent: number; yPercent: number }): string {
   const kinds: Record<string, string> = {
@@ -2325,13 +2385,21 @@ async function addGuideSlide(
   // Пометка о нажатии вырезается из реплики: иначе синтезатор прочитает
   // «квадратная скобка клик» вслух.
   const parsed = parseTapTag(own || planned, slides.length);
-  slides.push({ file, text: parsed.text, tap: parsed.tap });
+  slides.push({
+    file,
+    text: parsed.text,
+    tap: parsed.tap,
+    tapOff: parsed.off,
+    tapExplicit: Boolean(parsed.tap),
+  });
   updateSession(chatId, { guideSlides: slides });
 
   const number = slides.length;
-  const where = parsed.tap
-    ? `👆 ${tapWhere(parsed.tap)}`
-    : "👆 без подсказки нажатия";
+  const where = parsed.off
+    ? "👆 без подсказки нажатия"
+    : parsed.tap
+      ? `👆 ${tapWhere(parsed.tap)}`
+      : "👆 куда показать — найду по кадру сам";
   if (own) {
     await ctx.reply(
       `📸 Слайд ${number} принят. ${where}.\n\n` +
@@ -2414,9 +2482,18 @@ async function runGuideImagesStep(ctx: Context, chatId: number): Promise<void> {
         );
         images.push(illustration);
         updateSession(chatId, { images });
+
+        // Куда показывать курсор. Ищем по ПЕРЕРИСОВАННОМУ кадру, а не по
+        // исходному скриншоту: промпт просит сохранить расположение, но модель
+        // не обязана слушаться дословно, и координата с оригинала могла бы
+        // показывать в пустоту.
+        const found = await resolveSlideTap(chatId, i, illustration.resultUrl);
         await ctx.replyWithPhoto(
           new InputFile(path.resolve("public/images", illustration.imageFileName)),
-          { caption: `Слайд ${i + 1}: ${slideCaption(slide.text, 8)}` },
+          {
+            caption:
+              `Слайд ${i + 1}: ${slideCaption(slide.text, 8)}\n${found}`,
+          },
         );
       }
 
@@ -4529,11 +4606,23 @@ bot.on("message:text", async (ctx) => {
       const last = slides.length - 1;
       const had = slides[last].text;
       const parsed = parseTapTag(text, last);
-      slides[last] = { ...slides[last], text: parsed.text, tap: parsed.tap };
+      slides[last] = {
+        ...slides[last],
+        text: parsed.text,
+        tap: parsed.tap,
+        tapOff: parsed.off,
+        tapExplicit: Boolean(parsed.tap),
+      };
       updateSession(chatId, { guideSlides: slides, step: "collecting_guide" });
       await ctx.reply(
         (had ? `Реплика слайда ${slides.length} заменена.` : `Слайд ${slides.length} готов.`) +
-          ` ${parsed.tap ? `👆 ${tapWhere(parsed.tap)}` : "👆 без подсказки нажатия"}.` +
+          ` ${
+            parsed.off
+              ? "👆 без подсказки нажатия"
+              : parsed.tap
+                ? `👆 ${tapWhere(parsed.tap)}`
+                : "👆 куда показать — найду по кадру сам"
+          }.` +
           `\n\nСлайды:\n${guideSlideLines(slides)}\n\n` +
           "Дальше: следующий скриншот или /done.",
       );
