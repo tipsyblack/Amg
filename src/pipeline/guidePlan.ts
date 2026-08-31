@@ -158,14 +158,22 @@ export function planWarnings(slides: PlanSlide[]): string[] {
 /** Разбор аргумента команды: «6 как собрать ролик» или просто тема. */
 export function parsePlanArgs(
   arg: string,
-): { topic: string; count: number } | { error: string } {
+): { topic: string; count: number } | { off: true } | { error: string } {
   const text = arg.trim();
+  // Выключатель. Нужен, потому что план живёт в сессии и подставляет реплики
+  // сам: человеку, который решил писать текст руками, требуется способ его
+  // убрать, не сбрасывая при этом весь ролик через /new.
+  if (/^(off|выкл|стоп|убери|сброс|reset)$/i.test(text)) return { off: true };
   if (!text) {
     return {
       error:
-        "О чём гайд? Например: /plan как собрать первый ролик\n" +
+        "Реплики к слайдам вы пишете сами — подписью к скриншоту или " +
+        "сообщением следом. /plan нужен, только если хочется, чтобы их " +
+        "предложил я.\n\n" +
+        "Например: /plan как собрать первый ролик\n" +
         `Сколько кадров — числом впереди: /plan 5 как поменять голос ` +
-        `(по умолчанию ${DEFAULT_PLAN_SLIDES}, не больше ${MAX_PLAN_SLIDES}).`,
+        `(по умолчанию ${DEFAULT_PLAN_SLIDES}, не больше ${MAX_PLAN_SLIDES}).\n` +
+        "Убрать заготовку и писать всё самому: /plan off",
     };
   }
   const match = text.match(/^(\d{1,2})\s+(.+)$/s);
